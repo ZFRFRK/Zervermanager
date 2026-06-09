@@ -117,23 +117,19 @@ The script detects these systems and prompts for confirmation before proceeding.
 
 ## Installation and Usage
 
-**1. Clone the repository:**
-```bash
-git clone https://github.com/ZFRFRK/Zervermanager.git
-cd Zervermanager
-```
+Download the latest `zervermanager.py` from the **[Releases page](https://github.com/ZFRFRK/Zervermanager/releases)**.
 
-**2. Make the script executable:**
+**1. Make the script executable:**
 ```bash
 chmod +x zervermanager.py
 ```
 
-**3. Run the server manager:**
+**2. Run the server manager:**
 ```bash
 sudo python3 zervermanager.py
 ```
 
-**4. Dry-run mode** — preview all actions without making any system changes:
+**3. Dry-run mode** — preview all actions without making any system changes:
 ```bash
 sudo python3 zervermanager.py --dry-run
 ```
@@ -148,13 +144,13 @@ The `tests/` directory contains a comprehensive unit test suite covering subproc
 
 Before committing, verify there are no Python syntax errors:
 ```bash
-python3 -m py_compile zervermanager.py && echo "OK"
+python3 -m py_compile zervermanager_latest_stable.py && echo "OK"
 ```
 
 ### Run Unit Tests
 
 ```bash
-python3 tests/run_tests.py
+python tests/run_tests.py
 ```
 
 All 40 tests must pass with the `All tests passed` result.
@@ -163,7 +159,7 @@ All 40 tests must pass with the `All tests passed` result.
 
 Confirm the script starts, completes dependency checks, and reaches the main menu without errors:
 ```bash
-sudo python3 zervermanager.py --dry-run
+sudo python3 zervermanager_latest_stable.py --dry-run
 ```
 
 ---
