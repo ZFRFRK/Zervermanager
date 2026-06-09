@@ -1,0 +1,35 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+
+# ── Project-specific: archived / working files ────────────────────────────────
+old/
+zervermanager_outdated_stable.py
+*_beta.py
+fix_*.py
+
+# ── Internal / AI context docs ────────────────────────────────────────────────
+zervermanager_AI_INSTRUCTIONS.md
+
+# ── IDEs ──────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+
+# ── Python packaging (not used, but future-safe) ──────────────────────────────
+dist/
+build/
+*.egg-info/
