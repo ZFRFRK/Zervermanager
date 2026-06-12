@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-SCRIPT_VERSION = "1.2.0"
+SCRIPT_VERSION = "1.2.1"
 
 import os
 import re
@@ -1544,6 +1544,36 @@ def ask_for_custom_site_files(docroot):
         return False
 
 
+def prompt_db_import(db_name, db_user, db_pass):
+    print()
+    if not prompt_confirm(f"{C.BOLD}Import an existing SQL database dump?{C.RESET}"):
+        return
+
+    while True:
+        sql_file = input("  Path to SQL file: ").strip()
+        if not sql_file:
+            warn("Database import cancelled.")
+            return
+
+        if not os.path.isfile(sql_file):
+            err(f"File does not exist: {sql_file}")
+            continue
+
+        step(f"Importing {sql_file} into {db_name}...")
+        print(f"  {C.DIM}(this may take a moment){C.RESET}", end=" ", flush=True)
+
+        result = run(["mysql", "-u", db_user, f"-p{db_pass}", db_name, "-e", f"SOURCE {sql_file};"])
+
+        if result.returncode != 0:
+            print(f"{C.RED}✗{C.RESET}")
+            err(f"Import error:\n{result.stderr}")
+            return
+
+        print(f"{C.GREEN}✓{C.RESET}")
+        ok("Database imported successfully.")
+        return
+
+
 # ─────────────────────────────────────────
 #  Full site creation (Apache + optional DNS)
 # ─────────────────────────────────────────
@@ -2546,6 +2576,8 @@ mysql {db_name} -e "DELETE FROM test_entries;"</pre>
 </html>
 """)
         ok("Test page created at index.php.")
+
+    prompt_db_import(db_name, db_user, db_pass)
 
     # ── Apache vhost ──
     step("Writing Apache vhost config...")
@@ -3652,6 +3684,8 @@ mysql {db_name} -e "DELETE FROM test_entries;"</pre>
 <?php endif; ?>
 </body></html>
 """)
+
+    prompt_db_import(db_name, db_user, db_pass)
 
     step("Writing Nginx vhost config...")
     if ssl_choice == "2":
