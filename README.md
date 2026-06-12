@@ -149,13 +149,13 @@ sudo python3 zervermanager.py
 ```bash
 git clone -b dev https://github.com/ZFRFRK/Zervermanager.git
 cd Zervermanager
-chmod +x zervermanager_v1.2.0.py
-sudo python3 zervermanager_v1.2.0.py
+chmod +x zervermanager.py
+sudo python3 zervermanager.py
 ```
 
 **Dry-run mode** — preview all actions without making any system changes:
 ```bash
-sudo python3 zervermanager_v1.2.0.py --dry-run
+sudo python3 zervermanager.py --dry-run
 ```
 
 ---
@@ -167,7 +167,7 @@ The `tests/` directory contains a comprehensive unit test suite covering subproc
 ### Syntax Check
 
 ```bash
-python3 -m py_compile zervermanager_v1.2.0.py && echo "OK"
+python3 -m py_compile zervermanager.py && echo "OK"
 ```
 
 ### Run Unit Tests
@@ -181,7 +181,7 @@ All 40 tests must pass with the `All tests passed` result.
 ### Dry-run Smoke Test
 
 ```bash
-sudo python3 zervermanager_v1.2.0.py --dry-run
+sudo python3 zervermanager.py --dry-run
 ```
 
 ---
