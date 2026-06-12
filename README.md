@@ -3,7 +3,9 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Python 3](https://img.shields.io/badge/Python-3-blue?logo=python&logoColor=white)
 ![Platform: Debian 12](https://img.shields.io/badge/Platform-Debian%2012-red?logo=debian&logoColor=white)
-![Status: Stable](https://img.shields.io/badge/Status-Stable-brightgreen)
+![Status: Unstable](https://img.shields.io/badge/Status-Unstable-orange)
+
+> ⚠️ **You are on the `dev` branch (v1.2.0 — unstable).** For the latest stable release, switch to the [`main`](https://github.com/ZFRFRK/Zervermanager/tree/main) branch.
 
 A robust, interactive Python 3 command-line tool for automating the complete setup and management of a Debian 12 (Bookworm) web hosting, mail, and DNS server environment.
 
@@ -38,6 +40,22 @@ Self-contained using only the Python standard library — deployable instantly o
 | Let's Encrypt SSL (Apache) | Certbot + Apache | Obtains and installs a TLS certificate with automatic renewal |
 | Let's Encrypt SSL (Nginx) | Certbot + Nginx | Same for Nginx |
 | Self-signed SSL | Apache / Nginx | Generates a self-signed certificate for internal or development use |
+
+### MariaDB Manager *(new in v1.2.0)*
+
+| Feature | Description |
+|---|---|
+| List Databases | Show all non-system databases |
+| Create Database | utf8mb4, with name validation |
+| Drop Database | Requires typed confirmation |
+| List Users | All `@localhost` users |
+| Create User | With password |
+| Drop User | Requires typed confirmation |
+| Grant Privileges | ALL, DML, or SELECT level |
+| Revoke Privileges | Revokes all grants on a database |
+| Change User Password | Immediate effect with FLUSH |
+| Backup Database | `mysqldump` to a `.sql` file |
+| Restore Database | stdin restore with confirmation prompt |
 
 ### Mail Server
 
@@ -117,21 +135,27 @@ The script detects these systems and prompts for confirmation before proceeding.
 
 ## Installation and Usage
 
-Download the latest `zervermanager.py` from the **[Releases page](https://github.com/ZFRFRK/Zervermanager/releases)**.
+### Stable (v1.0.0)
 
-**1. Make the script executable:**
 ```bash
+git clone https://github.com/ZFRFRK/Zervermanager.git
+cd Zervermanager
 chmod +x zervermanager.py
-```
-
-**2. Run the server manager:**
-```bash
 sudo python3 zervermanager.py
 ```
 
-**3. Dry-run mode** — preview all actions without making any system changes:
+### Unstable (v1.2.0 — dev branch)
+
 ```bash
-sudo python3 zervermanager.py --dry-run
+git clone -b dev https://github.com/ZFRFRK/Zervermanager.git
+cd Zervermanager
+chmod +x zervermanager_v1.2.0.py
+sudo python3 zervermanager_v1.2.0.py
+```
+
+**Dry-run mode** — preview all actions without making any system changes:
+```bash
+sudo python3 zervermanager_v1.2.0.py --dry-run
 ```
 
 ---
@@ -142,24 +166,22 @@ The `tests/` directory contains a comprehensive unit test suite covering subproc
 
 ### Syntax Check
 
-Before committing, verify there are no Python syntax errors:
 ```bash
-python3 -m py_compile zervermanager_latest_stable.py && echo "OK"
+python3 -m py_compile zervermanager_v1.2.0.py && echo "OK"
 ```
 
 ### Run Unit Tests
 
 ```bash
-python3 tests/run_tests.py
+python tests/run_tests.py
 ```
 
 All 40 tests must pass with the `All tests passed` result.
 
 ### Dry-run Smoke Test
 
-Confirm the script starts, completes dependency checks, and reaches the main menu without errors:
 ```bash
-sudo python3 zervermanager_latest_stable.py --dry-run
+sudo python3 zervermanager_v1.2.0.py --dry-run
 ```
 
 ---
