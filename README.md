@@ -173,7 +173,7 @@ python3 -m py_compile zervermanager_v1.2.0.py && echo "OK"
 ### Run Unit Tests
 
 ```bash
-python tests/run_tests.py
+python3 tests/run_tests.py
 ```
 
 All 40 tests must pass with the `All tests passed` result.
