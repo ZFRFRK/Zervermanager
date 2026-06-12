@@ -5711,52 +5711,150 @@ def mariadb_restore():
 #             warn("Invalid choice.")
 # --- OLD CODE END ---
 
-def mariadb_inspect_database():
-    mariadb_list_databases()
-    db = input("\n  Database name to inspect: ").strip()
-    if not db:
-        return
-    if not re.match(r"^[a-zA-Z0-9_]+$", db):
-        err("Invalid database name.")
-        return
+# --- OLD CODE ---
+# def mariadb_inspect_database():
+#     mariadb_list_databases()
+#     db = input("\n  Database name to inspect: ").strip()
+#     if not db:
+#         return
+#     if not re.match(r"^[a-zA-Z0-9_]+$", db):
+#         err("Invalid database name.")
+#         return
+# 
+#     res = mariadb_run_sql(f"SHOW TABLES FROM `{db}`;", fetch=True)
+#     if not res:
+#         err(f"Database '{db}' does not exist or has no tables.")
+#         return
+#         
+#     step(f"Tables in '{db}':")
+#     for line in res.splitlines():
+#         if line.startswith(f"Tables_in_{db}"):
+#             continue
+#         line = line.strip()
+#         if line:
+#             print(f"    - {line}")
+# 
+#     while True:
+#         table = input("\n  Enter table name to inspect (or 0 to go back): ").strip()
+#         if not table or table == "0":
+#             break
+#             
+#         if not re.match(r"^[a-zA-Z0-9_]+$", table):
+#             err("Invalid table name.")
+#             continue
+#             
+#         res_desc = mariadb_run_sql(f"DESCRIBE `{db}`.`{table}`;", fetch=True)
+#         if not res_desc:
+#             err(f"Table '{table}' does not exist.")
+#             step(f"Tables in '{db}':")
+#             for line in res.splitlines():
+#                 if line.startswith(f"Tables_in_{db}"):
+#                     continue
+#                 line = line.strip()
+#                 if line:
+#                     print(f"    - {line}")
+#             continue
+#             
+#         step(f"Schema for `{db}`.`{table}`:")
+#         for line in res_desc.splitlines():
+#             print(f"    {line}")
+# --- OLD CODE END ---
 
-    res = mariadb_run_sql(f"SHOW TABLES FROM `{db}`;", fetch=True)
-    if not res:
-        err(f"Database '{db}' does not exist or has no tables.")
+def mariadb_inspect_database():
+    res_db = mariadb_run_sql("SHOW DATABASES;", fetch=True)
+    if not res_db:
         return
         
-    step(f"Tables in '{db}':")
-    for line in res.splitlines():
-        if line.startswith(f"Tables_in_{db}"):
-            continue
+    exclude = {"information_schema", "performance_schema", "mysql", "sys"}
+    databases = []
+    for line in res_db.splitlines():
         line = line.strip()
-        if line:
-            print(f"    - {line}")
+        if line and line != "Database" and line not in exclude:
+            databases.append(line)
+            
+    if not databases:
+        warn("No user databases found.")
+        return
+        
+    while True:
+        menu_header("Inspect Database - Select DB")
+        for i, d in enumerate(databases, 1):
+            print(f"{i}. {d}")
+        print("0. Back")
+        menu_separator()
+        
+        choice = input("  Choice: ").strip()
+        if not choice:
+            continue
+        if choice == "0":
+            return
+            
+        if not choice.isdigit() or not (1 <= int(choice) <= len(databases)):
+            warn("Invalid choice.")
+            continue
+            
+        db = databases[int(choice) - 1]
+        break
 
     while True:
-        table = input("\n  Enter table name to inspect (or 0 to go back): ").strip()
-        if not table or table == "0":
+        res = mariadb_run_sql(f"SHOW TABLES FROM `{db}`;", fetch=True)
+        if not res:
+            err(f"Database '{db}' does not exist or has no tables.")
+            return
+            
+        tables = []
+        for line in res.splitlines():
+            if line.startswith(f"Tables_in_{db}"):
+                continue
+            line = line.strip()
+            if line:
+                tables.append(line)
+                
+        if not tables:
+            err(f"No tables found in '{db}'.")
+            return
+            
+        menu_header(f"Inspect Database: {db} - Select Table")
+        for i, t in enumerate(tables, 1):
+            print(f"{i}. {t}")
+        print("0. Back")
+        menu_separator()
+        
+        choice = input("  Choice: ").strip()
+        if not choice:
+            continue
+        if choice == "0":
             break
             
-        if not re.match(r"^[a-zA-Z0-9_]+$", table):
-            err("Invalid table name.")
+        if not choice.isdigit() or not (1 <= int(choice) <= len(tables)):
+            warn("Invalid choice.")
             continue
             
+        table = tables[int(choice) - 1]
+        
         res_desc = mariadb_run_sql(f"DESCRIBE `{db}`.`{table}`;", fetch=True)
         if not res_desc:
             err(f"Table '{table}' does not exist.")
-            step(f"Tables in '{db}':")
-            for line in res.splitlines():
-                if line.startswith(f"Tables_in_{db}"):
-                    continue
-                line = line.strip()
-                if line:
-                    print(f"    - {line}")
             continue
             
         step(f"Schema for `{db}`.`{table}`:")
         for line in res_desc.splitlines():
             print(f"    {line}")
+            
+        warn("Selecting all rows from a large table might flood the terminal.")
+        confirm = prompt_confirm("Limit output to 50 rows?", default="yes")
+        
+        limit_clause = " LIMIT 50" if confirm else ""
+        res_data = mariadb_run_sql(f"SELECT * FROM `{db}`.`{table}`{limit_clause};", fetch=True)
+        
+        step(f"Data in `{db}`.`{table}`:")
+        if not res_data:
+            print("    (Empty set)")
+        else:
+            for line in res_data.splitlines():
+                print(f"    {line}")
+        
+        input("\n  Press Enter to continue...")
 
 def mariadb_databases_menu():
     while True:
