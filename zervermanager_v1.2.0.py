@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+SCRIPT_VERSION = "1.2.0"
+
 import os
 import re
 import subprocess
@@ -1513,8 +1515,12 @@ def copy_existing_site_files(source, destination, clear_dest=True):
 
 def ask_for_custom_site_files(docroot):
     """Ask user if they want to copy existing site files.
-    Returns True if custom files were copied, False otherwise.
+    Returns True if custom files were copied or if files already exist in docroot, False otherwise.
     """
+    if os.path.isdir(docroot) and any(os.scandir(docroot)):
+        ok(f"Existing site files detected in {docroot}.")
+        return True
+
     print()
     if not prompt_confirm(f"{C.BOLD}Use existing site files?{C.RESET}"):
         return False
@@ -5319,6 +5325,9 @@ def ensure_dependencies(auto_install=True):
     if not _installed("ifupdown"):
         missing.append("ifupdown")
 
+    if not _installed("mariadb-server"):
+        missing.append("mariadb-server")
+
     if not missing:
         return []
 
@@ -5455,8 +5464,253 @@ def ensure_mariadb():
 #  Make Services menu (Mail Server)
 # ─────────────────────────────────────────
 
+# ─────────────────────────────────────────
+#  MariaDB Manager
+# ─────────────────────────────────────────
+
+def mariadb_run_sql(sql, fetch=False):
+    if DRY_RUN:
+        step(f"[dry-run] Would run SQL: {sql}")
+        return "" if fetch else 0
+    cmd = ["mysql", "-u", "root", "-e", sql]
+    r = run(cmd)
+    if fetch:
+        return r.stdout
+    else:
+        return r.returncode
+
+def mariadb_list_databases():
+    res = mariadb_run_sql("SHOW DATABASES;", fetch=True)
+    if not res:
+        return
+    step("Databases:")
+    exclude = {"information_schema", "performance_schema", "mysql", "sys"}
+    for line in res.splitlines():
+        line = line.strip()
+        if line and line != "Database" and line not in exclude:
+            print(f"    - {line}")
+
+def mariadb_create_database():
+    while True:
+        name = input("  Database name: ").strip()
+        if not name:
+            return
+        if re.match(r"^[a-zA-Z0-9_]{1,64}$", name):
+            break
+        err("Invalid database name. Only alphanumeric and underscore, max 64 chars.")
+    sql = f"CREATE DATABASE IF NOT EXISTS `{name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+    if mariadb_run_sql(sql) == 0:
+        ok(f"Database '{name}' created.")
+
+def mariadb_drop_database():
+    mariadb_list_databases()
+    name = input("\n  Database name to drop: ").strip()
+    if not name:
+        return
+    confirm = input(f"  Type '{name}' to confirm drop: ").strip()
+    if confirm != name:
+        warn("Mismatch. Aborting drop.")
+        return
+    sql = f"DROP DATABASE IF EXISTS `{name}`;"
+    if mariadb_run_sql(sql) == 0:
+        ok(f"Database '{name}' dropped.")
+
+def mariadb_list_users():
+    sql = "SELECT User, Host FROM mysql.user ORDER BY User;"
+    res = mariadb_run_sql(sql, fetch=True)
+    if not res:
+        return
+    step("Users:")
+    for line in res.splitlines():
+        if line.startswith("User\tHost"):
+            continue
+        parts = line.split("\t")
+        if len(parts) == 2:
+            print(f"    - {parts[0]}@{parts[1]}")
+
+def mariadb_create_user():
+    user = input("  Username: ").strip()
+    if not re.match(r"^[a-zA-Z0-9_]{1,32}$", user):
+        err("Invalid username. Only alphanumeric and underscore, max 32 chars.")
+        return
+    password = input("  Password: ")
+    if not password:
+        err("Password cannot be blank.")
+        return
+    sql = f"CREATE USER IF NOT EXISTS '{user}'@'localhost' IDENTIFIED BY '{password}';"
+    if mariadb_run_sql(sql) == 0:
+        ok(f"User '{user}'@'localhost' created.")
+
+def mariadb_drop_user():
+    mariadb_list_users()
+    user = input("\n  Username to drop: ").strip()
+    if not user:
+        return
+    confirm = input(f"  Type '{user}' to confirm drop: ").strip()
+    if confirm != user:
+        warn("Mismatch. Aborting drop.")
+        return
+    sql = f"DROP USER IF EXISTS '{user}'@'localhost'; FLUSH PRIVILEGES;"
+    if mariadb_run_sql(sql) == 0:
+        ok(f"User '{user}'@'localhost' dropped.")
+
+def mariadb_grant_privileges():
+    user = input("  Username: ").strip()
+    if not user:
+        return
+    db = input("  Database (or * for all): ").strip()
+    if not db:
+        return
+    if db != "*" and not re.match(r"^[a-zA-Z0-9_]+$", db):
+        err("Invalid database name.")
+        return
+        
+    print("  Privilege levels:")
+    print("  1) ALL")
+    print("  2) SELECT, INSERT, UPDATE, DELETE")
+    print("  3) SELECT only")
+    choice = input("  Choice: ").strip()
+    if choice == "1":
+        level = "ALL PRIVILEGES"
+    elif choice == "2":
+        level = "SELECT, INSERT, UPDATE, DELETE"
+    elif choice == "3":
+        level = "SELECT"
+    else:
+        warn("Invalid choice.")
+        return
+        
+    sql = f"GRANT {level} ON `{db}`.* TO '{user}'@'localhost'; FLUSH PRIVILEGES;" if db != "*" else f"GRANT {level} ON *.* TO '{user}'@'localhost'; FLUSH PRIVILEGES;"
+    if mariadb_run_sql(sql) == 0:
+        ok(f"Privileges granted to '{user}'@'localhost'.")
+
+def mariadb_revoke_privileges():
+    user = input("  Username: ").strip()
+    if not user:
+        return
+    db = input("  Database (or * for all): ").strip()
+    if not db:
+        return
+    if db != "*" and not re.match(r"^[a-zA-Z0-9_]+$", db):
+        err("Invalid database name.")
+        return
+    sql = f"REVOKE ALL PRIVILEGES ON `{db}`.* FROM '{user}'@'localhost'; FLUSH PRIVILEGES;" if db != "*" else f"REVOKE ALL PRIVILEGES ON *.* FROM '{user}'@'localhost'; FLUSH PRIVILEGES;"
+    if mariadb_run_sql(sql) == 0:
+        ok(f"Privileges revoked for '{user}'@'localhost'.")
+
+def mariadb_change_password():
+    mariadb_list_users()
+    user = input("\n  Username: ").strip()
+    if not user:
+        return
+    password = input("  New password: ")
+    if not password:
+        err("Password cannot be blank.")
+        return
+    sql = f"ALTER USER '{user}'@'localhost' IDENTIFIED BY '{password}'; FLUSH PRIVILEGES;"
+    if mariadb_run_sql(sql) == 0:
+        ok(f"Password changed for '{user}'@'localhost'.")
+
+def mariadb_backup():
+    mariadb_list_databases()
+    name = input("\n  Database name to backup: ").strip()
+    if not name:
+        return
+    if not re.match(r"^[a-zA-Z0-9_]+$", name):
+        err("Invalid database name.")
+        return
+    today = datetime.today().strftime("%Y-%m-%d")
+    default_path = f"/root/{name}_{today}.sql"
+    path = input(f"  Save to [{default_path}]: ").strip()
+    if not path:
+        path = default_path
+        
+    if DRY_RUN:
+        step(f"[dry-run] Would run: mysqldump -u root {name} --result-file {path}")
+    else:
+        step(f"Backing up database '{name}' to {path} ...")
+        rc, _ = run_live(["mysqldump", "-u", "root", name, "--result-file", path])
+        if rc == 0:
+            ok(f"Backup saved to {path}")
+        else:
+            err("Backup failed.")
+
+def mariadb_restore():
+    file = input("  Path to .sql file: ").strip()
+    if not os.path.isfile(file):
+        err(f"File not found: {file}")
+        return
+    db = input("  Target database name: ").strip()
+    if not re.match(r"^[a-zA-Z0-9_]+$", db):
+        err("Invalid database name.")
+        return
+    warn(f"Target database '{db}' will be overwritten.")
+    confirm = input("  Continue? (yes/no): ").strip()
+    if confirm != "yes":
+        return
+        
+    if DRY_RUN:
+        step(f"[dry-run] Would restore {file} into {db}")
+    else:
+        step(f"Restoring {file} into database '{db}' ...")
+        with open(file, "r") as f:
+            r = subprocess.run(["mysql", "-u", "root", db], stdin=f)
+            if r.returncode == 0:
+                ok(f"Restored {file} into database '{db}'.")
+            else:
+                err("Restore failed.")
+
+def mariadb_menu():
+    while True:
+        menu_header("Manage MariaDB")
+        print("1. List Databases")
+        print("2. Create Database")
+        print("3. Drop Database")
+        print("4. List Users")
+        print("5. Create User")
+        print("6. Drop User")
+        print("7. Grant Privileges")
+        print("8. Revoke Privileges")
+        print("9. Change User Password")
+        print("10. Backup Database")
+        print("11. Restore Database")
+        print("0. Back")
+        menu_separator()
+        
+        choice = input("  Choice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
+            
+        if choice == "1":
+            mariadb_list_databases()
+        elif choice == "2":
+            mariadb_create_database()
+        elif choice == "3":
+            mariadb_drop_database()
+        elif choice == "4":
+            mariadb_list_users()
+        elif choice == "5":
+            mariadb_create_user()
+        elif choice == "6":
+            mariadb_drop_user()
+        elif choice == "7":
+            mariadb_grant_privileges()
+        elif choice == "8":
+            mariadb_revoke_privileges()
+        elif choice == "9":
+            mariadb_change_password()
+        elif choice == "10":
+            mariadb_backup()
+        elif choice == "11":
+            mariadb_restore()
+        elif choice == "0":
+            break
+        else:
+            warn("Invalid choice.")
+
 def setup_mail_server():
-    bold("\nSetup Mail Server (Postfix, Dovecot, Roundcube)")
+    """Installs and configures Postfix, Dovecot, Roundcube."""
     print("-" * 35)
 
     domain = ask_domain("  Mail Domain (e.g., example.com): ")
@@ -6252,10 +6506,11 @@ def display_main_menu() -> str:
     print(f"  MariaDB: {mariadb}")
     menu_separator()
     print("1. Make Site")
-    print("2. Make services")
-    print("3. Manage Server")
-    print("4. Reload All Related Services")
-    print("5. Help")
+    print("2. Manage MariaDB")
+    print("3. Make services")
+    print("4. Manage Server")
+    print("5. Reload All Related Services")
+    print("6. Help")
     print("0. Exit")
     menu_separator()
     print(f"  {C.CYAN}OS Detected: {get_os_version()}{C.RESET}")
@@ -6306,12 +6561,14 @@ def main():
         if choice == "1":
             make_site_menu()
         elif choice == "2":
-            make_services_menu()
+            mariadb_menu()
         elif choice == "3":
-            manage_server_menu()
+            make_services_menu()
         elif choice == "4":
-            reload_all_services()
+            manage_server_menu()
         elif choice == "5":
+            reload_all_services()
+        elif choice == "6":
             show_help()
         elif choice == "0":
             _shutdown()
