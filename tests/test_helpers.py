@@ -1,5 +1,5 @@
 """
-Unit tests for zervermanager.py helpers.
+Unit tests for zervermanager.py helpers — v1.2.0 (dev).
 
 Run with:
     python tests/run_tests.py
@@ -16,10 +16,12 @@ import unittest
 from unittest.mock import patch, MagicMock, call
 
 # ---------------------------------------------------------------------------
-# Bootstrap: make the parent directory importable so we can import the script.
+# Bootstrap: locate the dev folder (parent of this tests/ directory) so we
+# can import zervermanager.py that lives directly inside it.
 # The script guards its execution behind  `if __name__ == "__main__":`  so
 # importing it directly is safe once we stub out the root check.
 # ---------------------------------------------------------------------------
+# dev/tests/test_helpers.py  →  SCRIPT_DIR = dev/
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
@@ -32,19 +34,11 @@ if not hasattr(os, "geteuid"):
 import importlib.util
 
 def _load_servermanager():
-    # Try releases/ first; fall back to the repo root for environments
-    # where the releases sub-directory isn't populated (e.g. CI / dev clones).
-    candidates = [
-        os.path.join(SCRIPT_DIR, "releases", "zervermanager.py"),
+    # v1.2.0 dev: zervermanager.py lives in the same folder as this tests/ dir.
+    spec = importlib.util.spec_from_file_location(
+        "zervermanager",
         os.path.join(SCRIPT_DIR, "zervermanager.py"),
-    ]
-    script_path = next((p for p in candidates if os.path.isfile(p)), None)
-    if script_path is None:
-        raise FileNotFoundError(
-            "Cannot find zervermanager.py in releases/ or the repo root. "
-            f"Searched: {candidates}"
-        )
-    spec = importlib.util.spec_from_file_location("zervermanager", script_path)
+    )
     mod = importlib.util.module_from_spec(spec)
     mod.__name__ = "zervermanager"   # prevent __main__ block from running
     with patch("os.geteuid", return_value=0):
