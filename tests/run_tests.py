@@ -1,5 +1,5 @@
 """
-Test runner for zervermanager_latest_stable.py unit tests.
+Test runner for zervermanager.py unit tests — v1.2.0 (dev).
 Outputs results in a human-readable, colorised format.
 
 Usage:
@@ -14,7 +14,8 @@ import time
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
-# Make sure the project root is on the path
+# Make sure the dev folder (parent of tests/) is on the path
+# dev/tests/run_tests.py  →  ROOT = dev/
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -135,7 +136,7 @@ if __name__ == "__main__":
     loader = unittest.TestLoader()
     suite  = loader.discover(start_dir=os.path.join(ROOT, "tests"), pattern="test_*.py")
 
-    sys.stdout.write(f"\n{C.BOLD}  Zervermanager Test Suite{C.RESET}\n")
+    sys.stdout.write(f"\n{C.BOLD}  Zervermanager Test Suite — v1.2.0 (dev){C.RESET}\n")
     sys.stdout.write(f"{C.DIM}  ================================================={C.RESET}\n")
 
     runner = HumanReadableTestRunner()
