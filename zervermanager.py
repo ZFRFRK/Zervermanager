@@ -1544,16 +1544,19 @@ def ask_for_custom_site_files(docroot):
         return False
 
 
-def prompt_db_import(db_name, db_user, db_pass):
+def prompt_db_import(db_name, db_user, db_pass, docroot):
     print()
     if not prompt_confirm(f"{C.BOLD}Import an existing SQL database dump?{C.RESET}"):
         return
 
     while True:
-        sql_file = input("  Path to SQL file: ").strip()
+        sql_file = input(f"  SQL file path (or just filename if in {docroot}): ").strip()
         if not sql_file:
             warn("Database import cancelled.")
             return
+
+        if not os.path.isabs(sql_file) and not sql_file.startswith("./"):
+            sql_file = os.path.join(docroot, sql_file)
 
         if not os.path.isfile(sql_file):
             err(f"File does not exist: {sql_file}")
@@ -2577,7 +2580,7 @@ mysql {db_name} -e "DELETE FROM test_entries;"</pre>
 """)
         ok("Test page created at index.php.")
 
-    prompt_db_import(db_name, db_user, db_pass)
+    prompt_db_import(db_name, db_user, db_pass, docroot)
 
     # ── Apache vhost ──
     step("Writing Apache vhost config...")
@@ -3685,7 +3688,7 @@ mysql {db_name} -e "DELETE FROM test_entries;"</pre>
 </body></html>
 """)
 
-    prompt_db_import(db_name, db_user, db_pass)
+    prompt_db_import(db_name, db_user, db_pass, docroot)
 
     step("Writing Nginx vhost config...")
     if ssl_choice == "2":
