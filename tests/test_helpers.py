@@ -34,7 +34,7 @@ import importlib.util
 def _load_servermanager():
     spec = importlib.util.spec_from_file_location(
         "zervermanager",
-        os.path.join(SCRIPT_DIR, "zervermanager.py"),
+        os.path.join(SCRIPT_DIR, "releases", "zervermanager.py"),
     )
     mod = importlib.util.module_from_spec(spec)
     mod.__name__ = "zervermanager"   # prevent __main__ block from running
@@ -493,6 +493,51 @@ class TestBugFixes(unittest.TestCase):
         with patch.object(sm, "ensure_modules"):
             _, output = capture_stdout(sm.create_https_existing)
             self.assertIn("Key not found", output)
+
+
+# ===========================================================================
+# 11. MariaDB Manager
+# ===========================================================================
+
+class TestMariaDBManager(unittest.TestCase):
+
+    def setUp(self):
+        sm.DRY_RUN = False
+
+    def test_mariadb_menu_exists(self):
+        self.assertTrue(callable(sm.mariadb_menu))
+
+    def test_mariadb_run_sql_dry_run(self):
+        sm.DRY_RUN = True
+        with patch("subprocess.run") as mock_sub:
+            result, output = capture_stdout(sm.mariadb_run_sql, "SELECT 1;", True)
+        mock_sub.assert_not_called()
+        self.assertIn("dry-run", output.lower())
+        self.assertEqual(result, "")
+
+    @patch("builtins.input", side_effect=["invalid name!", "valid_name"])
+    @patch.object(sm, "mariadb_run_sql", return_value=0)
+    def test_mariadb_db_name_validation(self, mock_run, mock_input):
+        result, output = capture_stdout(sm.mariadb_create_database)
+        self.assertIn("Invalid database name", output)
+        mock_run.assert_called_once()
+        self.assertIn("valid_name", mock_run.call_args[0][0])
+
+    @patch("builtins.input", side_effect=["testdb", ""])
+    @patch.object(sm, "mariadb_list_databases")
+    def test_mariadb_backup_dry_run(self, mock_list, mock_input):
+        sm.DRY_RUN = True
+        with patch("subprocess.Popen") as mock_popen:
+            _, output = capture_stdout(sm.mariadb_backup)
+        mock_popen.assert_not_called()
+        self.assertIn("dry-run", output.lower())
+        self.assertIn("mysqldump", output)
+
+    @patch("os.path.isfile", return_value=False)
+    @patch("builtins.input", side_effect=["/nonexistent.sql"])
+    def test_mariadb_restore_invalid_file(self, mock_input, mock_isfile):
+        result, output = capture_stdout(sm.mariadb_restore)
+        self.assertIn("File not found", output)
 
 
 if __name__ == "__main__":
