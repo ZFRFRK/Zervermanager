@@ -5660,20 +5660,113 @@ def mariadb_restore():
             else:
                 err("Restore failed.")
 
-def mariadb_menu():
+# --- OLD CODE ---
+# def mariadb_menu():
+#     while True:
+#         menu_header("Manage MariaDB")
+#         print("1. List Databases")
+#         print("2. Create Database")
+#         print("3. Drop Database")
+#         print("4. List Users")
+#         print("5. Create User")
+#         print("6. Drop User")
+#         print("7. Grant Privileges")
+#         print("8. Revoke Privileges")
+#         print("9. Change User Password")
+#         print("10. Backup Database")
+#         print("11. Restore Database")
+#         print("0. Back")
+#         menu_separator()
+#         
+#         choice = input("  Choice: ").strip()
+#         if not choice.isdigit():
+#             warn("Please enter a number.")
+#             continue
+#             
+#         if choice == "1":
+#             mariadb_list_databases()
+#         elif choice == "2":
+#             mariadb_create_database()
+#         elif choice == "3":
+#             mariadb_drop_database()
+#         elif choice == "4":
+#             mariadb_list_users()
+#         elif choice == "5":
+#             mariadb_create_user()
+#         elif choice == "6":
+#             mariadb_drop_user()
+#         elif choice == "7":
+#             mariadb_grant_privileges()
+#         elif choice == "8":
+#             mariadb_revoke_privileges()
+#         elif choice == "9":
+#             mariadb_change_password()
+#         elif choice == "10":
+#             mariadb_backup()
+#         elif choice == "11":
+#             mariadb_restore()
+#         elif choice == "0":
+#             break
+#         else:
+#             warn("Invalid choice.")
+# --- OLD CODE END ---
+
+def mariadb_inspect_database():
+    mariadb_list_databases()
+    db = input("\n  Database name to inspect: ").strip()
+    if not db:
+        return
+    if not re.match(r"^[a-zA-Z0-9_]+$", db):
+        err("Invalid database name.")
+        return
+
+    res = mariadb_run_sql(f"SHOW TABLES FROM `{db}`;", fetch=True)
+    if not res:
+        err(f"Database '{db}' does not exist or has no tables.")
+        return
+        
+    step(f"Tables in '{db}':")
+    for line in res.splitlines():
+        if line.startswith(f"Tables_in_{db}"):
+            continue
+        line = line.strip()
+        if line:
+            print(f"    - {line}")
+
     while True:
-        menu_header("Manage MariaDB")
+        table = input("\n  Enter table name to inspect (or 0 to go back): ").strip()
+        if not table or table == "0":
+            break
+            
+        if not re.match(r"^[a-zA-Z0-9_]+$", table):
+            err("Invalid table name.")
+            continue
+            
+        res_desc = mariadb_run_sql(f"DESCRIBE `{db}`.`{table}`;", fetch=True)
+        if not res_desc:
+            err(f"Table '{table}' does not exist.")
+            step(f"Tables in '{db}':")
+            for line in res.splitlines():
+                if line.startswith(f"Tables_in_{db}"):
+                    continue
+                line = line.strip()
+                if line:
+                    print(f"    - {line}")
+            continue
+            
+        step(f"Schema for `{db}`.`{table}`:")
+        for line in res_desc.splitlines():
+            print(f"    {line}")
+
+def mariadb_databases_menu():
+    while True:
+        menu_header("Manage Databases")
         print("1. List Databases")
         print("2. Create Database")
         print("3. Drop Database")
-        print("4. List Users")
-        print("5. Create User")
-        print("6. Drop User")
-        print("7. Grant Privileges")
-        print("8. Revoke Privileges")
-        print("9. Change User Password")
-        print("10. Backup Database")
-        print("11. Restore Database")
+        print("4. Inspect Database")
+        print("5. Backup Database")
+        print("6. Restore Database")
         print("0. Back")
         menu_separator()
         
@@ -5689,21 +5782,67 @@ def mariadb_menu():
         elif choice == "3":
             mariadb_drop_database()
         elif choice == "4":
-            mariadb_list_users()
+            mariadb_inspect_database()
         elif choice == "5":
-            mariadb_create_user()
-        elif choice == "6":
-            mariadb_drop_user()
-        elif choice == "7":
-            mariadb_grant_privileges()
-        elif choice == "8":
-            mariadb_revoke_privileges()
-        elif choice == "9":
-            mariadb_change_password()
-        elif choice == "10":
             mariadb_backup()
-        elif choice == "11":
+        elif choice == "6":
             mariadb_restore()
+        elif choice == "0":
+            break
+        else:
+            warn("Invalid choice.")
+
+def mariadb_users_menu():
+    while True:
+        menu_header("Manage Users")
+        print("1. List Users")
+        print("2. Create User")
+        print("3. Drop User")
+        print("4. Change User Password")
+        print("5. Grant Privileges")
+        print("6. Revoke Privileges")
+        print("0. Back")
+        menu_separator()
+        
+        choice = input("  Choice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
+            
+        if choice == "1":
+            mariadb_list_users()
+        elif choice == "2":
+            mariadb_create_user()
+        elif choice == "3":
+            mariadb_drop_user()
+        elif choice == "4":
+            mariadb_change_password()
+        elif choice == "5":
+            mariadb_grant_privileges()
+        elif choice == "6":
+            mariadb_revoke_privileges()
+        elif choice == "0":
+            break
+        else:
+            warn("Invalid choice.")
+
+def mariadb_menu():
+    while True:
+        menu_header("Manage MariaDB")
+        print("1. Manage Databases")
+        print("2. Manage Users")
+        print("0. Back")
+        menu_separator()
+        
+        choice = input("  Choice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
+            
+        if choice == "1":
+            mariadb_databases_menu()
+        elif choice == "2":
+            mariadb_users_menu()
         elif choice == "0":
             break
         else:
