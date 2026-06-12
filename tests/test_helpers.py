@@ -32,10 +32,19 @@ if not hasattr(os, "geteuid"):
 import importlib.util
 
 def _load_servermanager():
-    spec = importlib.util.spec_from_file_location(
-        "zervermanager",
+    # Try releases/ first; fall back to the repo root for environments
+    # where the releases sub-directory isn't populated (e.g. CI / dev clones).
+    candidates = [
         os.path.join(SCRIPT_DIR, "releases", "zervermanager.py"),
-    )
+        os.path.join(SCRIPT_DIR, "zervermanager.py"),
+    ]
+    script_path = next((p for p in candidates if os.path.isfile(p)), None)
+    if script_path is None:
+        raise FileNotFoundError(
+            "Cannot find zervermanager.py in releases/ or the repo root. "
+            f"Searched: {candidates}"
+        )
+    spec = importlib.util.spec_from_file_location("zervermanager", script_path)
     mod = importlib.util.module_from_spec(spec)
     mod.__name__ = "zervermanager"   # prevent __main__ block from running
     with patch("os.geteuid", return_value=0):
