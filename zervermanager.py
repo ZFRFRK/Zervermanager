@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-SCRIPT_VERSION = "1.2.6"
+SCRIPT_VERSION = "1.3.0"
 
 import os
 import re
@@ -97,6 +97,8 @@ def ask_docroot(prompt, default=""):
 def safe_write(filepath, content):
     try:
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        if not str(filepath).endswith('.json'):
+            backup_config(filepath)
         with open(filepath, "w") as f:
             f.write(content)
         return True
@@ -143,6 +145,23 @@ def warn(msg): print(f"{C.YELLOW}  ! {msg}{C.RESET}")
 def info(msg): print(f"{C.BLUE}  → {msg}{C.RESET}")
 def step(msg): print(f"{C.CYAN}  • {msg}{C.RESET}")
 def bold(msg): print(f"{C.BOLD}{msg}{C.RESET}")
+
+def backup_config(path):
+    """
+    Creates a timestamped .bak copy of a config file before it is overwritten.
+    Does nothing if the file does not exist yet (new file creation).
+    Respects DRY_RUN mode.
+    """
+    if not os.path.isfile(path):
+        return  # file doesn't exist yet, nothing to back up
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = f"{path}.{timestamp}.bak"
+    if DRY_RUN:
+        step(f"[DRY RUN] Would backup: {path} → {backup_path}")
+        return
+    shutil.copy2(path, backup_path)
+    step(f"Backed up: {backup_path}")
+
 
 
 # ─────────────────────────────────────────
@@ -1093,6 +1112,7 @@ zone "{domain}" {{
 }};
 """
 
+    backup_config(NAMED_CONF_LOCAL)
     with open(NAMED_CONF_LOCAL, "a") as f:
         f.write(block)
 
@@ -1108,6 +1128,7 @@ def remove_zone_from_conf(domain):
 
     new_content = re.sub(pattern, "\n", content)
 
+    backup_config(NAMED_CONF_LOCAL)
     with open(NAMED_CONF_LOCAL, "w") as f:
         f.write(new_content)
 
@@ -1143,6 +1164,7 @@ $TTL    604800
 www IN  A       {ip}
 """
 
+    backup_config(zonefile)
     with open(zonefile, "w") as f:
         f.write(content)
 
@@ -1164,6 +1186,7 @@ $TTL    604800
 {octet}     IN  PTR     {domain}.
 """
 
+    backup_config(zonefile)
     with open(zonefile, "w") as f:
         f.write(content)
 
@@ -1413,6 +1436,7 @@ def add_mx_record():
             sub = mail_host.split(".")[0]
             content += f"{sub}    IN  A   {mail_ip}\n"
 
+        backup_config(zonefile)
         with open(zonefile, "w") as f:
             f.write(content)
 
@@ -1493,6 +1517,7 @@ def remove_mx_record():
             "".join(l for i, l in enumerate(lines) if i not in to_remove)
         )
 
+        backup_config(zonefile)
         with open(zonefile, "w") as f:
             f.write(new_content)
 
@@ -2808,6 +2833,7 @@ def modify_full_site():
                 updated
             )
 
+            backup_config(conf)
             with open(conf, "w") as f:
                 f.write(updated)
 
@@ -2847,6 +2873,7 @@ def modify_full_site():
 
             new_config = "\n".join(lines) + "\n"
 
+            backup_config(conf)
             with open(conf, "w") as f:
                 f.write(new_config)
 
@@ -2896,6 +2923,7 @@ def modify_full_site():
 
             # Write new vhost under NEW name (we will rename the file)
             new_conf_path = f"{APACHE_SITES_AVAILABLE}/{new_domain}.conf"
+            backup_config(new_conf_path)
             with open(new_conf_path, "w") as f:
                 f.write(new_vhost)
 
@@ -3060,6 +3088,9 @@ def full_site_menu():
         print("0. Back")
 
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
 
         if choice == "1":
             create_full_site()
@@ -3129,6 +3160,7 @@ def modify_lamp_site():
                 updated
             )
 
+            backup_config(conf)
             with open(conf, "w") as f:
                 f.write(updated)
 
@@ -3191,6 +3223,7 @@ def modify_lamp_site():
 
             new_config = "\n".join(lines) + "\n"
 
+            backup_config(conf)
             with open(conf, "w") as f:
                 f.write(new_config)
 
@@ -3243,6 +3276,9 @@ def lamp_site_menu():
         print("0. Back")
 
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
 
         if choice == "1":
             create_lamp_site()
@@ -3282,6 +3318,9 @@ def apache_menu():
         print("0.  Back")
 
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
 
         if choice == "1":
             create_http_site()
@@ -3474,6 +3513,7 @@ def modify_nginx_full_site():
 
             updated = re.sub(r"root\s+\S+;", f"root {new_docroot};", current)
 
+            backup_config(conf)
             with open(conf, "w") as f:
                 f.write(updated)
 
@@ -3499,6 +3539,7 @@ def modify_nginx_full_site():
 
             new_config = "\n".join(lines) + "\n"
 
+            backup_config(conf)
             with open(conf, "w") as f:
                 f.write(new_config)
 
@@ -3545,6 +3586,9 @@ def full_nginx_site_menu():
         print("0. Back")
 
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
 
         if choice == "1":
             create_nginx_full_site()
@@ -3874,6 +3918,7 @@ def modify_lemp_site():
 
             updated = re.sub(r"root\s+\S+;", f"root {new_docroot};", current)
 
+            backup_config(conf)
             with open(conf, "w") as f:
                 f.write(updated)
 
@@ -3924,6 +3969,7 @@ def modify_lemp_site():
 
             new_config = "\n".join(lines) + "\n"
 
+            backup_config(conf)
             with open(conf, "w") as f:
                 f.write(new_config)
 
@@ -3970,6 +4016,9 @@ def lemp_site_menu():
         print("0. Back")
 
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
 
         if choice == "1":
             create_lemp_site()
@@ -4008,6 +4057,9 @@ def nginx_menu():
         print("0. Back")
 
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
 
         if choice == "1":
             create_nginx_http_site()
@@ -4055,6 +4107,9 @@ def nginx_site_menu():
         print("0. Back")
 
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
 
         if choice == "1":   full_nginx_site_menu()
         elif choice == "2": lemp_site_menu()
@@ -4083,6 +4138,9 @@ def bind9_menu():
         print("0.  Back")
 
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
 
         if choice == "1":
             create_forward_zone()
@@ -4169,6 +4227,9 @@ def static_apache_menu():
         print("5. List sites")
         print("0. Back")
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
         if choice == "1":   create_apache_static_site()
         elif choice == "2": delete_apache_site()
         elif choice == "3": enable_existing_site()
@@ -4188,6 +4249,9 @@ def static_nginx_menu():
         print("5. List sites")
         print("0. Back")
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
         if choice == "1":   create_nginx_static_site()
         elif choice == "2": delete_nginx_site()
         elif choice == "3": enable_nginx_existing_site()
@@ -4386,6 +4450,9 @@ def reverse_proxy_apache_menu():
         print("3. List sites")
         print("0. Back")
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
         if choice == "1":   create_apache_reverse_proxy()
         elif choice == "2": delete_apache_site()
         elif choice == "3": list_apache_sites()
@@ -4401,6 +4468,9 @@ def reverse_proxy_nginx_menu():
         print("3. List sites")
         print("0. Back")
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
         if choice == "1":   create_nginx_reverse_proxy()
         elif choice == "2": delete_nginx_site()
         elif choice == "3": list_nginx_sites()
@@ -4738,6 +4808,9 @@ def wordpress_apache_menu():
         print("3. List sites")
         print("0. Back")
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
         if choice == "1":   create_apache_wordpress_site()
         elif choice == "2": delete_apache_site()
         elif choice == "3": list_apache_sites()
@@ -4753,6 +4826,9 @@ def wordpress_nginx_menu():
         print("3. List sites")
         print("0. Back")
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
         if choice == "1":   create_nginx_wordpress_site()
         elif choice == "2": delete_nginx_site()
         elif choice == "3": list_nginx_sites()
@@ -4842,6 +4918,9 @@ def letsencrypt_apache_menu():
         print("4. List sites")
         print("0. Back")
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
         if choice == "1":   create_apache_letsencrypt_site()
         elif choice == "2":
             step("Renewing all certificates...")
@@ -4863,6 +4942,9 @@ def letsencrypt_nginx_menu():
         print("4. List sites")
         print("0. Back")
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
         if choice == "1":   create_nginx_letsencrypt_site()
         elif choice == "2":
             step("Renewing all certificates...")
@@ -4896,6 +4978,9 @@ def apache_site_menu():
         print("0. Back")
 
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
 
         if choice == "1":   full_site_menu()
         elif choice == "2": lamp_site_menu()
@@ -5169,6 +5254,7 @@ def set_interface_static():
 
     new_content = _replace_iface_block(content, iface_name, new_block)
 
+    backup_config(NETWORK_INTERFACES)
     with open(NETWORK_INTERFACES, "w") as f:
         f.write(new_content)
 
@@ -5203,6 +5289,7 @@ def set_interface_dhcp():
 
     new_content = _replace_iface_block(content, iface_name, new_block)
 
+    backup_config(NETWORK_INTERFACES)
     with open(NETWORK_INTERFACES, "w") as f:
         f.write(new_content)
 
@@ -5246,6 +5333,9 @@ def manage_server_ip():
         print("0. Back")
 
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
 
         if choice == "1":
             show_current_ip_config()
@@ -5474,6 +5564,7 @@ def ensure_dependencies(auto_install=True):
             if DRY_RUN:
                 step(f"[dry-run] Would create {NAMED_CONF_LOCAL}")
             else:
+                backup_config(NAMED_CONF_LOCAL)
                 with open(NAMED_CONF_LOCAL, "w") as f:
                     f.write("// Local zones\n")
                 ok("Created empty named.conf.local.")
@@ -6162,6 +6253,7 @@ roundcube-core roundcube/database-type select sqlite3
 """
     
     vhost_path = f"/etc/apache2/sites-available/{webmail_domain}.conf"
+    backup_config(vhost_path)
     with open(vhost_path, "w") as f:
         f.write(vhost_content)
         
@@ -6172,6 +6264,7 @@ roundcube-core roundcube/database-type select sqlite3
     # Configure Postfix and Dovecot for Maildir format
     step("Configuring Postfix and Dovecot for Maildir...")
     run(["/usr/sbin/postconf", "-e", "home_mailbox = Maildir/"])
+    backup_config("/etc/dovecot/conf.d/99-local-mail.conf")
     with open("/etc/dovecot/conf.d/99-local-mail.conf", "w") as f:
         f.write("mail_location = maildir:~/Maildir\n")
         f.write("auth_username_format = %n\n")
@@ -6184,6 +6277,7 @@ roundcube-core roundcube/database-type select sqlite3
     step("Configuring Roundcube specific settings...")
     rc_conf = "/etc/roundcube/config.inc.php"
     if os.path.exists(rc_conf):
+        backup_config(rc_conf)
         with open(rc_conf, "a") as f:
             f.write(f"\n// Custom settings added by servermanager\n")
             f.write(f"$config['smtp_host'] = 'localhost:25';\n")
@@ -6210,6 +6304,7 @@ roundcube-core roundcube/database-type select sqlite3
             zcontent += f"\n; Mail server records\n"
             zcontent += f"mail    IN  A       {ip}\n"
             zcontent += f"@       IN  MX  10  {webmail_domain}.\n"
+            backup_config(fwd_file)
             with open(fwd_file, "w") as f:
                 f.write(zcontent)
             ok("Mail records appended to forward zone.")
@@ -6399,6 +6494,9 @@ def mail_server_menu():
         print("0. Back")
 
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
 
         if choice == "1":
             setup_mail_server()
@@ -6487,6 +6585,9 @@ def ftp_server_menu():
         print("0. Back")
 
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
 
         if choice == "1":
             setup_ftp_server()
@@ -6565,6 +6666,9 @@ def phpmyadmin_menu():
         print("0. Back")
 
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
 
         if choice == "1":
             setup_phpmyadmin()
@@ -6609,6 +6713,7 @@ def setup_samba():
    directory mask = 0775
 """
     try:
+        backup_config("/etc/samba/smb.conf")
         with open("/etc/samba/smb.conf", "a") as f:
             f.write(smb_block)
         ok(f"Share '{share_name}' added to /etc/samba/smb.conf")
@@ -6648,6 +6753,9 @@ def samba_menu():
         print("0. Back")
 
         choice = input("  \nChoice: ").strip()
+        if not choice.isdigit():
+            warn("Please enter a number.")
+            continue
 
         if choice == "1":
             setup_samba()
