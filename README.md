@@ -39,6 +39,22 @@ Self-contained using only the Python standard library — deployable instantly o
 | Let's Encrypt SSL (Nginx) | Certbot + Nginx | Same for Nginx |
 | Self-signed SSL | Apache / Nginx | Generates a self-signed certificate for internal or development use |
 
+### MariaDB Manager *(new in v1.2.0)*
+
+| Feature | Description |
+|---|---|
+| List Databases | Show all non-system databases |
+| Create Database | utf8mb4, with name validation |
+| Drop Database | Requires typed confirmation |
+| List Users | All `@localhost` users |
+| Create User | With password |
+| Drop User | Requires typed confirmation |
+| Grant Privileges | ALL, DML, or SELECT level |
+| Revoke Privileges | Revokes all grants on a database |
+| Change User Password | Immediate effect with FLUSH |
+| Backup Database | `mysqldump` to a `.sql` file |
+| Restore Database | stdin restore with confirmation prompt |
+
 ### Mail Server
 
 - **SMTP** via Postfix and **IMAP** via Dovecot, configured with the modern Maildir format
@@ -117,19 +133,14 @@ The script detects these systems and prompts for confirmation before proceeding.
 
 ## Installation and Usage
 
-Download the latest `zervermanager.py` from the **[Releases page](https://github.com/ZFRFRK/Zervermanager/releases)**.
-
-**1. Make the script executable:**
 ```bash
+git clone https://github.com/ZFRFRK/Zervermanager.git
+cd Zervermanager
 chmod +x zervermanager.py
-```
-
-**2. Run the server manager:**
-```bash
 sudo python3 zervermanager.py
 ```
 
-**3. Dry-run mode** — preview all actions without making any system changes:
+**Dry-run mode** — preview all actions without making any system changes:
 ```bash
 sudo python3 zervermanager.py --dry-run
 ```
@@ -142,9 +153,8 @@ The `tests/` directory contains a comprehensive unit test suite covering subproc
 
 ### Syntax Check
 
-Before committing, verify there are no Python syntax errors:
 ```bash
-python3 -m py_compile zervermanager_latest_stable.py && echo "OK"
+python3 -m py_compile zervermanager.py && echo "OK"
 ```
 
 ### Run Unit Tests
@@ -153,13 +163,12 @@ python3 -m py_compile zervermanager_latest_stable.py && echo "OK"
 python3 tests/run_tests.py
 ```
 
-All 40 tests must pass with the `All tests passed` result.
+All 45 tests must pass with the `All tests passed` result.
 
 ### Dry-run Smoke Test
 
-Confirm the script starts, completes dependency checks, and reaches the main menu without errors:
 ```bash
-sudo python3 zervermanager_latest_stable.py --dry-run
+sudo python3 zervermanager.py --dry-run
 ```
 
 ---
@@ -168,12 +177,12 @@ sudo python3 zervermanager_latest_stable.py --dry-run
 
 | Priority | Feature |
 |---|---|
-| Medium | `time.sleep` skip flag for faster test runs (`FAST_MODE` environment variable) |
-| Medium | Per-menu input validation for all sub-menus |
-| Medium | Firewall rule summary screen after applying UFW rules |
-| Low | Timestamped configuration backup before overwriting Apache / BIND9 config files |
+| High | Safer code — per-menu input validation for all sub-menus |
+| High | Safer code — timestamped configuration backup before overwriting config files |
+| Medium | New features — `time.sleep` skip flag for faster test runs (`FAST_MODE` environment variable) |
+| Medium | New features — Firewall rule summary screen after applying UFW rules |
 | Low | `--version` CLI flag |
-| Planned | Full Ubuntu 20.04 / 22.04 / 24.04 LTS support |
+| Low | Full Ubuntu 20.04 / 22.04 / 24.04 LTS support |
 
 ---
 
