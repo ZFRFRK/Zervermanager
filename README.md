@@ -1,193 +1,148 @@
-# Zervermanager
+# ⚡ Zervermanager v1.3.0 ⚡
 
-![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
-![Python 3](https://img.shields.io/badge/Python-3-blue?logo=python&logoColor=white)
-![Platform: Debian 12](https://img.shields.io/badge/Platform-Debian%2012-red?logo=debian&logoColor=white)
-![Status: Stable](https://img.shields.io/badge/Status-Stable-brightgreen)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Python 3](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![Platform: Debian 12](https://img.shields.io/badge/Platform-Debian%2012-red?logo=debian&logoColor=white)](https://www.debian.org/)
+[![Status: Release](https://img.shields.io/badge/Status-Stable%20v1.3.0-green.svg)]()
 
-A robust, interactive Python 3 command-line tool for automating the complete setup and management of a Debian 12 (Bookworm) web hosting, mail, and DNS server environment.
+> 🚀 **Welcome to the largest, most feature-packed release of Zervermanager yet!** v1.3.0 introduces next-level automation, complete config safety, interactive database inspection, and refined control interfaces for web hosting administrators.
 
-Self-contained using only the Python standard library — deployable instantly on any fresh minimal Debian installation with zero external dependencies.
+A robust, interactive, zero-dependency Python 3 command-line suite for automating the complete setup, configuration, and maintenance of a Debian 12 (Bookworm) web hosting, mail, and DNS server environment. 
+
+Deployable instantly on any fresh minimal Debian installation with standard libraries only—no `pip` installs or virtual environments required.
 
 ---
 
-## Table of Contents
+## 🗺️ What's New in v1.3.0 (The Mega Update)
+
+### 🛡️ Automatic Configuration Backups (`backup_config`)
+Never lose a working config again. Zervermanager now automatically creates timestamped backups (e.g. `.bak.YYYYMMDD_HHMMSS`) before editing or overwriting any critical configuration file:
+*   Apache Virtual Hosts & Nginx Site Profiles
+*   BIND9 DNS Zone configurations
+*   Postfix, Dovecot, Roundcube webmail files
+*   Samba configuration files (`smb.conf`)
+
+### 🗃️ Ultimate MariaDB Manager & Inspector
+The database control room has been completely overhauled and split into logical modules:
+*   **Logical Sub-menus**: Restructured into separate menus for **Database Management** and **User Management**.
+*   **Interactive Database Inspector**: View your tables dynamically from the CLI, inspect table schema (`DESCRIBE` output), and run limited (`LIMIT 50`) data previews safely without terminal flooding.
+*   **Instant SQL Imports**: When creating a LAMP or LEMP site, the tool now prompts you to import an existing database dump (`.sql`) immediately.
+
+### 💖 Refined Console Visuals & Secret Tributary
+*   **Dynamic Startup Splash**: Vibrant startup screens with auto-tiering OS compatibility checks.
+*   **Mai Ouzuka Tribute**: An easter egg screen featuring the birthday tribute, accessible by entering `0831` at the main menu.
+
+---
+
+## 📋 Table of Contents
 
 - [Features](#features)
 - [Prerequisites](#prerequisites)
-- [OS Compatibility](#os-compatibility)
+- [OS Compatibility Matrix](#os-compatibility-matrix)
 - [Installation and Usage](#installation-and-usage)
 - [Development and Testing](#development-and-testing)
-- [Roadmap](#roadmap)
+- [Roadmap & Future Goals](#roadmap--future-goals)
 - [License](#license)
 
 ---
 
-## Features
+## 🌟 Core Features
 
-### Web Hosting
+### 🌐 Web Hosting (Apache & Nginx)
+*   **Full LAMP Site**: Standard vhost configuration, dedicated MariaDB database, user creation, PHP settings, and optional DNS.
+*   **Full LEMP Site**: Nginx + MySQL + PHP-FPM configuration using Unix domain sockets.
+*   **Reverse Proxy**: Easily route incoming traffic to backend nodes (Node.js, Docker containers, Python, Go apps).
+*   **Static Sites**: Quick configuration to serve plain HTML directories.
+*   **WordPress Auto-Installer**: Complete WordPress environment setup (database, configuration, directory setup, server block).
+*   **Let's Encrypt Integration**: Instant SSL configuration via `certbot` for both Apache and Nginx.
+*   **Self-Signed SSL**: Local/development certificates generated via `openssl` instantly.
 
-| Feature | Stack | Description |
-|---|---|---|
-| Full LAMP site | Apache + MySQL + PHP | Creates virtual host, database, PHP configuration, and optional DNS zone |
-| Full LEMP site | Nginx + MySQL + PHP-FPM | Same as above for Nginx |
-| Static site | Apache or Nginx | Serves plain HTML from `/var/www/<domain>` |
-| Reverse proxy | Apache or Nginx | Proxies to a backend application (Node.js, Python, Docker, etc.) |
-| WordPress (Apache) | Apache + MySQL + PHP | Full WordPress installation with database, wp-config, virtual host, and optional DNS |
-| WordPress (Nginx) | Nginx + MySQL + PHP-FPM | Full WordPress installation on Nginx with FPM socket |
-| Let's Encrypt SSL (Apache) | Certbot + Apache | Obtains and installs a TLS certificate with automatic renewal |
-| Let's Encrypt SSL (Nginx) | Certbot + Nginx | Same for Nginx |
-| Self-signed SSL | Apache / Nginx | Generates a self-signed certificate for internal or development use |
+### ✉️ Enterprise Mail Server
+*   **SMTP & IMAP**: Fully configured Postfix (SMTP) and Dovecot (IMAP) using the modern, high-performance **Maildir** format.
+*   **Roundcube Webmail**: Fully integrated out-of-the-box browser interface.
+*   **Local PAM Security**: System-isolated mail users locked under the `mailuser` group with `nologin` shells.
 
-### MariaDB Manager *(new in v1.2.0)*
-
-| Feature | Description |
-|---|---|
-| List Databases | Show all non-system databases |
-| Create Database | utf8mb4, with name validation |
-| Drop Database | Requires typed confirmation |
-| List Users | All `@localhost` users |
-| Create User | With password |
-| Drop User | Requires typed confirmation |
-| Grant Privileges | ALL, DML, or SELECT level |
-| Revoke Privileges | Revokes all grants on a database |
-| Change User Password | Immediate effect with FLUSH |
-| Backup Database | `mysqldump` to a `.sql` file |
-| Restore Database | stdin restore with confirmation prompt |
-
-### Mail Server
-
-- **SMTP** via Postfix and **IMAP** via Dovecot, configured with the modern Maildir format
-- **Roundcube Webmail** for browser-based mail management
-- System-isolated mail users under the `mailuser` group with PAM-based local authentication
-
-### Infrastructure Services
-
-| Service | Description |
-|---|---|
-| Mail Server | Full stack: Postfix (SMTP) + Dovecot (IMAP) + Roundcube (Webmail) |
-| FTP Server | vsftpd with per-user directory isolation |
-| phpMyAdmin | Web-based MySQL administration interface |
-| Samba | Windows-compatible network file sharing |
-
-### Server Management
-
-| Feature | Description |
-|---|---|
-| Network IP Management | Configure network interfaces via `/etc/network/interfaces` or Netplan |
-| Service Control | Start, stop, restart, enable, and disable systemd services from the CLI |
-| Firewall Management | Enable/disable UFW, open/close ports, list active rules |
-
-### DNS (BIND9)
-
-Complete zone management — create forward and reverse zones, add and remove A records, and validate configuration with `named-checkconf` and `named-checkzone`.
-
-### System
-
-| Feature | Description |
-|---|---|
-| Startup loading screen | OS tier detection (supported / uncertain / unsupported) and dependency pre-check |
-| Dry-run mode (`--dry-run`) | Simulates all system commands without modifying the server |
-| Auto-install dependencies | Prompts to install apache2, bind9, and ifupdown if missing |
+### 📡 Infrastructure & Server Management
+*   **DNS BIND9 Engine**: Full zone administration (forward/reverse zones, automated serial numbers, dynamic A records) with syntax checking.
+*   **FTP Server (vsftpd)**: Secure file transfers with per-user directory jails.
+*   **phpMyAdmin**: Web administration portal for MariaDB databases.
+*   **Samba File Sharing**: Windows-friendly network sharing.
+*   **System Controls**: Start/stop/restart/enable/disable systemd units and monitor service status from the menu.
+*   **Firewall Controls**: Simple interfaces to manage UFW rules and open/close ports.
 
 ---
 
-## Prerequisites
+## 🛠️ Prerequisites
 
-- **Operating System:** Debian 12 (Bookworm) — recommended and fully supported
-- **Access:** Root or `sudo` privileges (enforced at startup)
-- **Runtime:** Python 3 standard installation — no pip, no virtual environment required
-
----
-
-## OS Compatibility
-
-### Supported (fully tested)
-
-| OS | Version |
-|---|---|
-| Debian GNU/Linux | 12 (Bookworm) |
-
-### Uncertain (recognised, may partially work)
-
-The script detects these systems and prompts for confirmation before proceeding.
-
-| OS | Known Limitations |
-|---|---|
-| Debian GNU/Linux 11 (Bullseye) | Package versions and paths may differ |
-| Debian GNU/Linux 13 (Trixie / testing) | Newer package names may break apt commands |
-| Ubuntu 20.04, 22.04, 24.04 LTS | Service names, paths, and PHP versions differ |
-| Raspberry Pi OS (Bullseye / Bookworm) | Limited testing; ARM architecture may cause issues |
-
-### Unsupported
-
-| OS | Reason |
-|---|---|
-| Arch Linux / Manjaro | Uses `pacman`, not `apt-get` |
-| CentOS / RHEL / Fedora | Uses `dnf` / `yum`; different service names and file paths |
-| Alpine Linux | Uses `apk`; no `apt-get` |
-| FreeBSD / OpenBSD | Not Linux; `systemctl` unavailable |
-| Windows / non-Debian WSL | Not a target environment |
+*   **Operating System**: Debian 12 (Bookworm) is recommended and fully supported.
+*   **Access**: Root privileges (`sudo`) required.
+*   **Runtime**: Python 3 standard distribution (no third-party pip dependencies required!).
 
 ---
 
-## Installation and Usage
+## 🖥️ OS Compatibility Matrix
+
+| Tier | OS | Version | Support Status |
+|---|---|---|---|
+| **Supported** | Debian GNU/Linux | 12 (Bookworm) | **Fully Tested & Certified** |
+| **Uncertain** | Debian GNU/Linux | 11 (Bullseye) | Partially works; paths/packages may differ |
+| **Uncertain** | Debian GNU/Linux | 13 (Trixie) | Newer packages might mismatch |
+| **Uncertain** | Ubuntu | 20.04 / 22.04 / 24.04 | Package name and service name differences |
+| **Uncertain** | Raspberry Pi OS | Bullseye / Bookworm | Limited ARM architecture validation |
+| **Unsupported** | Arch Linux / RHEL / Alpine | Any | Incompatible package managers (`pacman`, `dnf`, `apk`) |
+
+---
+
+## 🚀 Installation and Usage
+
+Clone the repository and run the master script directly on your server:
 
 ```bash
+# Clone the repository
 git clone https://github.com/ZFRFRK/Zervermanager.git
 cd Zervermanager
+
+# Grant execution rights
 chmod +x zervermanager.py
+
+# Launch the interactive manager
 sudo python3 zervermanager.py
 ```
 
-**Dry-run mode** — preview all actions without making any system changes:
+### 🔍 Dry-Run Mode (Safe Mode)
+Want to inspect the actions first? Use the `--dry-run` flag to simulate all configurations and commands without modifying a single system file:
+
 ```bash
 sudo python3 zervermanager.py --dry-run
 ```
 
-*Tip: A secret dedication to Ouzuka Mai is hidden in the main menu for those who know the correct date.*
-
 ---
 
-## Development and Testing
+## 🧪 Development and Testing
 
-The `tests/` directory contains a comprehensive unit test suite covering subprocess wrappers, dry-run safety, input validators, output helpers, and menu logic.
+The project maintains a unit test suite under `/tests` ensuring the safety and stability of all functions.
 
-### Syntax Check
-
+### Run Syntax Checks
 ```bash
-python3 -m py_compile zervermanager.py && echo "OK"
+python3 -m py_compile zervermanager.py && echo "Syntax OK"
 ```
 
 ### Run Unit Tests
-
 ```bash
 python3 tests/run_tests.py
 ```
 
-All 45 tests must pass with the `All tests passed` result.
+---
 
-### Dry-run Smoke Test
+## 🔮 Roadmap
 
-```bash
-sudo python3 zervermanager.py --dry-run
-```
+- [ ] **Firewall rules visualization**: Display a clean rules table summary inside UFW controls.
+- [ ] **Skip Sleep flag (`FAST_MODE`)**: Environment variable to skip script sleeps during dry-runs/tests.
+- [ ] **Extended Ubuntu support**: Support configuration paths and package matrices for Ubuntu LTS versions.
+- [ ] **CLI Version command**: `--version` flag to print current release info directly.
 
 ---
 
-## Roadmap
-
-| Priority | Feature |
-|---|---|
-| High | Safer code — per-menu input validation for all sub-menus |
-| High | Safer code — timestamped configuration backup before overwriting config files |
-| Medium | New features — `time.sleep` skip flag for faster test runs (`FAST_MODE` environment variable) |
-| Medium | New features — Firewall rule summary screen after applying UFW rules |
-| Low | `--version` CLI flag |
-| Low | Full Ubuntu 20.04 / 22.04 / 24.04 LTS support |
-
----
-
-## License
+## 📄 License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
