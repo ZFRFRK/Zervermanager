@@ -3,9 +3,7 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Python 3](https://img.shields.io/badge/Python-3-blue?logo=python&logoColor=white)
 ![Platform: Debian 12](https://img.shields.io/badge/Platform-Debian%2012-red?logo=debian&logoColor=white)
-![Status: Unstable](https://img.shields.io/badge/Status-Unstable-orange)
-
-> ⚠️ **You are on the `dev` branch (v1.2.0 — unstable).** For the latest stable release, switch to the [`main`](https://github.com/ZFRFRK/Zervermanager/tree/main) branch.
+![Status: Stable](https://img.shields.io/badge/Status-Stable-brightgreen)
 
 A robust, interactive Python 3 command-line tool for automating the complete setup and management of a Debian 12 (Bookworm) web hosting, mail, and DNS server environment.
 
@@ -135,19 +133,8 @@ The script detects these systems and prompts for confirmation before proceeding.
 
 ## Installation and Usage
 
-### Stable (v1.0.0)
-
 ```bash
 git clone https://github.com/ZFRFRK/Zervermanager.git
-cd Zervermanager
-chmod +x zervermanager.py
-sudo python3 zervermanager.py
-```
-
-### Unstable (v1.2.0 — dev branch)
-
-```bash
-git clone -b dev https://github.com/ZFRFRK/Zervermanager.git
 cd Zervermanager
 chmod +x zervermanager.py
 sudo python3 zervermanager.py
@@ -176,7 +163,7 @@ python3 -m py_compile zervermanager.py && echo "OK"
 python3 tests/run_tests.py
 ```
 
-All 40 tests must pass with the `All tests passed` result.
+All 45 tests must pass with the `All tests passed` result.
 
 ### Dry-run Smoke Test
 
@@ -190,12 +177,12 @@ sudo python3 zervermanager.py --dry-run
 
 | Priority | Feature |
 |---|---|
-| Medium | `time.sleep` skip flag for faster test runs (`FAST_MODE` environment variable) |
-| Medium | Per-menu input validation for all sub-menus |
-| Medium | Firewall rule summary screen after applying UFW rules |
-| Low | Timestamped configuration backup before overwriting Apache / BIND9 config files |
+| High | Safer code — per-menu input validation for all sub-menus |
+| High | Safer code — timestamped configuration backup before overwriting config files |
+| Medium | New features — `time.sleep` skip flag for faster test runs (`FAST_MODE` environment variable) |
+| Medium | New features — Firewall rule summary screen after applying UFW rules |
 | Low | `--version` CLI flag |
-| Planned | Full Ubuntu 20.04 / 22.04 / 24.04 LTS support |
+| Low | Full Ubuntu 20.04 / 22.04 / 24.04 LTS support |
 
 ---
 
