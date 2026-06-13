@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-SCRIPT_VERSION = "1.2.5"
+SCRIPT_VERSION = "1.2.6"
 
 import os
 import re
@@ -120,6 +120,7 @@ NGINX_SITES_ENABLED   = "/etc/nginx/sites-enabled"
 DRY_RUN = False
 SHOW_SPLASH = True        # set to False to disable the splash screen
 EASTER_EGG_ENABLED = True # set to False to disable the easter egg entirely
+MAI_PERSONAL_MESSAGE = "[ I love you, Mai ]"   # ← replace this with your own words
 current_menu_width = 45
 
 # ─────────────────────────────────────────
@@ -177,25 +178,38 @@ def show_splash():
 
 def show_mai_easter_egg():
     """Hidden tribute screen — triggered by typing 0831 at the main menu."""
+    import datetime
     DIVIDER = "─" * 48
+    BORDER = "✦ ══════════════════════════════ ✦"
     couple_line = f"ZFRFRK {HEART} Ouzuka Mai"
 
     print()
+    print(f"{C.CYAN}{BORDER.center(52)}{C.RESET}")
+    print(f"{C.BOLD}  ", end="")
+    for char in "Oozuka Mai":
+        print(char, end="", flush=True)
+        time.sleep(0.07)
+    print("  王塚真唯" + C.RESET)
+    print(f"  {C.DIM}Super School Darling{C.RESET}")
+    print(f"  {C.DIM}August 31{C.RESET}")
     print(f"{C.CYAN}  {DIVIDER}{C.RESET}")
-    print(f"{C.BOLD}  Oozuka Mai  \u738b\u585a\u771e\u5531{C.RESET}")
-    print(f"  Super School Darling")
-    print(f"  Birthday: August 31")
+    
+    quote = "\"Somehow, it seems like I've fallen in love with you.\""
+    print(f"{C.DIM}{quote.center(52)}{C.RESET}")
     print(f"{C.CYAN}  {DIVIDER}{C.RESET}")
-    print()
-    print(f"  {C.DIM}\"Somehow, it seems like I've fallen in love with you.\"{C.RESET}")
-    print()
+    print(f"{MAI_PERSONAL_MESSAGE.center(52)}")
     print(f"{C.CYAN}  {DIVIDER}{C.RESET}")
+    
+    today = datetime.date.today()
+    if today.month == 8 and today.day == 31:
+        print("✦ Happy Birthday, Mai ✦".center(52))
+        
     print(f"{C.DIM}{couple_line.center(52)}{C.RESET}")
-    print(f"{C.CYAN}  {DIVIDER}{C.RESET}")
+    print(f"{C.CYAN}{BORDER.center(52)}{C.RESET}")
     print()
 
-    # OPTION A — Fixed duration (recommended)
-    time.sleep(3)
+    # OPTION A — Fixed duration: show for N seconds then return to main menu
+    time.sleep(4)
     # OPTION B — Wait for keypress
     # input("  Press Enter to continue...")
     # OPTION C — No delay (useful for testing)
