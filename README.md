@@ -145,6 +145,8 @@ sudo python3 zervermanager.py
 sudo python3 zervermanager.py --dry-run
 ```
 
+*Tip: A secret dedication to Ouzuka Mai is hidden in the main menu for those who know the correct date.*
+
 ---
 
 ## Development and Testing
