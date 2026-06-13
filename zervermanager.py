@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-SCRIPT_VERSION = "1.2.1"
+SCRIPT_VERSION = "1.2.4"
 
 import os
 import re
@@ -118,6 +118,7 @@ NGINX_SITES_ENABLED   = "/etc/nginx/sites-enabled"
 
 # Set to True via --dry-run CLI flag; makes run()/run_live() print-and-no-op.
 DRY_RUN = False
+SHOW_SPLASH = True   # set to False to disable the splash screen
 current_menu_width = 45
 
 # ─────────────────────────────────────────
@@ -140,6 +141,37 @@ def warn(msg): print(f"{C.YELLOW}  ! {msg}{C.RESET}")
 def info(msg): print(f"{C.BLUE}  → {msg}{C.RESET}")
 def step(msg): print(f"{C.CYAN}  • {msg}{C.RESET}")
 def bold(msg): print(f"{C.BOLD}{msg}{C.RESET}")
+
+
+# ─────────────────────────────────────────
+#  Splash screen
+# ─────────────────────────────────────────
+
+HEART = "♥"
+# HEART = "<3"  # ASCII fallback for older terminals
+
+def show_splash():
+    """Display a brief splash screen before the main loading sequence."""
+    DIVIDER = "─" * 48
+    couple_line = f"ZFRFRK {HEART} Ouzuka Mai"
+
+    print()
+    print(f"{C.BOLD}  Zervermanager{C.RESET}")
+    print(f"  An automated Debian 12 server setup & management tool")
+    print(f"{C.CYAN}  {DIVIDER}{C.RESET}")
+    print(f"  Version     : v{SCRIPT_VERSION}")
+    print(f"  Created by  : ZFRFRK")
+    print(f"  GitHub      : github.com/ZFRFRK/Zervermanager")
+    print(f"{C.CYAN}  {DIVIDER}{C.RESET}")
+    print(f"{C.DIM}{couple_line.center(52)}{C.RESET}")
+    print()
+
+    # OPTION A — Fixed duration (recommended)
+    time.sleep(1.5)
+    # OPTION B — Wait for keypress
+    # input("  Press Enter to continue...")
+    # OPTION C — No delay (useful for testing)
+    # pass
 
 
 # ─────────────────────────────────────────
@@ -6822,6 +6854,9 @@ def main():
     os.environ["PATH"] = current_path
 
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
+
+    if SHOW_SPLASH:
+        show_splash()
 
     show_loading_screen()
 
