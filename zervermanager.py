@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-SCRIPT_VERSION = "1.2.4"
+SCRIPT_VERSION = "1.2.5"
 
 import os
 import re
@@ -118,7 +118,8 @@ NGINX_SITES_ENABLED   = "/etc/nginx/sites-enabled"
 
 # Set to True via --dry-run CLI flag; makes run()/run_live() print-and-no-op.
 DRY_RUN = False
-SHOW_SPLASH = True   # set to False to disable the splash screen
+SHOW_SPLASH = True        # set to False to disable the splash screen
+EASTER_EGG_ENABLED = True # set to False to disable the easter egg entirely
 current_menu_width = 45
 
 # ─────────────────────────────────────────
@@ -168,6 +169,33 @@ def show_splash():
 
     # OPTION A — Fixed duration (recommended)
     time.sleep(1.5)
+    # OPTION B — Wait for keypress
+    # input("  Press Enter to continue...")
+    # OPTION C — No delay (useful for testing)
+    # pass
+
+
+def show_mai_easter_egg():
+    """Hidden tribute screen — triggered by typing 0831 at the main menu."""
+    DIVIDER = "─" * 48
+    couple_line = f"ZFRFRK {HEART} Ouzuka Mai"
+
+    print()
+    print(f"{C.CYAN}  {DIVIDER}{C.RESET}")
+    print(f"{C.BOLD}  Oozuka Mai  \u738b\u585a\u771e\u5531{C.RESET}")
+    print(f"  Super School Darling")
+    print(f"  Birthday: August 31")
+    print(f"{C.CYAN}  {DIVIDER}{C.RESET}")
+    print()
+    print(f"  {C.DIM}\"Somehow, it seems like I've fallen in love with you.\"{C.RESET}")
+    print()
+    print(f"{C.CYAN}  {DIVIDER}{C.RESET}")
+    print(f"{C.DIM}{couple_line.center(52)}{C.RESET}")
+    print(f"{C.CYAN}  {DIVIDER}{C.RESET}")
+    print()
+
+    # OPTION A — Fixed duration (recommended)
+    time.sleep(3)
     # OPTION B — Wait for keypress
     # input("  Press Enter to continue...")
     # OPTION C — No delay (useful for testing)
@@ -6862,6 +6890,10 @@ def main():
 
     while True:
         choice = display_main_menu()
+
+        if EASTER_EGG_ENABLED and choice == "0831":
+            show_mai_easter_egg()
+            continue
 
         if not choice.isdigit():
             warn("Please enter a number.")
