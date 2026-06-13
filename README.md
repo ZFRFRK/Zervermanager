@@ -30,7 +30,7 @@ The database control room has been completely overhauled and split into logical 
 
 ### 💖 Refined Console Visuals & Secret Tributary
 *   **Dynamic Startup Splash**: Vibrant startup screens with auto-tiering OS compatibility checks.
-*   **Mai Ouzuka Tribute**: An easter egg screen featuring the birthday tribute, accessible by entering `0831` at the main menu.
+*   **Mai Ouzuka Tribute**: An easter egg screen featuring Ouzuka Mai, accessible by entering a certain number at the main menu.
 
 ---
 
