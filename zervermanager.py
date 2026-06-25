@@ -7514,8 +7514,61 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_manage_post(parsed.path)
         elif parsed.path.startswith("/api/install/") or parsed.path.startswith("/api/uninstall/"):
             self.handle_install_post(parsed.path)
+        elif parsed.path.startswith("/api/upload_site"):
+            self.handle_upload_site(parsed)
         else:
             self.send_error(404)
+
+    def handle_upload_site(self, parsed):
+        content_length = int(self.headers.get('Content-Length', 0))
+        if content_length == 0:
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(b'{"success": false, "error": "No content"}')
+            return
+
+        query = urllib.parse.parse_qs(parsed.query)
+        filename = query.get("filename", ["site.zip"])[0]
+        
+        upload_dir = "/tmp/zerver_uploads"
+        if not os.path.exists(upload_dir):
+            os.makedirs(upload_dir, exist_ok=True)
+            
+        import uuid, zipfile
+        uid = str(uuid.uuid4())[:8]
+        temp_zip_path = os.path.join(upload_dir, f"upload_{uid}.zip")
+        extract_path = os.path.join(upload_dir, f"site_{uid}")
+        
+        try:
+            with open(temp_zip_path, "wb") as f:
+                bytes_read = 0
+                while bytes_read < content_length:
+                    chunk = self.rfile.read(min(8192, content_length - bytes_read))
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    bytes_read += len(chunk)
+                    
+            if not os.path.exists(extract_path):
+                os.makedirs(extract_path, exist_ok=True)
+                
+            with zipfile.ZipFile(temp_zip_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_path)
+                
+            if os.path.exists(temp_zip_path):
+                os.remove(temp_zip_path)
+            
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            response = {"success": True, "path": extract_path}
+            self.wfile.write(json.dumps(response).encode("utf-8"))
+        except Exception as e:
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            response = {"success": False, "error": str(e)}
+            self.wfile.write(json.dumps(response).encode("utf-8"))
 
     def handle_site_action_post(self):
         content_length = int(self.headers.get('Content-Length', 0))
@@ -7832,9 +7885,20 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
                     elif ztype == "reverse": create_reverse_zone()
                     elif ztype == "both": create_both_zones()
                 elif action == "delete":
-                    ztype = data.get("type", "forward")
-                    sys.stdin = MockStdin([domain, "yes", "yes"])
-                    delete_zone()
+                    # Directly delete the zone by name, bypassing the interactive
+                    # pick_zones() selector which expects a numeric index, not a domain name.
+                    if domain:
+                        remove_zone_from_conf(domain)
+                        zonefile = f"{BIND_DIR}/db.{domain}"
+                        if os.path.isfile(zonefile):
+                            os.remove(zonefile)
+                        ok(f"{domain} removed.")
+                        ok_b, msg_b = validate_bind9()
+                        if not ok_b:
+                            err(msg_b)
+                            raise RuntimeError(msg_b)
+                        reload_bind9()
+                        apply_reloads()
                 elif action == "test":
                     if not domain:
                         ok_b, msg_b = validate_bind9()
