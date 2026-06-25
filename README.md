@@ -1,39 +1,35 @@
-# ⚡ Zervermanager — `dev` Branch
+# Zervermanager — `dev` Branch
 
 [![Branch: dev](https://img.shields.io/badge/Branch-dev-orange.svg)]()
 [![Status: Unstable](https://img.shields.io/badge/Status-Unstable-red.svg)]()
-[![Python 3](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
-[![Platform: Debian 12](https://img.shields.io/badge/Platform-Debian%2012-red?logo=debian&logoColor=white)](https://www.debian.org/)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![Platform: Debian 12](https://img.shields.io/badge/Platform-Debian%2012-A81D33?logo=debian&logoColor=white)](https://www.debian.org/)
 
 ---
 
-> ## ⚠️ WARNING — DO NOT USE IN PRODUCTION
+> [!CAUTION]
+> **This branch is unstable and is not intended for production use.**
 >
-> **This is the active development branch of Zervermanager. It is unstable, untested, and potentially dangerous.**
+> Code here is actively being developed. It may be incomplete, broken, or behave in entirely unexpected ways. Executing it on any live or production system **risks data loss, service outages, and irreversible misconfiguration.**
 >
-> Code on this branch is a work-in-progress. It may be broken, incomplete, or behave in unexpected ways. Running it on a live or production server **can cause data loss, misconfiguration, or irreversible system damage.**
->
-> **Use this branch only if you know exactly what you are doing.**
-> For the latest stable release, switch to the [`main` branch](https://github.com/ZFRFRK/Zervermanager).
+> For the latest stable release, see the [main branch](https://github.com/ZFRFRK/Zervermanager).
 
 ---
 
-## 📋 Before You Continue
+## Before You Continue
 
-By installing from this branch you acknowledge that:
+Installing from this branch means accepting that:
 
-- Features may be **partially implemented or entirely broken**
-- Commands may **modify or destroy system files** without warning
-- Automatic backups and safety guards **may not be present** yet
+- Features may be partially implemented or non-functional
+- Scripts may modify or overwrite system files without warning
+- Safety guards and automatic backups may not yet be in place
 - No support is provided for issues arising from this branch
 
-**Test only on a disposable virtual machine or a fresh throwaway server. Never on anything you care about.**
+**Only run this on a disposable virtual machine or isolated test server.**
 
 ---
 
-## 🚀 Installation
-
-Clone the `dev` branch directly:
+## Installation
 
 ```bash
 # Clone the dev branch directly
@@ -47,17 +43,17 @@ chmod +x zervermanager.py
 sudo python3 zervermanager.py
 ```
 
-### 🔍 Dry-Run Mode (Strongly Recommended)
+### Dry-Run Mode — Strongly Recommended
 
-Always use `--dry-run` when exploring the dev branch. This simulates all actions without touching any system files:
+Simulate all actions without touching any system file:
 
 ```bash
 sudo python3 zervermanager.py --dry-run
 ```
 
-### Keeping Up to Date
+### Staying Up to Date
 
-The `dev` branch moves fast. Pull frequently to stay on the latest commits:
+The `dev` branch is updated frequently. Pull often to keep in sync:
 
 ```bash
 git pull origin dev
@@ -65,9 +61,9 @@ git pull origin dev
 
 ---
 
-## 🧪 Running Tests
+## Testing
 
-Before executing anything, run the syntax check and unit test suite:
+Always run checks before executing anything on a real system:
 
 ```bash
 # Syntax check
@@ -79,14 +75,16 @@ python3 tests/run_tests.py
 
 ---
 
-## 🔗 Links
+## Links
 
-- **Stable release** → [`main` branch](https://github.com/ZFRFRK/Zervermanager)
-- **Full feature documentation** → [main branch README](https://github.com/ZFRFRK/Zervermanager/blob/main/README.md)
-- **Issue tracker** → [GitHub Issues](https://github.com/ZFRFRK/Zervermanager/issues)
+| | |
+|---|---|
+| Stable release | [main branch](https://github.com/ZFRFRK/Zervermanager) |
+| Full documentation | [main branch README](https://github.com/ZFRFRK/Zervermanager/blob/main/README.md) |
+| Issue tracker | [GitHub Issues](https://github.com/ZFRFRK/Zervermanager/issues) |
 
 ---
 
-## 📄 License
+## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the [MIT License](LICENSE).
