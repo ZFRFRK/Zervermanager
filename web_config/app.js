@@ -1,3 +1,56 @@
+// ── Startup Splash ──────────────────────────────────────────────────────────
+(function () {
+    const splash = document.getElementById('startup-splash');
+    if (!splash) return;
+
+    // Populate version badge
+    fetch('/api/status')
+        .then(r => r.json())
+        .then(d => {
+            const el = document.getElementById('splash-ver');
+            if (el && d.version) el.textContent = d.version;
+        })
+        .catch(() => {});
+
+    // ── Image slideshow ──
+    const photos = splash.querySelectorAll('.splash-photo');
+    const dots   = splash.querySelectorAll('.splash-dot');
+    let current  = 0;
+    const SLIDE_INTERVAL = 2400; // ms per image
+
+    function showSlide(idx) {
+        photos.forEach((p, i) => p.classList.toggle('active', i === idx));
+        dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+        current = idx;
+    }
+
+    // Start cycling after first image has settled (~1.3s)
+    let slideTimer = null;
+    setTimeout(() => {
+        slideTimer = setInterval(() => {
+            const next = (current + 1) % photos.length;
+            showSlide(next);
+        }, SLIDE_INTERVAL);
+    }, 1300);
+
+    // ── Dismiss after full animation: 8s delay + 0.7s fade ──
+    const TOTAL_MS = 8800;
+    const dismiss = () => {
+        if (slideTimer) clearInterval(slideTimer);
+        splash.classList.add('hidden');
+        splash.remove();
+    };
+
+    // Primary trigger: when CSS fade-out animation completes
+    splash.addEventListener('animationend', (e) => {
+        if (e.animationName === 'splashFadeOut') dismiss();
+    }, { once: true });
+
+    // Fallback
+    setTimeout(dismiss, TOTAL_MS);
+}());
+
+
 // Page Navigation
 function switchPage(pageId) {
     // Hide all pages
@@ -53,10 +106,17 @@ async function submitApiForm(event, endpoint, terminalId) {
         else payload[cb.name] = "on";
     });
 
-    const originalText = btn.innerText;
-    btn.innerText = "Executing...";
+    const originalHTML = btn.innerHTML;
+    let execSeconds = 0;
+    btn.innerHTML = `<div class="btn-spinner"></div> Executing... <span class="btn-timer">(0s)</span>`;
     btn.disabled = true;
     term.classList.add('visible');
+    
+    const execTimer = setInterval(() => {
+        execSeconds++;
+        const t = btn.querySelector('.btn-timer');
+        if (t) t.innerText = `(${execSeconds}s)`;
+    }, 1000);
     
     function setTerminalHTML(text) {
         let escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
@@ -137,7 +197,8 @@ async function submitApiForm(event, endpoint, terminalId) {
     } catch (err) {
         term.innerHTML += '<br><br><span style=\'color: var(--danger); font-weight: 600;\'>[!] Network or Server Error: ' + err.message + '</span>';
     } finally {
-        btn.innerText = originalText;
+        clearInterval(execTimer);
+        btn.innerHTML = originalHTML;
         btn.disabled = false;
         term.scrollTop = term.scrollHeight;
         
@@ -181,6 +242,20 @@ async function fetchStatus() {
         updateBadge('postfix-val', data.postfix || 'Unknown');
         updateBadge('dovecot-val', data.dovecot || 'Unknown');
         updateBadge('ufw-val', data.ufw || 'Unknown');
+
+        // Update Top Bar
+        const updateTb = (id, st) => {
+            const el = document.getElementById(id);
+            if(!el) return;
+            const s = st.toLowerCase();
+            el.className = 'top-bar-svc ' + (s === 'running' ? 'is-running' : (s === 'stopped' ? 'is-stopped' : 'is-warning'));
+        };
+        updateTb('tb-apache2', data.apache2 || '');
+        updateTb('tb-nginx', data.nginx || '');
+        updateTb('tb-bind9', data.bind9 || '');
+        updateTb('tb-mariadb', data.mariadb || '');
+        updateTb('tb-postfix', data.postfix || '');
+        updateTb('tb-ufw', data.ufw || '');
         
     } catch (e) {
         console.error("Status fetch failed:", e);
@@ -288,15 +363,15 @@ async function siteAction(payload, confirmMsg) {
         const result = await res.json();
         if (result.success) {
             if (payload.action !== 'get_vhost') {
-                alert(result.message);
+                showToast(result.message, 'success');
                 loadSites();
             }
             return result;
         } else {
-            alert('Error: ' + result.message);
+            showToast('Error: ' + result.message, 'error');
         }
     } catch (e) {
-        alert('Request failed: ' + e);
+        showToast('Request failed: ' + e.message, 'error');
     }
     return null;
 }
@@ -395,7 +470,7 @@ async function deleteDnsZone(domain, type) {
             body: JSON.stringify({ action: 'delete', domain: domain, type: type })
         });
         const text = await res.text();
-        const parts = text.split('\\n===RESULT===\\n');
+        const parts = text.split('\n===RESULT===\n');
         const jsonStr = parts.length > 1 ? parts[1] : parts[0];
         const result = JSON.parse(jsonStr);
         
@@ -405,7 +480,7 @@ async function deleteDnsZone(domain, type) {
             alert('Error deleting zone');
         }
     } catch (e) {
-        alert('Request failed');
+        alert('Request failed: ' + e.message);
     }
 }
 
@@ -449,7 +524,7 @@ async function deleteMailUser(email) {
             body: JSON.stringify({ action: 'delete_user', mail_user: email })
         });
         const text = await res.text();
-        const parts = text.split('\\n===RESULT===\\n');
+        const parts = text.split('\n===RESULT===\n');
         const jsonStr = parts.length > 1 ? parts[1] : parts[0];
         const result = JSON.parse(jsonStr);
         
@@ -484,3 +559,70 @@ async function submitModifySite(event, actionType) {
         btn.disabled = false;
     }
 }
+
+// Drop zone setup
+function setupDropZone(dropZoneId, inputPathId) {
+    const dropZone = document.getElementById(dropZoneId);
+    const inputPath = document.getElementById(inputPathId);
+    
+    if (!dropZone || !inputPath) return;
+
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, preventDefaults, false);
+    });
+
+    function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, () => dropZone.classList.add('drag-active'), false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, () => dropZone.classList.remove('drag-active'), false);
+    });
+
+    dropZone.addEventListener('drop', handleDrop, false);
+
+    async function handleDrop(e) {
+        const dt = e.dataTransfer;
+        const file = dt.files[0];
+        
+        if (!file) return;
+        
+        if (!file.name.endsWith('.zip')) {
+            alert('Please drop a .zip file containing your site files.');
+            return;
+        }
+
+        const originalHtml = dropZone.innerHTML;
+        dropZone.innerHTML = 'Uploading ' + file.name + '... <div class="btn-spinner" style="display:inline-block;border-color:var(--accent);border-right-color:transparent;width:14px;height:14px;margin-left:8px;"></div>';
+        
+        try {
+            const response = await fetch('/api/upload_site?filename=' + encodeURIComponent(file.name), {
+                method: 'POST',
+                body: file
+            });
+            const result = await response.json();
+            if (result.success) {
+                dropZone.innerHTML = '<span style="color:var(--success)">&#10003; Uploaded successfully!</span><br><span style="font-size:0.8rem;opacity:0.7">Path: ' + result.path + '</span>';
+                inputPath.value = result.path;
+                setTimeout(() => { dropZone.innerHTML = originalHtml; }, 5000);
+            } else {
+                dropZone.innerHTML = '<span style="color:var(--danger)">Upload failed: ' + result.error + '</span>';
+                setTimeout(() => { dropZone.innerHTML = originalHtml; }, 5000);
+            }
+        } catch (err) {
+            dropZone.innerHTML = '<span style="color:var(--danger)">Upload error: ' + err.message + '</span>';
+            setTimeout(() => { dropZone.innerHTML = originalHtml; }, 5000);
+        }
+    }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    setupDropZone('lamp-dropzone', 'lamp-sitepath-input');
+    setupDropZone('lemp-dropzone', 'lemp-sitepath-input');
+    setupDropZone('static-dropzone', 'static-sitepath-input');
+});

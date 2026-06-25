@@ -7,10 +7,64 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=6">
+    <link rel="stylesheet" href="style.css?v=9">
 </head>
 <body>
+
+    <!-- ═══════════════════════════════════════
+         STARTUP SPLASH
+    ═══════════════════════════════════════ -->
+    <div id="startup-splash" aria-hidden="true">
+        <div class="splash-bg-grid"></div>
+        <div class="splash-orb splash-orb-1"></div>
+        <div class="splash-orb splash-orb-2"></div>
+
+        <!-- LEFT — brand panel -->
+        <div class="splash-left">
+            <div class="splash-mark">
+                <span class="splash-mark-letter">Z</span>
+                <div class="splash-mark-ring"></div>
+                <div class="splash-mark-ring splash-mark-ring-2"></div>
+            </div>
+
+            <div class="splash-wordmark">
+                <span class="splash-word">zerver<span class="splash-word-accent">manager</span></span>
+            </div>
+
+            <div class="splash-tagline">server management interface</div>
+
+            <div class="splash-dots">
+                <span class="splash-dot active" data-idx="0"></span>
+                <span class="splash-dot" data-idx="1"></span>
+                <span class="splash-dot" data-idx="2"></span>
+            </div>
+
+            <div class="splash-loader">
+                <div class="splash-loader-track">
+                    <div class="splash-loader-fill"></div>
+                </div>
+                <span class="splash-loader-label">initializing</span>
+            </div>
+
+            <div class="splash-version">v<span id="splash-ver">—</span></div>
+        </div>
+
+        <!-- RIGHT — Mai slideshow panel -->
+        <div class="splash-right">
+            <div class="splash-photos">
+                <img class="splash-photo active"  src="Mai Ouzuka.jpg"     alt="Ouzuka Mai">
+                <img class="splash-photo"          src="Ouzuka Mai.jpg"     alt="Ouzuka Mai">
+                <img class="splash-photo"          src="Ouzuka_Mai_2_.jpg"  alt="Ouzuka Mai">
+            </div>
+            <div class="splash-photo-overlay"></div>
+            <div class="splash-photo-caption">
+                <span class="splash-photo-name">Ouzuka Mai</span>
+            </div>
+        </div>
+    </div>
+
     <div class="app-container">
+
         <aside class="sidebar">
             <div class="sidebar-header">
                 <div class="brand">
@@ -77,8 +131,33 @@
 
         <!-- Main Content -->
         <main class="main-content">
-            
-            <!-- Dashboard Page -->
+
+            <!-- ── Persistent Top Bar ── -->
+            <div class="top-bar" id="top-bar">
+                <div class="top-bar-services">
+                    <span class="top-bar-svc" id="tb-apache2"><span class="svc-pip"></span>Apache2</span>
+                    <span class="top-bar-svc" id="tb-nginx"><span class="svc-pip"></span>Nginx</span>
+                    <span class="top-bar-svc" id="tb-bind9"><span class="svc-pip"></span>BIND9</span>
+                    <span class="top-bar-svc" id="tb-mariadb"><span class="svc-pip"></span>MariaDB</span>
+                    <span class="top-bar-svc" id="tb-postfix"><span class="svc-pip"></span>Postfix</span>
+                    <span class="top-bar-svc" id="tb-ufw"><span class="svc-pip"></span>UFW</span>
+                </div>
+                <div class="top-bar-actions">
+                    <button class="top-bar-btn accent" id="tb-reload-btn" onclick="topBarReloadAll()">
+                        <svg width="11" height="11" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
+                        Reload All
+                    </button>
+                    <div class="top-bar-divider"></div>
+                    <button class="top-bar-btn" onclick="openKbdOverlay()" title="Keyboard shortcuts">
+                        <svg width="11" height="11" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h6a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd"/></svg>
+                        <span style="opacity:.5">?</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Reload All mini-terminal (hidden by default, expands on use) -->
+            <div id="reload-term" class="terminal" style="margin-bottom:16px;margin-top:-12px"></div>
+
             <section id="page-dashboard" class="page-section active">
                 <div class="page-header">
                     <h2>System Status</h2>
@@ -146,6 +225,8 @@
                 </div>
 
                 <div class="card">
+                    <div class="card-split">
+                    <div class="card-split-form">
                     <div class="content-tabs">
                         <button class="content-tab-btn active" data-tab="lamp" onclick="switchTab('makesite', 'lamp')">LAMP</button>
                         <button class="content-tab-btn" data-tab="lemp" onclick="switchTab('makesite', 'lemp')">LEMP</button>
@@ -206,7 +287,12 @@
                             </div>
                             <div class="form-group hidden" id="lamp-sitepath">
                                 <label>Path to existing site files <span style="opacity:.6;font-weight:400">(server-side path)</span></label>
-                                <input type="text" class="form-control" name="site_files_path" placeholder="e.g. /home/user/mysite">
+                                <div class="drop-zone" id="lamp-dropzone">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:8px;opacity:0.7;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg><br>
+                                    Drag and drop your site's .zip file here<br>
+                                    <span style="font-size:0.75rem;opacity:0.6;">(or enter the server-side path below)</span>
+                                </div>
+                                <input type="text" class="form-control" name="site_files_path" id="lamp-sitepath-input" placeholder="e.g. /home/user/mysite">
                             </div>
                             <div class="form-group">
                                 <label class="checkbox-label">
@@ -273,7 +359,12 @@
                             </div>
                             <div class="form-group hidden" id="lemp-sitepath">
                                 <label>Path to existing site files <span style="opacity:.6;font-weight:400">(server-side path)</span></label>
-                                <input type="text" class="form-control" name="site_files_path" placeholder="e.g. /home/user/mysite">
+                                <div class="drop-zone" id="lemp-dropzone">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:8px;opacity:0.7;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg><br>
+                                    Drag and drop your site's .zip file here<br>
+                                    <span style="font-size:0.75rem;opacity:0.6;">(or enter the server-side path below)</span>
+                                </div>
+                                <input type="text" class="form-control" name="site_files_path" id="lemp-sitepath-input" placeholder="e.g. /home/user/mysite">
                             </div>
                             <div class="form-group">
                                 <label class="checkbox-label">
@@ -377,7 +468,12 @@
                             </div>
                             <div class="form-group hidden" id="static-sitepath">
                                 <label>Path to existing site files <span style="opacity:.6;font-weight:400">(server-side path)</span></label>
-                                <input type="text" class="form-control" name="site_files_path" placeholder="e.g. /home/user/mysite">
+                                <div class="drop-zone" id="static-dropzone">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:8px;opacity:0.7;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg><br>
+                                    Drag and drop your site's .zip file here<br>
+                                    <span style="font-size:0.75rem;opacity:0.6;">(or enter the server-side path below)</span>
+                                </div>
+                                <input type="text" class="form-control" name="site_files_path" id="static-sitepath-input" placeholder="e.g. /home/user/mysite">
                             </div>
                             <button type="submit" class="btn btn-primary">Create Full Site</button>
                         </form>
@@ -405,7 +501,12 @@
                         </form>
                     </div>
 
-                    <div id="makesite-term" class="terminal"></div>
+                    </div><!-- /card-split-form -->
+                    <div class="card-split-terminal">
+                        <div class="terminal-label">output</div>
+                        <div id="makesite-term" class="terminal visible"></div>
+                    </div><!-- /card-split-terminal -->
+                    </div><!-- /card-split -->
                 </div>
             </section>
 
@@ -495,6 +596,8 @@
                     <p>Manage databases and users.</p>
                 </div>
                 <div class="card">
+                    <div class="card-split">
+                    <div class="card-split-form">
                     <div class="content-tabs">
                         <button class="content-tab-btn active" data-tab="db" onclick="switchTab('mariadb', 'db')">Databases</button>
                         <button class="content-tab-btn" data-tab="users" onclick="switchTab('mariadb', 'users')">Users</button>
@@ -563,7 +666,12 @@
                         </form>
                     </div>
 
-                    <div id="mariadb-term" class="terminal"></div>
+                    </div><!-- /card-split-form -->
+                    <div class="card-split-terminal">
+                        <div class="terminal-label">output</div>
+                        <div id="mariadb-term" class="terminal visible"></div>
+                    </div><!-- /card-split-terminal -->
+                    </div><!-- /card-split -->
                 </div>
             </section>
 
@@ -574,6 +682,8 @@
                     <p>Setup Mail, FTP, Samba, and phpMyAdmin.</p>
                 </div>
                 <div class="card">
+                    <div class="card-split">
+                    <div class="card-split-form">
                     <div class="content-tabs">
                         <button class="content-tab-btn active" data-tab="mail" onclick="switchTab('services', 'mail')">Mail Server</button>
                         <button class="content-tab-btn" data-tab="ftp" onclick="switchTab('services', 'ftp')">FTP Server</button>
@@ -677,7 +787,12 @@
                         </form>
                     </div>
 
-                    <div id="services-term" class="terminal"></div>
+                    </div><!-- /card-split-form -->
+                    <div class="card-split-terminal">
+                        <div class="terminal-label">output</div>
+                        <div id="services-term" class="terminal visible"></div>
+                    </div><!-- /card-split-terminal -->
+                    </div><!-- /card-split -->
                 </div>
             </section>
 
@@ -689,6 +804,8 @@
                 </div>
 
                 <div class="card">
+                    <div class="card-split">
+                    <div class="card-split-form">
                     <div class="content-tabs">
                         <button class="content-tab-btn active" data-tab="service-ctrl" onclick="switchTab('server', 'service-ctrl')">Services Control</button>
                         <button class="content-tab-btn" data-tab="firewall" onclick="switchTab('server', 'firewall')">Firewall (UFW)</button>
@@ -762,7 +879,12 @@
                         </form>
                     </div>
 
-                    <div id="server-term" class="terminal"></div>
+                    </div><!-- /card-split-form -->
+                    <div class="card-split-terminal">
+                        <div class="terminal-label">output</div>
+                        <div id="server-term" class="terminal visible"></div>
+                    </div><!-- /card-split-terminal -->
+                    </div><!-- /card-split -->
                 </div>
             </section>
             <!-- DNS Zones -->
@@ -917,6 +1039,35 @@
 
         </main>
     </div>
-    <script src="app.js?v=4"></script>
+    <script src="app.js?v=7"></script>
+
+    <!-- ── Keyboard Shortcuts Overlay ── -->
+    <div class="kbd-overlay" id="kbd-overlay" onclick="closeKbdOverlay()">
+        <div class="kbd-panel" onclick="event.stopPropagation()">
+            <div class="kbd-panel-title">
+                Keyboard Shortcuts
+                <span>press <kbd>Esc</kbd> to close</span>
+            </div>
+            <div class="kbd-list">
+                <div class="kbd-section-title">Navigation — press <kbd>g</kbd> then</div>
+                <div class="kbd-row"><span class="kbd-desc">Dashboard</span><span class="kbd-keys"><kbd>g</kbd><kbd>d</kbd></span></div>
+                <div class="kbd-row"><span class="kbd-desc">Make Site</span><span class="kbd-keys"><kbd>g</kbd><kbd>s</kbd></span></div>
+                <div class="kbd-row"><span class="kbd-desc">Manage Sites</span><span class="kbd-keys"><kbd>g</kbd><kbd>m</kbd></span></div>
+                <div class="kbd-row"><span class="kbd-desc">DNS Zones</span><span class="kbd-keys"><kbd>g</kbd><kbd>z</kbd></span></div>
+                <div class="kbd-row"><span class="kbd-desc">MariaDB</span><span class="kbd-keys"><kbd>g</kbd><kbd>b</kbd></span></div>
+                <div class="kbd-row"><span class="kbd-desc">Install Services</span><span class="kbd-keys"><kbd>g</kbd><kbd>i</kbd></span></div>
+                <div class="kbd-row"><span class="kbd-desc">Server Management</span><span class="kbd-keys"><kbd>g</kbd><kbd>v</kbd></span></div>
+                <div class="kbd-row"><span class="kbd-desc">Network</span><span class="kbd-keys"><kbd>g</kbd><kbd>n</kbd></span></div>
+                <div class="kbd-section-title">Actions</div>
+                <div class="kbd-row"><span class="kbd-desc">Reload All Services</span><span class="kbd-keys"><kbd>r</kbd></span></div>
+                <div class="kbd-row"><span class="kbd-desc">Show this help</span><span class="kbd-keys"><kbd>?</kbd></span></div>
+                <div class="kbd-row"><span class="kbd-desc">Close overlay</span><span class="kbd-keys"><kbd>Esc</kbd></span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Toast Container ── -->
+    <div class="toast-container" id="toast-container"></div>
+
 </body>
 </html>
