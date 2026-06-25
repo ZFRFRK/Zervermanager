@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-SCRIPT_VERSION = "1.3.0"
+SCRIPT_VERSION = "1.3.24"
 
 import os
 import re
@@ -12,6 +12,10 @@ import shutil
 import socket
 import sys
 import time
+import glob
+import http.server
+import socketserver
+import urllib.parse
 def detect_server_ip():
     """Return the primary non‑loopback IPv4 address of the server, or None.
     Uses a UDP socket to an external address to discover the outbound interface.
@@ -40,7 +44,7 @@ def ask_domain(prompt="  Domain: "):
             return ""
         if re.match(r"^[a-zA-Z0-9.-]+$", val):
             return val
-        print("  Invalid domain. Only letters, numbers, dots, and hyphens are allowed.")
+        err("Invalid domain. Only letters, numbers, dots, and hyphens are allowed.")
 
 def ask_db_name(prompt="Database name", default=""):
     prompt_str = f"  {prompt} [{default}]: " if default else f"  {prompt}: "
@@ -51,7 +55,7 @@ def ask_db_name(prompt="Database name", default=""):
             return ""
         if re.match(r"^[a-zA-Z0-9_]+$", val):
             return val
-        print("  Invalid database name. Only letters, numbers, and underscores are allowed.")
+        err("Invalid database name. Only letters, numbers, and underscores are allowed.")
 
 def ask_db_user(prompt="Database user", default=""):
     prompt_str = f"  {prompt} [{default}]: " if default else f"  {prompt}: "
@@ -62,13 +66,12 @@ def ask_db_user(prompt="Database user", default=""):
             return ""
         if re.match(r"^[a-zA-Z0-9_]+$", val):
             return val
-        print("  Invalid database user. Only letters, numbers, and underscores are allowed.")
+        err("Invalid database user. Only letters, numbers, and underscores are allowed.")
 
 
 def validate_docroot(path):
     if not path:
         return False, "Document root cannot be empty."
-    import os
     p = os.path.abspath(path)
     protected = {
         "/", "/etc", "/var", "/usr", "/bin", "/sbin", "/lib", "/boot", 
@@ -99,11 +102,14 @@ def safe_write(filepath, content):
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         if not str(filepath).endswith('.json'):
             backup_config(filepath)
-        with open(filepath, "w") as f:
-            f.write(content)
+        if DRY_RUN:
+            step(f"[dry-run] Would write to { filepath }")
+        else:
+            with open(filepath, "w") as f:
+                f.write(content)
         return True
     except Exception as e:
-        print(f"  Error writing to {filepath}: {e}")
+        err(f"Error writing to {filepath}: {e}")
         return False
 
 # ─────────────────────────────────────────
@@ -178,7 +184,7 @@ def show_splash():
 
     print()
     print(f"{C.BOLD}  Zervermanager{C.RESET}")
-    print(f"  An automated Debian 12 server setup & management tool")
+    print(f"  An automated Debian 11/12/13 server setup & management tool")
     print(f"{C.CYAN}  {DIVIDER}{C.RESET}")
     print(f"  Version     : v{SCRIPT_VERSION}")
     print(f"  Created by  : ZFRFRK")
@@ -252,7 +258,6 @@ def prompt_confirm(msg, default="no"):
 def menu_header(title):
     """Print a standardized bold menu header with a separator."""
     global current_menu_width
-    import re
     # Strip any ANSI escape sequences from the title
     clean_title = re.sub(r"\x1b\[[0-9;]*m", "", title)
     clean_title = re.sub(r"\033\[[0-9;]*m", "", clean_title)
@@ -288,7 +293,9 @@ def apply_reloads():
 
     if "apache2" in _pending:
         print(f"  {C.CYAN}Reloading Apache2...{C.RESET}", end=" ", flush=True)
-        result = run(["systemctl", "reload", "apache2"])
+        _is_active = run(["systemctl", "is-active", "apache2"]).stdout.strip() == "active"
+        _action = "reload" if _is_active else "restart"
+        result = run(["systemctl", _action, "apache2"])
 
         if result.returncode == 0:
             print(f"{C.GREEN}✓{C.RESET}")
@@ -298,7 +305,10 @@ def apply_reloads():
 
     if "bind9" in _pending:
         print(f"  {C.CYAN}Reloading BIND9...{C.RESET}", end=" ", flush=True)
-        result = run(["systemctl", "reload", "bind9"])
+        _bind9_svc = get_bind9_service_name()
+        _is_active = run(["systemctl", "is-active", _bind9_svc]).stdout.strip() == "active"
+        _action = "reload" if _is_active else "restart"
+        result = run(["systemctl", _action, _bind9_svc])
 
         if result.returncode == 0:
             print(f"{C.GREEN}✓{C.RESET}")
@@ -308,7 +318,9 @@ def apply_reloads():
 
     if "nginx" in _pending:
         print(f"  {C.CYAN}Reloading Nginx...{C.RESET}", end=" ", flush=True)
-        result = run(["systemctl", "reload", "nginx"])
+        _is_active = run(["systemctl", "is-active", "nginx"]).stdout.strip() == "active"
+        _action = "reload" if _is_active else "restart"
+        result = run(["systemctl", _action, "nginx"])
 
         if result.returncode == 0:
             print(f"{C.GREEN}✓{C.RESET}")
@@ -416,7 +428,7 @@ def save_site_meta(domain, site_type, docroot, db_name=None, db_user=None, web_s
 def get_site_meta(domain):
     path = f"{META_DIR}/{domain}.json"
 
-    if not os.path.exists(path):
+    if not os.path.isfile(path):
         return None
 
     try:
@@ -429,7 +441,7 @@ def get_site_meta(domain):
 def delete_site_meta(domain):
     path = f"{META_DIR}/{domain}.json"
 
-    if os.path.exists(path):
+    if os.path.isfile(path):
         os.remove(path)
 
 
@@ -671,13 +683,80 @@ server {{
 }}
 """
 
+def detect_package_manager():
+    """Return the primary package manager for the OS."""
+    return "apt-get"
+
+def detect_webserver_php_socket():
+    """Probe /run/php/ for active php-fpm sockets."""
+    sockets = sorted(glob.glob("/run/php/php*-fpm.sock"), reverse=True)
+    if sockets:
+        return sockets[0]
+    return "/run/php/php8.2-fpm.sock"
+
 def find_php_fpm_socket():
     """Locate the PHP-FPM unix socket, falling back to TCP."""
-    import glob
     sockets = sorted(glob.glob("/var/run/php/php*-fpm.sock"), reverse=True)
     if sockets:
         return sockets[0]
+    
+    # Fallback using our new probe
+    probe = detect_webserver_php_socket()
+    if os.path.isfile(probe):
+        return probe
+    
     return "127.0.0.1:9000"
+
+
+def get_php_version():
+    """Return the installed PHP MAJOR.MINOR version string (e.g. '8.5'), or None.
+    Used by build_php_packages() to construct versioned package names on Ubuntu.
+    """
+    result = run(["php", "-r", "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;"])
+    if result.returncode == 0:
+        ver = result.stdout.strip()
+        if ver and "." in ver:
+            return ver
+    return None
+
+
+def build_php_packages(base_names):
+    """Return a list of apt package names for PHP extensions.
+
+    On Ubuntu: rewrites generic names to versioned names using the detected PHP
+    version (e.g. 'php-imap' -> 'php8.5-imap', 'php' -> 'php8.5').
+    If PHP is not yet installed (version undetectable), returns base_names unchanged
+    so apt can resolve the correct version itself.
+
+    On Debian 12 / 11 / 13 and all other OS: always returns base_names unchanged.
+    Generic unversioned names are correct on Debian and must not be modified.
+    """
+    status, _ = check_os_compatibility()
+    if status != "ubuntu":
+        # Debian (any codename) and all other OS — passthrough, no change.
+        return base_names
+
+    ver = get_php_version()
+    if not ver:
+        # Ubuntu but PHP not yet installed — let apt resolve the version.
+        return base_names
+
+    versioned = []
+    try:
+        ver_num = float(ver)
+    except ValueError:
+        ver_num = 0.0
+
+    for pkg in base_names:
+        if pkg == "php-imap" and ver_num >= 8.4:
+            continue
+        if pkg == "php":
+            versioned.append(f"php{ver}")
+        elif pkg.startswith("php-"):
+            versioned.append(f"php{ver}-{pkg[4:]}")
+        else:
+            versioned.append(pkg)
+    return versioned
 
 
 def nginx_lemp_http_vhost(domain, docroot, fpm_socket):
@@ -1050,7 +1129,7 @@ def delete_nginx_site():
 
         nginx_disable_site(domain)
 
-        if os.path.exists(conf):
+        if os.path.isfile(conf):
             os.remove(conf)
 
         if remove_files == "yes" and os.path.exists(docroot):
@@ -1095,7 +1174,7 @@ def reload_bind9():
 
 
 def zone_exists(domain):
-    if not os.path.exists(NAMED_CONF_LOCAL):
+    if not os.path.isfile(NAMED_CONF_LOCAL):
         return False
 
     with open(NAMED_CONF_LOCAL, "r") as f:
@@ -1113,8 +1192,11 @@ zone "{domain}" {{
 """
 
     backup_config(NAMED_CONF_LOCAL)
-    with open(NAMED_CONF_LOCAL, "a") as f:
-        f.write(block)
+    if DRY_RUN:
+        step(f"[dry-run] Would append to { NAMED_CONF_LOCAL }")
+    else:
+        with open(NAMED_CONF_LOCAL, "a") as f:
+            f.write(block)
 
 
 def remove_zone_from_conf(domain):
@@ -1129,8 +1211,11 @@ def remove_zone_from_conf(domain):
     new_content = re.sub(pattern, "\n", content)
 
     backup_config(NAMED_CONF_LOCAL)
-    with open(NAMED_CONF_LOCAL, "w") as f:
-        f.write(new_content)
+    if DRY_RUN:
+        step(f"[dry-run] Would write to { NAMED_CONF_LOCAL }")
+    else:
+        with open(NAMED_CONF_LOCAL, "w") as f:
+            f.write(new_content)
 
 
 def reverse_zone_name(ip):
@@ -1165,8 +1250,11 @@ www IN  A       {ip}
 """
 
     backup_config(zonefile)
-    with open(zonefile, "w") as f:
-        f.write(content)
+    if DRY_RUN:
+        step(f"[dry-run] Would write to { zonefile }")
+    else:
+        with open(zonefile, "w") as f:
+            f.write(content)
 
 
 def write_reverse_zone(domain, ip, zonefile):
@@ -1187,8 +1275,11 @@ $TTL    604800
 """
 
     backup_config(zonefile)
-    with open(zonefile, "w") as f:
-        f.write(content)
+    if DRY_RUN:
+        step(f"[dry-run] Would write to { zonefile }")
+    else:
+        with open(zonefile, "w") as f:
+            f.write(content)
 
 
 # ─────────────────────────────────────────
@@ -1270,7 +1361,7 @@ def pick_sites(show_enabled=True, show_disabled=True, type_filter=None):
 
 def pick_zones():
     """Show numbered list of BIND9 zones. Returns list of selected zone names."""
-    if not os.path.exists(NAMED_CONF_LOCAL):
+    if not os.path.isfile(NAMED_CONF_LOCAL):
         err("named.conf.local not found.")
         return []
 
@@ -1327,7 +1418,7 @@ def pick_zones():
 
 def pick_zones_forward():
     """Numbered picker — forward zones only (no in-addr.arpa)."""
-    if not os.path.exists(NAMED_CONF_LOCAL):
+    if not os.path.isfile(NAMED_CONF_LOCAL):
         err("named.conf.local not found.")
         return []
 
@@ -1412,7 +1503,7 @@ def add_mx_record():
     for domain in zones:
         zonefile = get_zone_file(domain)
 
-        if not zonefile or not os.path.exists(zonefile):
+        if not zonefile or not os.path.isfile(zonefile):
             err(f"Zone file not found for {domain}.")
             continue
 
@@ -1437,8 +1528,11 @@ def add_mx_record():
             content += f"{sub}    IN  A   {mail_ip}\n"
 
         backup_config(zonefile)
-        with open(zonefile, "w") as f:
-            f.write(content)
+        if DRY_RUN:
+            step(f"[dry-run] Would write to { zonefile }")
+        else:
+            with open(zonefile, "w") as f:
+                f.write(content)
 
         ok_z, msg_z = validate_zone(domain, zonefile)
 
@@ -1469,7 +1563,7 @@ def remove_mx_record():
     for domain in zones:
         zonefile = get_zone_file(domain)
 
-        if not zonefile or not os.path.exists(zonefile):
+        if not zonefile or not os.path.isfile(zonefile):
             err(f"Zone file not found for {domain}.")
             continue
 
@@ -1518,8 +1612,11 @@ def remove_mx_record():
         )
 
         backup_config(zonefile)
-        with open(zonefile, "w") as f:
-            f.write(new_content)
+        if DRY_RUN:
+            step(f"[dry-run] Would write to { zonefile }")
+        else:
+            with open(zonefile, "w") as f:
+                f.write(new_content)
 
         ok_z, msg_z = validate_zone(domain, zonefile)
 
@@ -1552,7 +1649,7 @@ def list_mx_records():
 
         print(f"\n  {C.BOLD}{domain}{C.RESET}")
 
-        if not zonefile or not os.path.exists(zonefile):
+        if not zonefile or not os.path.isfile(zonefile):
             err(f"  Zone file not found.")
             continue
 
@@ -1591,7 +1688,7 @@ def copy_existing_site_files(source, destination, clear_dest=True):
             err("Source and destination are the same. Cannot copy.")
             return False
 
-        if clear_dest and os.path.exists(destination):
+        if clear_dest and os.path.isfile(destination):
             for item in os.listdir(destination):
                 p = os.path.join(destination, item)
                 if os.path.isdir(p):
@@ -1630,8 +1727,8 @@ def ask_for_custom_site_files(docroot):
         warn("No path provided, using default page.")
         return False
 
-    if not os.path.exists(src):
-        err(f"Path does not exist: {src}")
+    if not os.path.isdir(src):
+        err(f"Path does not exist or is not a directory: {src}")
         return False
 
     step(f"Copying files from {src} to {docroot}...")
@@ -1738,13 +1835,15 @@ def create_full_site():
 
     # ── Document root ──
     step("Creating document root...")
-    create_docroot(docroot, domain)
+    Path(docroot).mkdir(parents=True, exist_ok=True)
 
     # Custom site files?
     custom = ask_for_custom_site_files(docroot)
     if not custom:
-        # make sure at least an index.html exists (already created by create_docroot)
-        pass
+        # No custom files — write the default placeholder index.html
+        index = Path(docroot) / "index.html"
+        if not index.exists():
+            index.write_text(f"<html><body><h1>{domain}</h1></body></html>")
 
     # ── Apache vhost ──
     step("Writing Apache vhost config...")
@@ -1967,7 +2066,7 @@ def list_apache_sites():
             continue
 
         found   = True
-        enabled = os.path.exists(f"/etc/apache2/sites-enabled/{file}")
+        enabled = os.path.isfile(f"/etc/apache2/sites-enabled/{file}")
         status  = (
             f"{C.GREEN}enabled{C.RESET}"
             if enabled
@@ -2092,7 +2191,7 @@ def delete_apache_site():
         if os.path.islink(enabled_link):
             os.unlink(enabled_link)
 
-        if os.path.exists(conf):
+        if os.path.isfile(conf):
             os.remove(conf)
 
         if remove_files == "yes" and os.path.exists(docroot):
@@ -2337,7 +2436,7 @@ def delete_zone():
 
         zonefile = f"{BIND_DIR}/db.{domain}"
 
-        if delete_files == "yes" and os.path.exists(zonefile):
+        if delete_files == "yes" and os.path.isfile(zonefile):
             os.remove(zonefile)
 
         ok(f"{domain} removed.")
@@ -2355,7 +2454,7 @@ def delete_zone():
 def list_zones():
     print()
 
-    if not os.path.exists(NAMED_CONF_LOCAL):
+    if not os.path.isfile(NAMED_CONF_LOCAL):
         err("named.conf.local not found.")
         return
 
@@ -2792,7 +2891,7 @@ def modify_full_site():
     for domain in domains:
         conf = f"{APACHE_SITES_AVAILABLE}/{domain}.conf"
 
-        if not os.path.exists(conf):
+        if not os.path.isfile(conf):
             err(f"Config not found: {conf}")
             continue
 
@@ -2834,14 +2933,20 @@ def modify_full_site():
             )
 
             backup_config(conf)
-            with open(conf, "w") as f:
-                f.write(updated)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { conf }")
+            else:
+                with open(conf, "w") as f:
+                    f.write(updated)
 
             ok_a, msg_a = validate_apache()
 
             if not ok_a:
-                with open(conf, "w") as f:
-                    f.write(current)
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to { conf }")
+                else:
+                    with open(conf, "w") as f:
+                        f.write(current)
                 err(f"Apache error (reverted):\n{msg_a}")
                 continue
 
@@ -2849,8 +2954,11 @@ def modify_full_site():
             meta = get_site_meta(domain)
             if meta:
                 meta["docroot"] = new_docroot
-                with open(f"{META_DIR}/{domain}.json", "w") as f:
-                    json.dump(meta, f, indent=2)
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to {META_DIR}/{domain}.json")
+                else:
+                    with open(f"{META_DIR}/{domain}.json", "w") as f:
+                        json.dump(meta, f, indent=2)
 
             reload_apache()
             apply_reloads()
@@ -2874,14 +2982,20 @@ def modify_full_site():
             new_config = "\n".join(lines) + "\n"
 
             backup_config(conf)
-            with open(conf, "w") as f:
-                f.write(new_config)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { conf }")
+            else:
+                with open(conf, "w") as f:
+                    f.write(new_config)
 
             ok_a, msg_a = validate_apache()
 
             if not ok_a:
-                with open(conf, "w") as f:
-                    f.write(current)
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to { conf }")
+                else:
+                    with open(conf, "w") as f:
+                        f.write(current)
                 err(f"Apache error (reverted):\n{msg_a}")
                 continue
 
@@ -2924,8 +3038,11 @@ def modify_full_site():
             # Write new vhost under NEW name (we will rename the file)
             new_conf_path = f"{APACHE_SITES_AVAILABLE}/{new_domain}.conf"
             backup_config(new_conf_path)
-            with open(new_conf_path, "w") as f:
-                f.write(new_vhost)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { new_conf_path }")
+            else:
+                with open(new_conf_path, "w") as f:
+                    f.write(new_vhost)
 
             # Validate Apache with new config
             ok_a, msg_a = validate_apache()
@@ -2952,7 +3069,7 @@ def modify_full_site():
                     old_fwd_file = get_zone_file(domain)
                     # Remove old forward zone entirely and create new.
                     remove_zone_from_conf(domain)
-                    if old_fwd_file and os.path.exists(old_fwd_file):
+                    if old_fwd_file and os.path.isfile(old_fwd_file):
                         # Optionally delete old zone file later
                         pass
 
@@ -3011,7 +3128,7 @@ def modify_full_site():
                     continue
 
                 # Optionally delete old zone files
-                if old_fwd_file and os.path.exists(old_fwd_file):
+                if old_fwd_file and os.path.isfile(old_fwd_file):
                     os.remove(old_fwd_file)
                 # Old reverse zone file path can't be determined easily; skip.
 
@@ -3061,7 +3178,7 @@ def modify_full_site():
             if not src:
                 warn("No path provided, skipping.")
                 continue
-            if not os.path.exists(src):
+            if not os.path.isfile(src):
                 err(f"Directory not found: {src}")
                 continue
             step(f"Copying files from {src} to {old_docroot}...")
@@ -3126,7 +3243,7 @@ def modify_lamp_site():
     for domain in domains:
         conf = f"{APACHE_SITES_AVAILABLE}/{domain}.conf"
 
-        if not os.path.exists(conf):
+        if not os.path.isfile(conf):
             err(f"Config not found: {conf}")
             continue
 
@@ -3161,14 +3278,20 @@ def modify_lamp_site():
             )
 
             backup_config(conf)
-            with open(conf, "w") as f:
-                f.write(updated)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { conf }")
+            else:
+                with open(conf, "w") as f:
+                    f.write(updated)
 
             ok_a, msg_a = validate_apache()
 
             if not ok_a:
-                with open(conf, "w") as f:
-                    f.write(current)
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to { conf }")
+                else:
+                    with open(conf, "w") as f:
+                        f.write(current)
                 err(f"Apache error (reverted):\n{msg_a}")
                 continue
 
@@ -3181,7 +3304,7 @@ def modify_lamp_site():
 
             index_path = os.path.join(docroot, "index.php")
 
-            if not os.path.exists(index_path):
+            if not os.path.isfile(index_path):
                 err(f"index.php not found at {index_path}")
                 continue
 
@@ -3200,8 +3323,11 @@ def modify_lamp_site():
                 php
             )
 
-            with open(index_path, "w") as f:
-                f.write(php_updated)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { index_path }")
+            else:
+                with open(index_path, "w") as f:
+                    f.write(php_updated)
 
             ok(f"DB password updated in index.php for {domain}.")
             warn("Remember to also update the MariaDB user password manually.")
@@ -3224,14 +3350,20 @@ def modify_lamp_site():
             new_config = "\n".join(lines) + "\n"
 
             backup_config(conf)
-            with open(conf, "w") as f:
-                f.write(new_config)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { conf }")
+            else:
+                with open(conf, "w") as f:
+                    f.write(new_config)
 
             ok_a, msg_a = validate_apache()
 
             if not ok_a:
-                with open(conf, "w") as f:
-                    f.write(current)
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to { conf }")
+                else:
+                    with open(conf, "w") as f:
+                        f.write(current)
                 err(f"Apache error (reverted):\n{msg_a}")
                 continue
 
@@ -3247,7 +3379,7 @@ def modify_lamp_site():
             if not src:
                 warn("No path provided, skipping.")
                 continue
-            if not os.path.exists(src):
+            if not os.path.isfile(src):
                 err(f"Directory not found: {src}")
                 continue
             meta = get_site_meta(domain)
@@ -3400,8 +3532,15 @@ def create_nginx_full_site():
             return
 
     step("Creating document root...")
-    create_docroot(docroot, domain)
-    ask_for_custom_site_files(docroot)
+    Path(docroot).mkdir(parents=True, exist_ok=True)
+
+    # Custom site files?
+    custom = ask_for_custom_site_files(docroot)
+    if not custom:
+        # No custom files — write the default placeholder index.html
+        index = Path(docroot) / "index.html"
+        if not index.exists():
+            index.write_text(f"<html><body><h1>{domain}</h1></body></html>")
 
     step("Writing Nginx vhost config...")
     if ssl_choice in ("2", "3"):
@@ -3490,7 +3629,7 @@ def modify_nginx_full_site():
     for domain in domains:
         conf = f"{NGINX_SITES_AVAILABLE}/{domain}.conf"
 
-        if not os.path.exists(conf):
+        if not os.path.isfile(conf):
             err(f"Config not found: {conf}")
             continue
 
@@ -3514,13 +3653,19 @@ def modify_nginx_full_site():
             updated = re.sub(r"root\s+\S+;", f"root {new_docroot};", current)
 
             backup_config(conf)
-            with open(conf, "w") as f:
-                f.write(updated)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { conf }")
+            else:
+                with open(conf, "w") as f:
+                    f.write(updated)
 
             ok_n, msg_n = validate_nginx()
             if not ok_n:
-                with open(conf, "w") as f:
-                    f.write(current)
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to { conf }")
+                else:
+                    with open(conf, "w") as f:
+                        f.write(current)
                 err(f"Nginx error (reverted):\n{msg_n}")
                 continue
 
@@ -3540,13 +3685,19 @@ def modify_nginx_full_site():
             new_config = "\n".join(lines) + "\n"
 
             backup_config(conf)
-            with open(conf, "w") as f:
-                f.write(new_config)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { conf }")
+            else:
+                with open(conf, "w") as f:
+                    f.write(new_config)
 
             ok_n, msg_n = validate_nginx()
             if not ok_n:
-                with open(conf, "w") as f:
-                    f.write(current)
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to { conf }")
+                else:
+                    with open(conf, "w") as f:
+                        f.write(current)
                 err(f"Nginx error (reverted):\n{msg_n}")
                 continue
 
@@ -3559,7 +3710,7 @@ def modify_nginx_full_site():
             if not src:
                 warn("No path provided, skipping.")
                 continue
-            if not os.path.exists(src):
+            if not os.path.isfile(src):
                 err(f"Directory not found: {src}")
                 continue
             meta = get_site_meta(domain)
@@ -3894,7 +4045,7 @@ def modify_lemp_site():
     for domain in domains:
         conf = f"{NGINX_SITES_AVAILABLE}/{domain}.conf"
 
-        if not os.path.exists(conf):
+        if not os.path.isfile(conf):
             err(f"Config not found: {conf}")
             continue
 
@@ -3919,13 +4070,19 @@ def modify_lemp_site():
             updated = re.sub(r"root\s+\S+;", f"root {new_docroot};", current)
 
             backup_config(conf)
-            with open(conf, "w") as f:
-                f.write(updated)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { conf }")
+            else:
+                with open(conf, "w") as f:
+                    f.write(updated)
 
             ok_n, msg_n = validate_nginx()
             if not ok_n:
-                with open(conf, "w") as f:
-                    f.write(current)
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to { conf }")
+                else:
+                    with open(conf, "w") as f:
+                        f.write(current)
                 err(f"Nginx error (reverted):\n{msg_n}")
                 continue
 
@@ -3938,7 +4095,7 @@ def modify_lemp_site():
             docroot  = meta.get("docroot", f"/var/www/{domain}") if meta else f"/var/www/{domain}"
             index_path = os.path.join(docroot, "index.php")
 
-            if not os.path.exists(index_path):
+            if not os.path.isfile(index_path):
                 err(f"index.php not found at {index_path}")
                 continue
 
@@ -3952,8 +4109,11 @@ def modify_lemp_site():
 
             php_updated = re.sub(r"\$pass\s*=\s*'[^']*'", f"$pass = '{new_pass}'", php)
 
-            with open(index_path, "w") as f:
-                f.write(php_updated)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { index_path }")
+            else:
+                with open(index_path, "w") as f:
+                    f.write(php_updated)
 
             ok(f"DB password updated in index.php for {domain}.")
             warn("Remember to also update the MariaDB user password manually.")
@@ -3970,13 +4130,19 @@ def modify_lemp_site():
             new_config = "\n".join(lines) + "\n"
 
             backup_config(conf)
-            with open(conf, "w") as f:
-                f.write(new_config)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { conf }")
+            else:
+                with open(conf, "w") as f:
+                    f.write(new_config)
 
             ok_n, msg_n = validate_nginx()
             if not ok_n:
-                with open(conf, "w") as f:
-                    f.write(current)
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to { conf }")
+                else:
+                    with open(conf, "w") as f:
+                        f.write(current)
                 err(f"Nginx error (reverted):\n{msg_n}")
                 continue
 
@@ -3989,7 +4155,7 @@ def modify_lemp_site():
             if not src:
                 warn("No path provided, skipping.")
                 continue
-            if not os.path.exists(src):
+            if not os.path.isfile(src):
                 err(f"Directory not found: {src}")
                 continue
             meta = get_site_meta(domain)
@@ -4633,7 +4799,7 @@ def create_apache_wordpress_site():
     run(["systemctl", "restart", "apache2"])
     ok("Apache2 restarted.")
     if create_dns:
-        run(["systemctl", "restart", "bind9"])
+        run(["systemctl", "restart", get_bind9_service_name()])
         ok("BIND9 restarted.")
     print(f"\n{C.BOLD}{'─' * 35}{C.RESET}")
     print(f"  {C.BOLD}Site:{C.RESET}         {C.GREEN}{domain}{C.RESET}")
@@ -4716,8 +4882,14 @@ def create_nginx_wordpress_site():
             
         fpm_socket = find_php_fpm_socket()
         if fpm_socket == "127.0.0.1:9000":
-            # Debian12 uses php8.2-fpm socket location
-            fpm_socket = "/run/php/php8.2-fpm.sock"
+            codename = detect_codename()
+            if codename == "bullseye":
+                fpm_socket = "/run/php/php7.4-fpm.sock"
+            elif codename == "trixie":
+                fpm_socket = "/run/php/php8.3-fpm.sock"
+            else:
+                # bookworm (default/reference)
+                fpm_socket = "/run/php/php8.2-fpm.sock"
     if not _install_wordpress(domain, docroot, db_name, db_user, db_pass, "nginx"):
         return
 
@@ -4778,7 +4950,7 @@ def create_nginx_wordpress_site():
     run(["systemctl", "restart", "nginx"])
     ok("Nginx restarted.")
     if create_dns:
-        run(["systemctl", "restart", "bind9"])
+        run(["systemctl", "restart", get_bind9_service_name()])
         ok("BIND9 restarted.")
     print(f"\n{C.BOLD}{'─' * 35}{C.RESET}")
     print(f"  {C.BOLD}Site:{C.RESET}         {C.GREEN}{domain}{C.RESET}")
@@ -5026,7 +5198,7 @@ NETWORK_INTERFACES = "/etc/network/interfaces"
 
 
 def _read_interfaces():
-    if not os.path.exists(NETWORK_INTERFACES):
+    if not os.path.isfile(NETWORK_INTERFACES):
         return None
     with open(NETWORK_INTERFACES, "r") as f:
         return f.read()
@@ -5128,6 +5300,11 @@ def _pick_interface(interfaces):
     print()
     raw = input("  Select interface: ").strip()
 
+    # Allow exact name match for Web UI integration
+    for iface in interfaces:
+        if iface["name"] == raw:
+            return iface
+
     try:
         idx = int(raw) - 1
         if 0 <= idx < len(interfaces):
@@ -5190,6 +5367,13 @@ def show_current_ip_config():
 
     print()
 
+
+def get_bind9_service_name():
+    # Use named if bind9 service isn't found
+    res = subprocess.run(["systemctl", "is-active", "bind9"], capture_output=True, text=True)
+    if "unknown" in res.stdout or "not-found" in res.stderr:
+        return "named"
+    return "bind9"
 
 def set_interface_static():
     """Interactively set (or update) an interface to a static IP."""
@@ -5255,8 +5439,11 @@ def set_interface_static():
     new_content = _replace_iface_block(content, iface_name, new_block)
 
     backup_config(NETWORK_INTERFACES)
-    with open(NETWORK_INTERFACES, "w") as f:
-        f.write(new_content)
+    if DRY_RUN:
+        step(f"[dry-run] Would write to { NETWORK_INTERFACES }")
+    else:
+        with open(NETWORK_INTERFACES, "w") as f:
+            f.write(new_content)
 
     ok(f"{iface_name} updated to static {new_addr}.")
     _apply_networking(iface_name, backup)
@@ -5290,8 +5477,11 @@ def set_interface_dhcp():
     new_content = _replace_iface_block(content, iface_name, new_block)
 
     backup_config(NETWORK_INTERFACES)
-    with open(NETWORK_INTERFACES, "w") as f:
-        f.write(new_content)
+    if DRY_RUN:
+        step(f"[dry-run] Would write to { NETWORK_INTERFACES }")
+    else:
+        with open(NETWORK_INTERFACES, "w") as f:
+            f.write(new_content)
 
     ok(f"{iface_name} set to DHCP.")
     _apply_networking(iface_name, backup)
@@ -5301,7 +5491,7 @@ def restore_interfaces_backup():
     """Restore /etc/network/interfaces from the .bak file."""
     backup = f"{NETWORK_INTERFACES}.bak"
 
-    if not os.path.exists(backup):
+    if not os.path.isfile(backup):
         warn(f"No backup found at {backup}.")
         return
 
@@ -5323,6 +5513,116 @@ def restore_interfaces_backup():
     _apply_networking("", backup)
 
 
+
+def detect_netplan():
+    return os.path.isdir("/etc/netplan")
+
+def _pick_netplan_interface():
+    result = subprocess.run(["ip", "-o", "link", "show"], capture_output=True, text=True)
+    ifaces = []
+    for line in result.stdout.splitlines():
+        parts = line.split(":")
+        if len(parts) > 1:
+            name = parts[1].strip()
+            if name != "lo" and "@" not in name:
+                ifaces.append(name)
+    if not ifaces:
+        err("No network interfaces found.")
+        return None
+
+    print("\n  Available Interfaces:")
+    for i, name in enumerate(ifaces, 1):
+        print(f"  {i}. {name}")
+    
+    choice = input("  \nSelect interface number: ").strip()
+    try:
+        idx = int(choice) - 1
+        if 0 <= idx < len(ifaces):
+            return ifaces[idx]
+    except ValueError:
+        pass
+    err("Invalid choice.")
+    return None
+
+def set_netplan_static():
+    menu_header("Set Static IP (Netplan)")
+    iface_name = _pick_netplan_interface()
+    if not iface_name: return
+
+    print(f"\n  Configuring {C.BOLD}{iface_name}{C.RESET} as static\n")
+    
+    new_addr = input("  IP address (CIDR, e.g. 192.168.1.10/24): ").strip()
+    if not new_addr or "/" not in new_addr:
+        err("Invalid IP. CIDR notation (e.g. /24) is required for Netplan.")
+        return
+
+    new_gw = input("  Gateway: ").strip()
+    new_dns = input("  DNS servers (comma separated, e.g. 8.8.8.8, 8.8.4.4): ").strip()
+
+    routes_block = f"\n      routes:\n        - to: default\n          via: {new_gw}" if new_gw else ""
+    
+    if new_dns:
+        dns_list = ", ".join(f'"{d.strip()}"' for d in new_dns.split(","))
+        dns_block = f"\n      nameservers:\n        addresses: [{dns_list}]"
+    else:
+        dns_block = ""
+
+    yaml_content = f"""network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    {iface_name}:
+      dhcp4: false
+      addresses:
+        - {new_addr}{routes_block}{dns_block}
+"""
+    yaml_path = "/etc/netplan/99-zervermanager.yaml"
+    
+    if DRY_RUN:
+        step(f"[dry-run] Would write static config to {yaml_path}")
+    else:
+        with open(yaml_path, "w") as f:
+            f.write(yaml_content)
+        step(f"Netplan generated at {yaml_path}")
+        print(f"  {C.CYAN}Applying Netplan...{C.RESET}", end=" ", flush=True)
+        res = run(["netplan", "apply"])
+        if res.returncode == 0:
+            print(f"{C.GREEN}✓{C.RESET}")
+            ok("Static IP applied.")
+        else:
+            print(f"{C.RED}✗{C.RESET}")
+            err(res.stderr.strip())
+
+
+def set_netplan_dhcp():
+    menu_header("Set Interface to DHCP (Netplan)")
+    iface_name = _pick_netplan_interface()
+    if not iface_name: return
+    
+    yaml_content = f"""network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    {iface_name}:
+      dhcp4: true
+"""
+    yaml_path = "/etc/netplan/99-zervermanager.yaml"
+    
+    if DRY_RUN:
+        step(f"[dry-run] Would write DHCP config to {yaml_path}")
+    else:
+        with open(yaml_path, "w") as f:
+            f.write(yaml_content)
+        step(f"Netplan generated at {yaml_path}")
+        print(f"  {C.CYAN}Applying Netplan...{C.RESET}", end=" ", flush=True)
+        res = run(["netplan", "apply"])
+        if res.returncode == 0:
+            print(f"{C.GREEN}✓{C.RESET}")
+            ok("DHCP applied.")
+        else:
+            print(f"{C.RED}✗{C.RESET}")
+            err(res.stderr.strip())
+
 def manage_server_ip():
     while True:
         menu_header("Manage Server IP")
@@ -5340,9 +5640,15 @@ def manage_server_ip():
         if choice == "1":
             show_current_ip_config()
         elif choice == "2":
-            set_interface_static()
+            if detect_netplan():
+                set_netplan_static()
+            else:
+                set_interface_static()
         elif choice == "3":
-            set_interface_dhcp()
+            if detect_netplan():
+                set_netplan_dhcp()
+            else:
+                set_interface_dhcp()
         elif choice == "4":
             restore_interfaces_backup()
         elif choice == "0":
@@ -5502,11 +5808,14 @@ def reload_all_services():
 # ─────────────────────────────────────────
 
 def fix_dpkg():
-    """Run dpkg --configure -a to repair any interrupted package installs."""
+    """Run dpkg --configure -a and apt --fix-broken install to repair any interrupted package installs."""
     info("Repairing package state (dpkg --configure -a)...")
     rc, stderr = run_live(["dpkg", "--configure", "-a"])
     if rc != 0 and stderr.strip():
         warn(f"dpkg repair note: {stderr.strip()[:200]}")
+    info("Running apt --fix-broken install -y...")
+    run_live(["apt", "--fix-broken", "install", "-y"])
+    ok("OS Maintenance package repair complete.")
 
 
 def ensure_dependencies(auto_install=True):
@@ -5560,33 +5869,47 @@ def ensure_dependencies(auto_install=True):
         ok("BIND9 enabled.") if r.returncode == 0 else err(r.stderr.strip())
 
         # Create an empty named.conf.local if it doesn't exist yet
-        if not os.path.exists(NAMED_CONF_LOCAL):
+        if not os.path.isfile(NAMED_CONF_LOCAL):
             if DRY_RUN:
                 step(f"[dry-run] Would create {NAMED_CONF_LOCAL}")
             else:
                 backup_config(NAMED_CONF_LOCAL)
-                with open(NAMED_CONF_LOCAL, "w") as f:
-                    f.write("// Local zones\n")
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to { NAMED_CONF_LOCAL }")
+                else:
+                    with open(NAMED_CONF_LOCAL, "w") as f:
+                        f.write("// Local zones\n")
                 ok("Created empty named.conf.local.")
 
     print()
     return []
 
 
+def detect_codename():
+    """Extract and return the OS codename (e.g. 'bullseye', 'bookworm', 'trixie')."""
+    os_name = get_os_version().lower()
+    for codename in ("bullseye", "bookworm", "trixie"):
+        if codename in os_name:
+            return codename
+    return ""
+
 def check_os_compatibility():
     """Return a 3-tier compatibility status for the running OS.
 
     Returns:
         (status, os_name)  where status is one of:
-          'supported'   – Debian 12 / Bookworm  (green)
+          'supported'   – Debian 11/12/13 (green)
           'uncertain'   – Debian (other version), Ubuntu, or Raspbian  (yellow)
           'unsupported' – anything else  (red)
     """
     os_name = get_os_version()
     lower = os_name.lower()
-    if "debian" in lower and ("12" in lower or "bookworm" in lower):
+    
+    if "debian" in lower and any(kw in lower for kw in ("11", "bullseye", "12", "bookworm", "13", "trixie")):
         return "supported", os_name
-    elif any(kw in lower for kw in ("debian", "ubuntu", "raspbian", "raspberry")):
+    elif "ubuntu" in lower:
+        return "ubuntu", os_name
+    elif any(kw in lower for kw in ("debian", "raspbian", "raspberry")):
         return "uncertain", os_name
     else:
         return "unsupported", os_name
@@ -5602,16 +5925,19 @@ def show_loading_screen():
 
     if status == "supported":
         print(f"  {C.GREEN}[✔] Compatible OS: {os_name}{C.RESET}")
+    elif status == "ubuntu":
+        print(f"  {C.YELLOW}[!] Ubuntu detected — experimental/unsupported, proceed at your own risk{C.RESET}")
+        if not prompt_confirm("Do you want to proceed anyway?", default="no"):
+            _shutdown()
     elif status == "uncertain":
         print(f"  {C.YELLOW}[~] Supported (uncertain): {os_name}{C.RESET}")
         print(f"\n  {C.YELLOW}[!] This OS may work but has not been fully tested.{C.RESET}")
-        print(f"      Some features may behave differently from Debian 12 (Bookworm).\n")
+        print(f"      Some features may behave differently from Debian 11/12/13.\n")
         if not prompt_confirm("Do you want to proceed anyway?", default="yes"):
             _shutdown()
     else:
-        print(f"  {C.RED}[✘] Unsupported OS: {os_name}{C.RESET}")
-        print(f"\n  {C.RED}[!] WARNING: This server manager is built for Debian 12 (Bookworm).{C.RESET}")
-        print(f"      Running it on this OS is likely to cause configuration failures.\n")
+        err(f"Unsupported OS: {os_name}")
+        warn("This server manager is built for Debian 11/12/13.\n      Running it on this OS is likely to cause configuration failures.\n")
         if not prompt_confirm("Do you want to proceed anyway?", default="no"):
             _shutdown()
 
@@ -6203,20 +6529,58 @@ roundcube-core roundcube/database-type select sqlite3
     ok(f"Installed Mail Server packages for {domain}.")
     # Enable required Apache modules and Roundcube config
     step("Enabling Apache modules and Roundcube configuration...")
-    run(["/usr/sbin/a2enmod", "rewrite"]) 
-    run(["/usr/sbin/a2enconf", "roundcube"]) 
-    run(["systemctl", "reload", "apache2"]) 
+    run(["/usr/sbin/a2enmod", "rewrite"])
+    run(["/usr/sbin/a2enconf", "roundcube"])
+    run(["systemctl", "enable", "--now", "apache2"])  # start+enable if not yet active
+    mark_reload("apache2")
     
     # Install PHP extensions needed by Roundcube
-    php_packages = [
+    # build_php_packages() emits versioned names on Ubuntu (e.g. php8.5-imap),
+    # and passes through unchanged generic names on Debian 12/11/13.
+    php_packages = build_php_packages([
         "php", "php-imap", "php-mbstring", "php-xml",
         "php-gd", "php-intl"
-    ]
+    ])
     rc, err_msg = run_live(["apt-get", "install", "-y", "--no-install-recommends"] + php_packages)
     if rc != 0:
         err(f"Failed to install PHP extensions for Roundcube:\n{err_msg}")
     else:
         ok("PHP extensions for Roundcube installed.")
+    
+    # Ubuntu 26.04 + PHP 8.4+ introduces native array_first which conflicts with Roundcube 1.6's bootstrap.php
+    # We must patch it to prevent a 500 Internal Server Error
+    step("Applying PHP 8.4+ compatibility patches to Roundcube...")
+    bootstrap_file = "/usr/share/roundcube/program/lib/Roundcube/bootstrap.php"
+    if not DRY_RUN and os.path.exists(bootstrap_file):
+        with open(bootstrap_file, "r") as f:
+            lines = f.readlines()
+        
+        out = []
+        in_func = False
+        brace_count = 0
+        patched = False
+        for line in lines:
+            if "function array_first(" in line and "function_exists" not in ''.join(out[-2:]):
+                out.append("if (!function_exists('array_first')) {\n")
+                out.append(line)
+                in_func = True
+                brace_count = line.count("{") - line.count("}")
+                patched = True
+                continue
+            
+            if in_func:
+                out.append(line)
+                brace_count += line.count("{") - line.count("}")
+                if brace_count == 0 and "}" in line:
+                    out.append("}\n")
+                    in_func = False
+            else:
+                out.append(line)
+                
+        if patched:
+            with open(bootstrap_file, "w") as f:
+                f.writelines(out)
+            ok("Roundcube patched for PHP 8.4+ compatibility.")
     
     # Debian's roundcube package automatically sets correct ownership for temp/logs directories.
     # Do NOT run chown -R on public_html, as it will break symlinks to /usr/share and cause 403 Forbidden errors!
@@ -6254,37 +6618,85 @@ roundcube-core roundcube/database-type select sqlite3
     
     vhost_path = f"/etc/apache2/sites-available/{webmail_domain}.conf"
     backup_config(vhost_path)
-    with open(vhost_path, "w") as f:
-        f.write(vhost_content)
+    if DRY_RUN:
+        step(f"[dry-run] Would write to { vhost_path }")
+    else:
+        with open(vhost_path, "w") as f:
+            f.write(vhost_content)
         
     run(["/usr/sbin/a2ensite", f"{webmail_domain}.conf"])
-    run(["systemctl", "reload", "apache2"])
+    mark_reload("apache2")  # deferred — apply_reloads() at end of function
     ok(f"Apache VirtualHost created for {webmail_domain}")
 
     # Configure Postfix and Dovecot for Maildir format
     step("Configuring Postfix and Dovecot for Maildir...")
     run(["/usr/sbin/postconf", "-e", "home_mailbox = Maildir/"])
     backup_config("/etc/dovecot/conf.d/99-local-mail.conf")
-    with open("/etc/dovecot/conf.d/99-local-mail.conf", "w") as f:
-        f.write("mail_location = maildir:~/Maildir\n")
-        f.write("auth_username_format = %n\n")
+    
+    os_status, _ = check_os_compatibility()
+    
+    if DRY_RUN:
+        step(f"[dry-run] Would write to /etc/dovecot/conf.d/99-local-mail.conf")
+    else:
+        with open("/etc/dovecot/conf.d/99-local-mail.conf", "w") as f:
+            if os_status == "ubuntu":
+                # Dovecot 2.4 syntax
+                f.write("mail_driver = maildir\n")
+                f.write("mail_path = ~/Maildir\n")
+                f.write("mailbox_list_layout = fs\n")
+            else:
+                # Dovecot 2.3 syntax (Debian)
+                f.write("mail_location = maildir:~/Maildir\n")
+            
+            # Dovecot 2.3 (Debian 12) and 2.4 (Ubuntu) both accept these global overrides.
+            # auth_username_format is intentionally omitted: it is invalid at global scope
+            # in Dovecot 2.4 and causes a startup crash. Users log in with their plain
+            # system username (e.g. 'john'); no domain stripping is needed.
+            f.write("disable_plaintext_auth = no\n")
+            f.write("ssl = no\n")
 
     run(["systemctl", "restart", "postfix"])
-    run(["systemctl", "restart", "dovecot"])
-    ok("Postfix and Dovecot services restarted.")
+    res_dov = run(["systemctl", "restart", "dovecot"])
+    if res_dov.returncode != 0:
+        # Capture actual Dovecot error from journal for in-terminal diagnosis
+        journal = run(["journalctl", "-xeu", "dovecot.service", "--no-pager", "-n", "40"])
+        err(f"Dovecot failed to restart. Journal output:\n{journal.stdout.strip()}")
+        return
+    # Verify Dovecot is actually listening on IMAP port 143
+    port_check = run(["ss", "-tlnp"])
+    if ":143" not in port_check.stdout:
+        warn("Dovecot does not appear to be listening on port 143. "
+             "Check 'systemctl status dovecot' and /var/log/mail.log for errors.")
+    else:
+        ok("Postfix and Dovecot services restarted and verified (port 143 active).")
 
     # Configure Roundcube SMTP and Domain settings
     step("Configuring Roundcube specific settings...")
     rc_conf = "/etc/roundcube/config.inc.php"
-    if os.path.exists(rc_conf):
+    rc_marker = "// Custom settings added by zervermanager"
+    if os.path.isfile(rc_conf):
         backup_config(rc_conf)
-        with open(rc_conf, "a") as f:
-            f.write(f"\n// Custom settings added by servermanager\n")
-            f.write(f"$config['smtp_host'] = 'localhost:25';\n")
-            f.write(f"$config['smtp_user'] = '';\n")
-            f.write(f"$config['smtp_pass'] = '';\n")
-            f.write(f"$config['username_domain'] = '{domain}';\n")
-        ok("Roundcube configured for local SMTP and domain.")
+        if DRY_RUN:
+            step(f"[dry-run] Would write custom block to {rc_conf}")
+        else:
+            with open(rc_conf, "r") as f:
+                existing = f.read()
+            # Idempotent: strip any previously written custom block before rewriting
+            if rc_marker in existing:
+                existing = existing[:existing.index(rc_marker)]
+            with open(rc_conf, "w") as f:
+                f.write(existing.rstrip() + "\n\n")
+                f.write(f"{rc_marker}\n")
+                # imap_host without port suffix = plain IMAP on 143 (Roundcube 1.6+ standard).
+                # Do NOT set default_host alongside imap_host — they conflict in RC 1.6+.
+                # No username_domain: users log in with plain system username (e.g. 'john').
+                # This avoids the need for auth_username_format in Dovecot (incompatible with 2.4).
+                f.write(f"$config['imap_host'] = '127.0.0.1';\n")
+                f.write(f"$config['smtp_host'] = '127.0.0.1';\n")
+                f.write(f"$config['smtp_port'] = 25;\n")
+                f.write(f"$config['smtp_user'] = '';\n")
+                f.write(f"$config['smtp_pass'] = '';\n")
+        ok("Roundcube configured for local SMTP and IMAP.")
     print()
     
     # ── BIND9 zones ──
@@ -6305,16 +6717,22 @@ roundcube-core roundcube/database-type select sqlite3
             zcontent += f"mail    IN  A       {ip}\n"
             zcontent += f"@       IN  MX  10  {webmail_domain}.\n"
             backup_config(fwd_file)
-            with open(fwd_file, "w") as f:
-                f.write(zcontent)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { fwd_file }")
+            else:
+                with open(fwd_file, "w") as f:
+                    f.write(zcontent)
             ok("Mail records appended to forward zone.")
         else:
             step("Writing forward zone...")
             write_forward_zone(domain, ip, fwd_file)
-            with open(fwd_file, "a") as f:
-                f.write(f"\n; Mail server records\n")
-                f.write(f"mail    IN  A       {ip}\n")
-                f.write(f"@       IN  MX  10  {webmail_domain}.\n")
+            if DRY_RUN:
+                step(f"[dry-run] Would append to { fwd_file }")
+            else:
+                with open(fwd_file, "a") as f:
+                    f.write(f"\n; Mail server records\n")
+                    f.write(f"mail    IN  A       {ip}\n")
+                    f.write(f"@       IN  MX  10  {webmail_domain}.\n")
                 
             ok_z, msg_z = validate_zone(domain, fwd_file)
             if not ok_z:
@@ -6472,7 +6890,7 @@ def delete_mail_services():
     step("Cleaning up residuals...")
     run(["apt-get", "autoremove", "-y"])
     
-    if os.path.exists("/etc/apache2/conf-available/roundcube.conf"):
+    if os.path.isfile("/etc/apache2/conf-available/roundcube.conf"):
         run(["/usr/sbin/a2disconf", "roundcube"])
         run(["systemctl", "reload", "apache2"])
     
@@ -6714,8 +7132,11 @@ def setup_samba():
 """
     try:
         backup_config("/etc/samba/smb.conf")
-        with open("/etc/samba/smb.conf", "a") as f:
-            f.write(smb_block)
+        if DRY_RUN:
+            step(f"[dry-run] Would append to /etc/samba/smb.conf")
+        else:
+            with open("/etc/samba/smb.conf", "a") as f:
+                f.write(smb_block)
         ok(f"Share '{share_name}' added to /etc/samba/smb.conf")
     except Exception as e:
         err(f"Could not write to smb.conf: {e}")
@@ -6973,10 +7394,865 @@ def display_main_menu() -> str:
     return input("  \nChoice: ").strip()
 
 
+def check_apparmor_warning(service_name):
+    if not os.path.isfile("/usr/sbin/aa-status"):
+        return
+    res = subprocess.run(["aa-status"], capture_output=True, text=True)
+    if service_name in res.stdout and "enforce" in res.stdout:
+        warn(f"AppArmor is enforcing a profile for {service_name}. This may block custom config paths.")
+
 def _shutdown():
     """Centralised graceful shutdown — add cleanup tasks here as needed."""
     print(f"\n  {C.CYAN}Goodbye!{C.RESET}")
     sys.exit(0)
+
+
+# ─────────────────────────────────────────
+#  Web Configuration Server
+# ─────────────────────────────────────────
+
+class WebUIHandler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        # Serve static files from the web_config directory
+        kwargs['directory'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web_config')
+        super().__init__(*args, **kwargs)
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/api/"):
+            self.handle_api_get(parsed)
+        else:
+            super().do_GET()
+
+    def handle_api_get(self, parsed):
+        self.send_response(200)
+        self.send_header("Content-type", "application/json")
+        self.end_headers()
+        
+        if parsed.path == "/api/status":
+            # Strip ANSI escape codes
+            def strip_ansi(text):
+                return re.sub(r'\x1b\[[0-9;]*m', '', text)
+            
+            data = {
+                "os": get_os_version(),
+                "apache2": strip_ansi(service_status("apache2")),
+                "nginx": strip_ansi(service_status("nginx")),
+                "bind9": strip_ansi(service_status("bind9")),
+                "mariadb": strip_ansi(service_status("mariadb")),
+                "postfix": strip_ansi(service_status("postfix")),
+                "dovecot": strip_ansi(service_status("dovecot")),
+                "ufw": strip_ansi(service_status("ufw")),
+                "version": SCRIPT_VERSION
+            }
+            self.wfile.write(json.dumps(data).encode("utf-8"))
+        elif parsed.path == "/api/sites":
+            sites = []
+            if os.path.exists(APACHE_SITES_AVAILABLE):
+                for file in sorted(os.listdir(APACHE_SITES_AVAILABLE)):
+                    if file.endswith(".conf"):
+                        domain = file[:-5]
+                        meta = get_site_meta(domain) or {}
+                        enabled = os.path.exists(f"/etc/apache2/sites-enabled/{file}")
+                        sites.append({
+                            "domain": domain,
+                            "server": "apache",
+                            "type": meta.get("type", "unknown"),
+                            "docroot": meta.get("docroot", f"/var/www/{domain}"),
+                            "enabled": enabled
+                        })
+            if os.path.exists(NGINX_SITES_AVAILABLE):
+                for file in sorted(os.listdir(NGINX_SITES_AVAILABLE)):
+                    if file.endswith(".conf"):
+                        domain = file[:-5]
+                        meta = get_site_meta(domain) or {}
+                        enabled = os.path.exists(f"/etc/nginx/sites-enabled/{file}")
+                        sites.append({
+                            "domain": domain,
+                            "server": "nginx",
+                            "type": meta.get("type", "unknown"),
+                            "docroot": meta.get("docroot", f"/var/www/{domain}"),
+                            "enabled": enabled
+                        })
+            self.wfile.write(json.dumps(sites).encode("utf-8"))
+        elif parsed.path == "/api/manage/dns":
+            query = urllib.parse.parse_qs(parsed.query)
+            if query.get('action', [''])[0] == 'list':
+                zones_list = []
+                if os.path.isfile(NAMED_CONF_LOCAL):
+                    with open(NAMED_CONF_LOCAL, "r") as f:
+                        content = f.read()
+                    zones = re.findall(r'zone "([^"]+)"', content)
+                    for z in zones:
+                        z_type = "reverse" if z.endswith(".in-addr.arpa") else "forward"
+                        zones_list.append({"domain": z, "type": z_type})
+                self.wfile.write(json.dumps(zones_list).encode("utf-8"))
+            else:
+                self.wfile.write(b"[]")
+        elif parsed.path == "/api/manage/mail":
+            query = urllib.parse.parse_qs(parsed.query)
+            if query.get('action', [''])[0] == 'list':
+                users = []
+                res = run(["/usr/bin/getent", "group", "mailuser"])
+                if res.returncode == 0 and res.stdout.strip():
+                    parts = res.stdout.strip().split(":")
+                    if len(parts) >= 4 and parts[3]:
+                        users = parts[3].split(",")
+                self.wfile.write(json.dumps(users).encode("utf-8"))
+            else:
+                self.wfile.write(b"[]")
+        else:
+            self.wfile.write(b"{}")
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/api/makesite/"):
+            self.handle_makesite_post(parsed.path)
+        elif parsed.path.startswith("/api/manage/site_action"):
+            self.handle_site_action_post()
+        elif parsed.path.startswith("/api/manage/"):
+            self.handle_manage_post(parsed.path)
+        elif parsed.path.startswith("/api/install/") or parsed.path.startswith("/api/uninstall/"):
+            self.handle_install_post(parsed.path)
+        else:
+            self.send_error(404)
+
+    def handle_site_action_post(self):
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length) if content_length > 0 else b'{}'
+        data = json.loads(post_data.decode('utf-8'))
+        
+        action = data.get("action")
+        domain = data.get("domain")
+        server = data.get("server", "apache")
+        
+        success = False
+        message = ""
+        
+        try:
+            if not domain:
+                raise Exception("Domain is required.")
+                
+            conf_dir = APACHE_SITES_AVAILABLE if server == "apache" else NGINX_SITES_AVAILABLE
+            enabled_dir = "/etc/apache2/sites-enabled" if server == "apache" else "/etc/nginx/sites-enabled"
+            conf_path = f"{conf_dir}/{domain}.conf"
+            link_path = f"{enabled_dir}/{domain}.conf"
+            
+            if action == "enable":
+                if server == "apache":
+                    enable_site(domain)
+                    reload_apache()
+                else:
+                    if not os.path.exists(link_path) and os.path.exists(conf_path):
+                        os.symlink(conf_path, link_path)
+                    reload_nginx()
+                success = True
+                message = f"Enabled {domain}."
+                
+            elif action == "disable":
+                if server == "apache":
+                    disable_site_cmd(domain)
+                    reload_apache()
+                else:
+                    if os.path.islink(link_path):
+                        os.unlink(link_path)
+                    reload_nginx()
+                success = True
+                message = f"Disabled {domain}."
+                
+            elif action == "delete":
+                remove_docroot = data.get("remove_docroot", False)
+                meta = get_site_meta(domain)
+                docroot = meta.get("docroot", f"/var/www/{domain}") if meta else f"/var/www/{domain}"
+                
+                # Delete DB if lamp or lemp
+                if meta and meta.get("type") in ["lamp", "lemp"]:
+                    db_name = meta.get("db_name")
+                    db_user = meta.get("db_user")
+                    if db_name and db_user:
+                        sql = f"DROP DATABASE IF EXISTS `{db_name}`; DROP USER IF EXISTS '{db_user}'@'localhost'; FLUSH PRIVILEGES;"
+                        run(["mysql", "-e", sql])
+                        
+                # Disable site and remove configs
+                if server == "apache":
+                    disable_site_cmd(domain)
+                    if os.path.islink(link_path): os.unlink(link_path)
+                    if os.path.isfile(conf_path): os.remove(conf_path)
+                    reload_apache()
+                else:
+                    if os.path.islink(link_path): os.unlink(link_path)
+                    if os.path.isfile(conf_path): os.remove(conf_path)
+                    reload_nginx()
+                    
+                if remove_docroot and os.path.exists(docroot):
+                    shutil.rmtree(docroot)
+                    
+                delete_site_meta(domain)
+                success = True
+                message = f"Deleted {domain}."
+                
+            elif action == "get_vhost":
+                if os.path.isfile(conf_path):
+                    with open(conf_path, "r") as f:
+                        config_content = f.read()
+                    success = True
+                    message = config_content
+                else:
+                    raise Exception("Config file not found.")
+                    
+            elif action == "update_vhost":
+                new_config = data.get("config", "")
+                if os.path.isfile(conf_path):
+                    with open(conf_path, "w") as f:
+                        f.write(new_config)
+                    if server == "apache":
+                        reload_apache()
+                    else:
+                        reload_nginx()
+                    success = True
+                    message = f"Updated vhost configuration for {domain}."
+                else:
+                    raise Exception("Config file not found.")
+                    
+            elif action == "update_docroot":
+                new_docroot = data.get("docroot")
+                if not new_docroot:
+                    raise Exception("New document root cannot be empty.")
+                meta = get_site_meta(domain) or {}
+                meta["docroot"] = new_docroot
+                
+                with open(conf_path, "r") as f:
+                    content = f.read()
+                if server == "apache":
+                    content = re.sub(r'DocumentRoot\s+.*', f'DocumentRoot {new_docroot}', content)
+                    content = re.sub(r'<Directory\s+[^>]+>', f'<Directory {new_docroot}>', content)
+                else:
+                    content = re.sub(r'root\s+[^;]+;', f'root {new_docroot};', content)
+                with open(conf_path, "w") as f:
+                    f.write(content)
+                    
+                Path(new_docroot).mkdir(parents=True, exist_ok=True)
+                
+                with open(f"{META_DIR}/{domain}.json", "w") as f:
+                    json.dump(meta, f, indent=4)
+                    
+                if server == "apache":
+                    reload_apache()
+                else:
+                    reload_nginx()
+                success = True
+                message = f"Updated DocumentRoot to {new_docroot}."
+                
+            elif action == "update_db_pass":
+                new_pass = data.get("db_pass")
+                meta = get_site_meta(domain)
+                if not meta or meta.get("type") not in ["lamp", "lemp", "wordpress"]:
+                    raise Exception("Site does not have an active database.")
+                db_user = meta.get("db_user")
+                if not db_user:
+                    raise Exception("No DB user recorded for this site.")
+                    
+                # Update mariaDB
+                sql = f"ALTER USER '{db_user}'@'localhost' IDENTIFIED BY '{new_pass}'; FLUSH PRIVILEGES;"
+                res = run(["mysql", "-e", sql])
+                if res.returncode != 0:
+                    raise Exception(f"MariaDB error: {res.stderr}")
+                    
+                # Update wp-config.php or index.php
+                docroot = meta.get("docroot", f"/var/www/{domain}")
+                wp_cfg = f"{docroot}/wp-config.php"
+                idx_php = f"{docroot}/index.php"
+                
+                if os.path.exists(wp_cfg):
+                    with open(wp_cfg, "r") as f: content = f.read()
+                    content = re.sub(r"define\(\s*'DB_PASSWORD'\s*,\s*'.*?'\s*\);", f"define( 'DB_PASSWORD', '{new_pass}' );", content)
+                    with open(wp_cfg, "w") as f: f.write(content)
+                elif os.path.exists(idx_php):
+                    with open(idx_php, "r") as f: content = f.read()
+                    content = re.sub(r'\$password\s*=\s*".*?";', f'$password = "{new_pass}";', content)
+                    content = re.sub(r"\$password\s*=\s*'.*?';", f"$password = '{new_pass}';", content)
+                    with open(idx_php, "w") as f: f.write(content)
+                    
+                success = True
+                message = "Database password updated successfully."
+                
+            else:
+                raise Exception("Unknown action.")
+                
+        except Exception as e:
+            success = False
+            message = str(e)
+            import traceback
+            traceback.print_exc()
+            
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"success": success, "message": message}).encode("utf-8"))
+
+    def _setup_stream(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        import sys, io, re
+        
+        class StreamingLogger:
+            def __init__(self, wfile):
+                self.wfile = wfile
+            def write(self, text):
+                if not text: return
+                # text = re.sub(r'\x1b\[[0-9;]*m', '', text) # Preserved for frontend parsing
+                try:
+                    self.wfile.write(text.encode('utf-8'))
+                    self.wfile.flush()
+                except Exception:
+                    pass
+            def flush(self):
+                try:
+                    self.wfile.flush()
+                except Exception:
+                    pass
+            def isatty(self): return False
+            def fileno(self): raise io.UnsupportedOperation()
+            
+        old_stdout = sys.stdout
+        old_stdin = sys.stdin
+        sys.stdout = StreamingLogger(self.wfile)
+        return old_stdout, old_stdin
+
+    def _teardown_stream(self, old_stdout, old_stdin, success, domain=None):
+        import sys, json
+        sys.stdout = old_stdout
+        sys.stdin = old_stdin
+        result = {"success": success}
+        if domain:
+            result["domain"] = domain
+        try:
+            self.wfile.write(f"\n===RESULT===\n{json.dumps(result)}\n".encode('utf-8'))
+            self.wfile.flush()
+        except Exception:
+            pass
+
+    def handle_manage_post(self, path):
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length) if content_length > 0 else b'{}'
+        data = json.loads(post_data.decode('utf-8'))
+        
+        old_stdout, old_stdin = self._setup_stream()
+        import sys, io
+        
+        success = False
+        try:
+            if path == "/api/manage/reload":
+                reload_all_services()
+                success = True
+            elif path == "/api/manage/mariadb":
+                typ = data.get("type")
+                action = data.get("action")
+                if typ == "database":
+                    dbname = data.get("db_name", "")
+                    fpath = data.get("file_path", "")
+                    confirm = "yes" if data.get("confirm") else "no"
+                    if action == "list":
+                        mariadb_list_databases()
+                    elif action == "create":
+                        sys.stdin = MockStdin([dbname])
+                        mariadb_create_database()
+                    elif action == "drop":
+                        sys.stdin = MockStdin([dbname, confirm])
+                        mariadb_drop_database()
+                    elif action == "inspect":
+                        sys.stdin = MockStdin([dbname])
+                        mariadb_inspect_database()
+                    elif action == "backup":
+                        sys.stdin = MockStdin([dbname, fpath])
+                        mariadb_backup()
+                    elif action == "restore":
+                        sys.stdin = MockStdin([fpath, dbname, confirm])
+                        mariadb_restore()
+                elif typ == "user":
+                    uname = data.get("username", "")
+                    upass = data.get("password", "")
+                    dbname = data.get("db_name", "")
+                    if action == "list":
+                        mariadb_list_users()
+                    elif action == "create":
+                        sys.stdin = MockStdin([uname, upass])
+                        mariadb_create_user()
+                    elif action == "drop":
+                        sys.stdin = MockStdin([uname, "yes"])
+                        mariadb_drop_user()
+                    elif action == "password":
+                        sys.stdin = MockStdin([uname, upass])
+                        mariadb_change_password()
+                    elif action == "grant":
+                        sys.stdin = MockStdin([uname, dbname, "1"])
+                        mariadb_grant_privileges()
+                    elif action == "revoke":
+                        sys.stdin = MockStdin([uname, dbname])
+                        mariadb_revoke_privileges()
+                success = True
+            elif path == "/api/manage/service":
+                svc = data.get("service")
+                action = data.get("action")
+                if action in ["start", "stop", "restart", "enable", "disable"] and svc:
+                    run(["systemctl", action, svc])
+                    ok(f"Successfully executed {action} on {svc}")
+                    success = True
+            elif path == "/api/manage/firewall":
+                action = data.get("action")
+                port = data.get("port", "")
+                if action == "enable":
+                    run(["ufw", "--force", "enable"])
+                    ok("UFW Firewall Enabled")
+                elif action == "disable":
+                    run(["ufw", "disable"])
+                    ok("UFW Firewall Disabled")
+                elif action == "allow" and port:
+                    run(["ufw", "allow", port])
+                    ok(f"Port {port} allowed")
+                elif action == "deny" and port:
+                    run(["ufw", "delete", "allow", port])
+                    run(["ufw", "deny", port])
+                    ok(f"Port {port} denied")
+                elif action == "list":
+                    run_live(["ufw", "status", "numbered"])
+                success = True
+            elif path == "/api/manage/dns":
+                action = data.get("action")
+                domain = data.get("domain", "")
+                if action == "create":
+                    ztype = data.get("type", "forward")
+                    ip = data.get("ip", "")
+                    responses = [domain]
+                    if ztype != "forward": responses.append(ip)
+                    sys.stdin = MockStdin(responses)
+                    if ztype == "forward": create_forward_zone()
+                    elif ztype == "reverse": create_reverse_zone()
+                    elif ztype == "both": create_both_zones()
+                elif action == "delete":
+                    ztype = data.get("type", "forward")
+                    sys.stdin = MockStdin([domain, "yes", "yes"])
+                    delete_zone()
+                elif action == "test":
+                    if not domain:
+                        ok_b, msg_b = validate_bind9()
+                        if ok_b: ok("BIND9 Configuration is valid.")
+                        else: err(msg_b)
+                    else:
+                        sys.stdin = MockStdin([domain, "127.0.0.1", ""])
+                        test_dns()
+                elif action == "mx_list":
+                    sys.stdin = MockStdin([domain])
+                    list_mx_records()
+                elif action == "mx_add":
+                    mail_host = data.get("mail_host", "")
+                    priority = data.get("priority", "10")
+                    sys.stdin = MockStdin([domain, priority, mail_host])
+                    add_mx_record()
+                elif action == "mx_remove":
+                    sys.stdin = MockStdin([domain, "yes"])
+                    remove_mx_record()
+                success = True
+            elif path == "/api/manage/network":
+                action = data.get("action")
+                iface = data.get("iface", "")
+                if action == "show":
+                    run_live(["ip", "addr", "show", iface] if iface else ["ip", "addr", "show"])
+                elif action == "static":
+                    ip = data.get("ip", "")
+                    netmask = data.get("netmask", "255.255.255.0")
+                    gw = data.get("gateway", "")
+                    sys.stdin = MockStdin([iface, ip, netmask, gw, "yes"])
+                    set_interface_static()
+                elif action == "dhcp":
+                    sys.stdin = MockStdin([iface, "yes"])
+                    set_interface_dhcp()
+                elif action == "restore":
+                    sys.stdin = MockStdin(["yes"])
+                    restore_interfaces_backup()
+                success = True
+            elif path == "/api/manage/os":
+                if data.get("action") == "fix_dpkg":
+                    fix_dpkg()
+                success = True
+            elif path == "/api/manage/mail":
+                action = data.get("action")
+                if action == "add_user":
+                    m_user = data.get("mail_user", "")
+                    m_pass = data.get("mail_pass", "")
+                    sys.stdin = MockStdin([m_user, m_pass])
+                    add_mail_user()
+                elif action == "delete_user":
+                    m_user = data.get("mail_user", "")
+                    sys.stdin = MockStdin([m_user, "yes"])
+                    delete_mail_user()
+                success = True
+        except Exception as e:
+            print(f"\n[!] Server Error: {e}")
+            import traceback
+            traceback.print_exc(file=sys.stdout)
+            success = False
+        finally:
+            self._teardown_stream(old_stdout, old_stdin, success)
+
+    def handle_install_post(self, path):
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length) if content_length > 0 else b'{}'
+        data = json.loads(post_data.decode('utf-8'))
+        
+        old_stdout, old_stdin = self._setup_stream()
+        import sys, io
+        
+        success = False
+        try:
+            if path == "/api/install/mail":
+                domain = data.get("domain", "")
+                ip = data.get("ip") or detect_server_ip() or "127.0.0.1"
+                sys.stdin = MockStdin([domain, ip])
+                setup_mail_server()
+                success = True
+            elif path == "/api/install/ftp":
+                setup_ftp_server()
+                success = True
+            elif path == "/api/install/ftp_user":
+                uname = data.get("username", "")
+                upass = data.get("password", "")
+                if uname and upass:
+                    run_live(["useradd", "-m", "-s", "/bin/bash", uname])
+                    proc = subprocess.Popen(["chpasswd"], stdin=subprocess.PIPE, stdout=sys.stdout, stderr=sys.stdout, text=True)
+                    proc.communicate(input=f"{uname}:{upass}\n")
+                    ok(f"FTP user '{uname}' created.")
+                    success = True
+            elif path == "/api/install/pma":
+                setup_phpmyadmin()
+                success = True
+            elif path == "/api/install/samba":
+                share = data.get("share_name", "shared")
+                spath = data.get("path", f"/srv/samba/{share}")
+                sys.stdin = MockStdin([share, spath, "yes"])
+                setup_samba()
+                success = True
+            elif path == "/api/install/samba_share":
+                share = data.get("share_name", "shared")
+                spath = data.get("path", f"/srv/samba/{share}")
+                user = data.get("user", "")
+                sys.stdin = MockStdin([share, spath, "no" if user else "yes"])
+                setup_samba()
+                if user:
+                    ok(f"Samba share '{share}' created. Make sure to run 'smbpasswd -a {user}' via SSH.")
+                success = True
+            elif path == "/api/uninstall/mail":
+                sys.stdin = MockStdin(["yes"])
+                delete_mail_services()
+                success = True
+            elif path == "/api/uninstall/ftp":
+                sys.stdin = MockStdin(["yes"])
+                delete_ftp_server()
+                success = True
+            elif path == "/api/uninstall/pma":
+                sys.stdin = MockStdin(["yes"])
+                delete_phpmyadmin()
+                success = True
+            elif path == "/api/uninstall/samba":
+                sys.stdin = MockStdin(["yes"])
+                delete_samba()
+                success = True
+        except Exception as e:
+            print(f"\n[!] Server Error: {e}")
+            import traceback
+            traceback.print_exc(file=sys.stdout)
+            success = False
+        finally:
+            self._teardown_stream(old_stdout, old_stdin, success)
+
+    def handle_makesite_post(self, path):
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length) if content_length > 0 else b'{}'
+        data = json.loads(post_data.decode('utf-8'))
+        
+        old_stdout, old_stdin = self._setup_stream()
+        import sys, io
+        
+        class MockStdin:
+            """Mock stdin that feeds pre-defined responses to input() calls.
+            After all responses are consumed, returns empty strings (accepts defaults / skips prompts).
+            """
+            def __init__(self, responses):
+                self.responses = list(responses)
+                self._buffer = ""
+            def readline(self):
+                if self.responses:
+                    return self.responses.pop(0) + "\n"
+                return "\n"
+            def read(self, n=-1):
+                return self.readline()
+            def isatty(self):
+                return False
+            def fileno(self):
+                raise io.UnsupportedOperation("MockStdin has no fileno")
+                
+        site_type = path.split("/")[-1]
+        success = False
+        
+        try:
+            domain = data.get("domain", "")
+            dns_enabled = bool(data.get("create_dns"))
+            ip = data.get("ip", "")
+            db_pass = data.get("db_pass", "")
+            
+            if site_type == "lamp":
+                # create_lamp_site() input sequence:
+                #  1. ask_domain()           -> domain
+                #  2. "Create DNS zones?"     -> "y"/"n"
+                #  3. prompt_for_ip()         -> ip  (ONLY if dns="y")
+                #  4. ask_db_name()           -> db_name or "" (accept default)
+                #  5. ask_db_user()           -> db_user or "" (accept default)
+                #  6. "Database password:"    -> db_pass
+                #  7. "SSL Choice [1]:"       -> ssl ("1" or "2")
+                #  8. ask_docroot()           -> docroot or "" (accept default)
+                #  9. prompt_confirm (custom files) -> "y"/"n"
+                # 10. path to site files       -> site_files_path (ONLY if use_site_files="y")
+                # 11. prompt_confirm (db import)    -> "y"/"n"
+                # 12. sql file path            -> sql_path (ONLY if import_sql="y")
+                db_name = data.get("db_name", "")
+                db_user = data.get("db_user", "")
+                ssl_choice = data.get("ssl", "1")
+                le_email = data.get("le_email", "")
+                actual_ssl = "1" if ssl_choice == "4" else ssl_choice
+                docroot = data.get("docroot", "")
+                use_site_files = bool(data.get("use_site_files"))
+                site_files_path = data.get("site_files_path", "")
+                import_sql = bool(data.get("import_sql"))
+                sql_path = data.get("sql_path", "")
+                responses = [domain]
+                if dns_enabled:
+                    responses += ["y", ip]
+                else:
+                    responses += ["n"]
+                responses += [db_name, db_user, db_pass, actual_ssl, docroot]
+                # custom site files
+                if use_site_files and site_files_path:
+                    responses += ["y", site_files_path]
+                else:
+                    responses += ["n"]
+                # db import
+                if import_sql and sql_path:
+                    responses += ["y", sql_path]
+                else:
+                    responses += ["n"]
+                sys.stdin = MockStdin(responses)
+                create_lamp_site()
+                if ssl_choice == "4":
+                    _ensure_certbot("apache")
+                    step("Running Certbot for Let's Encrypt...")
+                    r = run(["certbot", "--apache", "-d", domain, "-d", f"www.{domain}", "--non-interactive", "--agree-tos", "-m", le_email, "--redirect"])
+                    if r.returncode == 0: ok(f"SSL certificate issued for {domain}.")
+                    else: err(f"Certbot failed: {r.stderr}")
+                success = True
+                
+            elif site_type == "lemp":
+                # create_lemp_site() — same pattern as LAMP but with Nginx/PHP-FPM
+                #  1-12 same sequence as LAMP
+                db_name = data.get("db_name", "")
+                db_user = data.get("db_user", "")
+                ssl_choice = data.get("ssl", "1")
+                le_email = data.get("le_email", "")
+                actual_ssl = "1" if ssl_choice == "4" else ssl_choice
+                docroot = data.get("docroot", "")
+                use_site_files = bool(data.get("use_site_files"))
+                site_files_path = data.get("site_files_path", "")
+                import_sql = bool(data.get("import_sql"))
+                sql_path = data.get("sql_path", "")
+                responses = [domain]
+                if dns_enabled:
+                    responses += ["y", ip]
+                else:
+                    responses += ["n"]
+                responses += [db_name, db_user, db_pass, actual_ssl, docroot]
+                # custom site files
+                if use_site_files and site_files_path:
+                    responses += ["y", site_files_path]
+                else:
+                    responses += ["n"]
+                # db import
+                if import_sql and sql_path:
+                    responses += ["y", sql_path]
+                else:
+                    responses += ["n"]
+                sys.stdin = MockStdin(responses)
+                create_lemp_site()
+                if ssl_choice == "4":
+                    _ensure_certbot("nginx")
+                    step("Running Certbot for Let's Encrypt...")
+                    r = run(["certbot", "--nginx", "-d", domain, "-d", f"www.{domain}", "--non-interactive", "--agree-tos", "-m", le_email, "--redirect"])
+                    if r.returncode == 0: ok(f"SSL certificate issued for {domain}.")
+                    else: err(f"Certbot failed: {r.stderr}")
+                success = True
+                
+            elif site_type == "wordpress":
+                # create_apache/nginx_wordpress_site() input sequence:
+                #  1. ask_domain()           -> domain
+                #  2. "Create DNS zones?"     -> "y"/"n"
+                #  3. prompt_for_ip()         -> ip  (ONLY if dns="y")
+                #  4. ask_db_name()           -> "" (accept default)
+                #  5. ask_db_user()           -> "" (accept default)
+                #  6. "Database password:"    -> db_pass
+                server = data.get("server", "apache")
+                responses = [domain]
+                if dns_enabled:
+                    responses += ["y", ip]
+                else:
+                    responses += ["n"]
+                responses += ["", "", db_pass]  # db_name, db_user, pass
+                responses += [""]  # press enter at end
+                sys.stdin = MockStdin(responses)
+                if server == "apache":
+                    create_apache_wordpress_site()
+                else:
+                    create_nginx_wordpress_site()
+                success = True
+                
+            elif site_type == "static":
+                # create_full_site() / create_nginx_full_site() input sequence:
+                #  1. ask_domain()           -> domain
+                #  2. "Create DNS zones?"     -> "y"/"n"
+                #  3. prompt_for_ip()         -> ip  (ONLY if dns="y")
+                #  4. SSL Choice             -> ssl
+                #  5. cert path (if ssl=3)   -> cert_path
+                #  6. key path (if ssl=3)    -> key_path
+                #  7. ask_docroot()          -> docroot (or "")
+                #  8. custom site files?     -> "n"
+                #  9. input("Press Enter")   -> "" (at end)
+                server = data.get("server", "apache")
+                ssl_choice = data.get("ssl", "1")
+                le_email = data.get("le_email", "")
+                actual_ssl = "1" if ssl_choice == "4" else ssl_choice
+                docroot = data.get("docroot", "")
+                use_site_files = bool(data.get("use_site_files"))
+                site_files_path = data.get("site_files_path", "")
+                
+                responses = [domain]
+                if dns_enabled:
+                    responses += ["y", ip]
+                else:
+                    responses += ["n"]
+                
+                responses.append(actual_ssl)
+                responses.append(docroot)
+                
+                if actual_ssl == "3":
+                    responses += [data.get("cert_path", ""), data.get("key_path", "")]
+                
+                if use_site_files and site_files_path:
+                    responses += ["y", site_files_path]
+                else:
+                    responses.append("n")
+                responses.append("")
+                
+                sys.stdin = MockStdin(responses)
+                if server == "apache":
+                    create_full_site()
+                else:
+                    create_nginx_full_site()
+
+                if ssl_choice == "4":
+                    _ensure_certbot(server)
+                    step("Running Certbot for Let's Encrypt...")
+                    r = run(["certbot", f"--{server}", "-d", domain, "-d", f"www.{domain}", "--non-interactive", "--agree-tos", "-m", le_email, "--redirect"])
+                    if r.returncode == 0: ok(f"SSL certificate issued for {domain}.")
+                    else: err(f"Certbot failed: {r.stderr}")
+                    
+                success = True
+                
+            elif site_type == "proxy":
+                # create_apache/nginx_reverse_proxy() input sequence:
+                #  1. ask_domain()           -> domain
+                #  2. "Create DNS zones?"     -> "y"/"n"
+                #  3. prompt_for_ip()         -> ip  (ONLY if dns="y")
+                #  4. "Proxy target:"         -> backend
+                #  5. input("Press Enter")    -> ""
+                server = data.get("server", "apache")
+                backend = data.get("backend", "")
+                responses = [domain]
+                if dns_enabled:
+                    responses += ["y", ip]
+                else:
+                    responses += ["n"]
+                responses += [backend, ""]  # target, press enter
+                sys.stdin = MockStdin(responses)
+                if server == "apache":
+                    create_apache_reverse_proxy()
+                else:
+                    create_nginx_reverse_proxy()
+                success = True
+                
+        except Exception as e:
+            print(f"\n[!] Server Error: {e}")
+            import traceback
+            traceback.print_exc(file=sys.stdout)
+            success = False
+        finally:
+            self._teardown_stream(old_stdout, old_stdin, success, data.get("domain", ""))
+
+class _WebServer(socketserver.ThreadingTCPServer):
+    """Multi-threaded TCP server that aggressively reclaims its port."""
+    allow_reuse_address = True
+
+    def server_bind(self):
+        # SO_REUSEPORT (Linux 3.9+) lets a new process immediately reclaim
+        # a port whose previous owner is still in TIME_WAIT.
+        try:
+            self.socket.setsockopt(
+                socket.SOL_SOCKET, socket.SO_REUSEPORT, 1
+            )
+        except (AttributeError, OSError):
+            pass  # not available on every kernel — fall back gracefully
+        super().server_bind()
+
+def _find_free_port(preferred, max_tries=10):
+    """Return *preferred* if available, else the next free port up to preferred+max_tries."""
+    for port in range(preferred, preferred + max_tries):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.bind(("0.0.0.0", port))
+            return port
+        except OSError:
+            continue
+    return None
+
+def start_web_ui():
+    PREFERRED_PORT = 8080
+    web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web_config')
+    os.makedirs(web_dir, exist_ok=True)
+
+    PORT = _find_free_port(PREFERRED_PORT)
+    if PORT is None:
+        err(f"No free port found in range {PREFERRED_PORT}-{PREFERRED_PORT + 9}.")
+        err("Stop any service using those ports and try again.")
+        sys.exit(1)
+
+    try:
+        httpd = _WebServer(("0.0.0.0", PORT), WebUIHandler)
+    except OSError as exc:
+        err(f"Cannot bind to port {PORT}: {exc}")
+        sys.exit(1)
+
+    ip = detect_server_ip() or "127.0.0.1"
+    if PORT != PREFERRED_PORT:
+        warn(f"Port {PREFERRED_PORT} was busy — using port {PORT} instead.")
+    print(f"\n  {C.GREEN}\u2713 Web Configuration started.{C.RESET}")
+    print(f"  {C.CYAN}Please open your browser to: http://{ip}:{PORT}{C.RESET}")
+    print(f"  {C.DIM}Press Ctrl+C to stop the web server and exit.{C.RESET}\n")
+    with httpd:
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print(f"\n  {C.YELLOW}Stopping Web UI...{C.RESET}")
+            httpd.shutdown()
+            sys.exit(0)
 
 
 # ─────────────────────────────────────────
@@ -7009,6 +8285,19 @@ def main():
         show_splash()
 
     show_loading_screen()
+
+    print("\n  " + C.BOLD + "How would you like to use Zervermanager?" + C.RESET)
+    print("  1. Web Configuration UI (Recommended)")
+    print("  2. Command Line Interface (CLI)")
+    while True:
+        ui_choice = input("  Choice [1]: ").strip() or "1"
+        if ui_choice in ("1", "2"):
+            break
+        warn("Please enter 1 or 2.")
+        
+    if ui_choice == "1":
+        start_web_ui()
+        return
 
     while True:
         choice = display_main_menu()
@@ -7047,6 +8336,6 @@ if __name__ == "__main__":
         sys.exit(0)
     except Exception as e:
         import traceback
-        print(f"\n  {C.RED}[!] An unexpected error occurred: {e}{C.RESET}")
+        err(f"An unexpected error occurred: {e}")
         traceback.print_exc()
         sys.exit(1)
