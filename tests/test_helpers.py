@@ -201,18 +201,49 @@ class TestApplyReloads(unittest.TestCase):
             sm.apply_reloads()
         mock_sub.assert_not_called()
 
-    def test_apache_reload(self):
-        """apply_reloads() calls systemctl reload apache2 when marked."""
+    def test_apache_reload_when_active(self):
+        """apply_reloads() uses 'reload' when apache2 is already active."""
         sm.mark_reload("apache2")
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stderr = ""
-        with patch("subprocess.run", return_value=mock_result) as mock_sub:
-            capture_stdout(sm.apply_reloads)   # capture to avoid Windows cp1252 encode error
-        mock_sub.assert_called_once_with(
-            ["systemctl", "reload", "apache2"],
-            capture_output=True, text=True
-        )
+
+        def side_effect(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            result.stderr = ""
+            if cmd == ["systemctl", "is-active", "apache2"]:
+                result.stdout = "active"
+            else:
+                result.stdout = ""
+            return result
+
+        with patch("subprocess.run", side_effect=side_effect) as mock_sub:
+            capture_stdout(sm.apply_reloads)
+
+        calls = mock_sub.call_args_list
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][0][0], ["systemctl", "is-active", "apache2"])
+        self.assertEqual(calls[1][0][0], ["systemctl", "reload", "apache2"])
+
+    def test_apache_reload_when_inactive(self):
+        """apply_reloads() uses 'restart' when apache2 is not active (e.g. fresh Ubuntu install)."""
+        sm.mark_reload("apache2")
+
+        def side_effect(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            result.stderr = ""
+            if cmd == ["systemctl", "is-active", "apache2"]:
+                result.stdout = "inactive"
+            else:
+                result.stdout = ""
+            return result
+
+        with patch("subprocess.run", side_effect=side_effect) as mock_sub:
+            capture_stdout(sm.apply_reloads)
+
+        calls = mock_sub.call_args_list
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][0][0], ["systemctl", "is-active", "apache2"])
+        self.assertEqual(calls[1][0][0], ["systemctl", "restart", "apache2"])
 
     def test_pending_cleared_after_apply(self):
         """_pending set is cleared after apply_reloads() runs."""
@@ -365,16 +396,28 @@ class TestOSCompatibilityAndLoading(unittest.TestCase):
     def setUp(self):
         sm.DRY_RUN = False
 
+    @patch.object(sm, "get_os_version", return_value="Debian GNU/Linux 11 (bullseye)")
+    def test_os_compatibility_debian_11(self, mock_get_os):
+        status, name = sm.check_os_compatibility()
+        self.assertEqual(status, "supported")
+        self.assertEqual(name, "Debian GNU/Linux 11 (bullseye)")
+
     @patch.object(sm, "get_os_version", return_value="Debian GNU/Linux 12 (bookworm)")
     def test_os_compatibility_debian_12(self, mock_get_os):
         status, name = sm.check_os_compatibility()
         self.assertEqual(status, "supported")
         self.assertEqual(name, "Debian GNU/Linux 12 (bookworm)")
 
+    @patch.object(sm, "get_os_version", return_value="Debian GNU/Linux 13 (trixie)")
+    def test_os_compatibility_debian_13(self, mock_get_os):
+        status, name = sm.check_os_compatibility()
+        self.assertEqual(status, "supported")
+        self.assertEqual(name, "Debian GNU/Linux 13 (trixie)")
+
     @patch.object(sm, "get_os_version", return_value="Ubuntu 22.04 LTS")
     def test_os_compatibility_ubuntu(self, mock_get_os):
         status, name = sm.check_os_compatibility()
-        self.assertEqual(status, "uncertain")
+        self.assertEqual(status, "ubuntu")
         self.assertEqual(name, "Ubuntu 22.04 LTS")
 
     @patch.object(sm, "get_os_version", return_value="Arch Linux")
