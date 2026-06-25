@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zervermanager</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css?v=6">
+</head>
+<body>
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="brand">
+                    <div class="brand-mark">Z</div>
+                    <div class="brand-info">
+                        <h1>zervermanager</h1>
+                        <p>v<span id="version">...</span></p>
+                    </div>
+                </div>
+            </div>
+            <nav class="nav-menu">
+                <div class="nav-section">
+                    <div class="nav-section-title">Overview</div>
+                    <button class="nav-item active" data-page="dashboard" onclick="switchPage('dashboard')">
+                        <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"/></svg>
+                        Dashboard
+                    </button>
+                </div>
+                <div class="nav-section">
+                    <div class="nav-section-title">Sites</div>
+                    <button class="nav-item" data-page="makesite" onclick="switchPage('makesite')">
+                        <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/></svg>
+                        Make Site
+                    </button>
+                    <button class="nav-item" data-page="managesites" onclick="switchPage('managesites')">
+                        <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4z"/></svg>
+                        Manage Sites
+                    </button>
+                    <button class="nav-item" data-page="dns" onclick="switchPage('dns')">
+                        <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM4.332 8.027a6.012 6.012 0 011.912-2.706C6.512 5.73 6.974 6 7.5 6A1.5 1.5 0 019 7.5V8a2 2 0 004 0 2 2 0 011.523-1.943A5.977 5.977 0 0116 10c0 .34-.028.675-.083 1H15a2 2 0 00-2 2v2.197A5.973 5.973 0 0110 16v-2a2 2 0 00-2-2 2 2 0 01-2-2 2 2 0 00-1.668-1.973z" clip-rule="evenodd"/></svg>
+                        DNS Zones
+                    </button>
+                </div>
+                <div class="nav-section">
+                    <div class="nav-section-title">Database</div>
+                    <button class="nav-item" data-page="mariadb" onclick="switchPage('mariadb')">
+                        <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M3 12v3c0 1.657 3.134 3 7 3s7-1.343 7-3v-3c0 1.657-3.134 3-7 3s-7-1.343-7-3z"/><path d="M3 7v3c0 1.657 3.134 3 7 3s7-1.343 7-3V7c0 1.657-3.134 3-7 3S3 8.657 3 7z"/><path d="M17 5c0 1.657-3.134 3-7 3S3 6.657 3 5s3.134-3 7-3 7 1.343 7 3z"/></svg>
+                        MariaDB
+                    </button>
+                </div>
+                <div class="nav-section">
+                    <div class="nav-section-title">System</div>
+                    <button class="nav-item" data-page="services" onclick="switchPage('services')">
+                        <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
+                        Install Services
+                    </button>
+                    <button class="nav-item" data-page="server" onclick="switchPage('server')">
+                        <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm14 1a1 1 0 11-2 0 1 1 0 012 0zM2 13a2 2 0 012-2h12a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2v-2zm14 1a1 1 0 11-2 0 1 1 0 012 0z" clip-rule="evenodd"/></svg>
+                        Server
+                    </button>
+                    <button class="nav-item" data-page="network" onclick="switchPage('network')">
+                        <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M17.778 8.222c-4.296-4.296-11.26-4.296-15.556 0A1 1 0 01.808 6.808c5.076-5.077 13.308-5.077 18.384 0a1 1 0 01-1.414 1.414zM14.95 11.05a7 7 0 00-9.9 0 1 1 0 01-1.414-1.414 9 9 0 0112.728 0 1 1 0 01-1.414 1.414zM12.12 13.88a3 3 0 00-4.242 0 1 1 0 01-1.415-1.415 5 5 0 017.072 0 1 1 0 01-1.415 1.415zM9 16a1 1 0 112 0 1 1 0 01-2 0z" clip-rule="evenodd"/></svg>
+                        Network
+                    </button>
+                </div>
+            </nav>
+            <div class="sidebar-footer">
+                <a href="https://github.com/ZFRFRK" target="_blank" class="github-link">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.84 1.236 1.84 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.418-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23a11.52 11.52 0 0 1 3-.405c1.02.005 2.045.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.605-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12z"/></svg>
+                    ZFRFRK
+                </a>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            
+            <!-- Dashboard Page -->
+            <section id="page-dashboard" class="page-section active">
+                <div class="page-header">
+                    <h2>System Status</h2>
+                    <p>Overview of core services on <span id="os-val">Debian GNU/Linux</span>.</p>
+                </div>
+                
+                <div class="status-grid">
+                    <div class="status-box">
+                        <div class="status-box-header">
+                            <span class="status-label">Apache2</span>
+                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
+                        </div>
+                        <span id="apache2-val" class="badge">Loading...</span>
+                    </div>
+                    <div class="status-box">
+                        <div class="status-box-header">
+                            <span class="status-label">Nginx</span>
+                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
+                        </div>
+                        <span id="nginx-val" class="badge">Loading...</span>
+                    </div>
+                    <div class="status-box">
+                        <div class="status-box-header">
+                            <span class="status-label">BIND9 DNS</span>
+                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
+                        </div>
+                        <span id="bind9-val" class="badge">Loading...</span>
+                    </div>
+                    <div class="status-box">
+                        <div class="status-box-header">
+                            <span class="status-label">MariaDB</span>
+                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
+                        </div>
+                        <span id="mariadb-val" class="badge">Loading...</span>
+                    </div>
+                    <div class="status-box">
+                        <div class="status-box-header">
+                            <span class="status-label">Postfix (Mail)</span>
+                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
+                        </div>
+                        <span id="postfix-val" class="badge">Loading...</span>
+                    </div>
+                    <div class="status-box">
+                        <div class="status-box-header">
+                            <span class="status-label">Dovecot (Mail)</span>
+                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
+                        </div>
+                        <span id="dovecot-val" class="badge">Loading...</span>
+                    </div>
+                    <div class="status-box">
+                        <div class="status-box-header">
+                            <span class="status-label">UFW Firewall</span>
+                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
+                        </div>
+                        <span id="ufw-val" class="badge">Loading...</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Make Site Page -->
+            <section id="page-makesite" class="page-section">
+                <div class="page-header">
+                    <h2>Make Site</h2>
+                    <p>Automate creation of vhosts, databases, and DNS zones.</p>
+                </div>
+
+                <div class="card">
+                    <div class="content-tabs">
+                        <button class="content-tab-btn active" data-tab="lamp" onclick="switchTab('makesite', 'lamp')">LAMP</button>
+                        <button class="content-tab-btn" data-tab="lemp" onclick="switchTab('makesite', 'lemp')">LEMP</button>
+                        <button class="content-tab-btn" data-tab="wordpress" onclick="switchTab('makesite', 'wordpress')">WordPress</button>
+                        <button class="content-tab-btn" data-tab="static" onclick="switchTab('makesite', 'static')">Full Site</button>
+                        <button class="content-tab-btn" data-tab="proxy" onclick="switchTab('makesite', 'proxy')">Reverse Proxy</button>
+                    </div>
+
+                    <!-- LAMP -->
+                    <div id="tab-makesite-lamp" class="tab-pane active">
+                        <form onsubmit="submitApiForm(event, '/api/makesite/lamp', 'makesite-term')">
+                            <div class="form-group">
+                                <label>Domain Name</label>
+                                <input type="text" class="form-control" name="domain" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" name="create_dns" onchange="document.getElementById('lamp-ip').classList.toggle('hidden')"> Create BIND9 DNS Zones
+                                </label>
+                            </div>
+                            <div class="form-group hidden" id="lamp-ip">
+                                <label>Server IP</label>
+                                <input type="text" class="form-control" name="ip">
+                            </div>
+                            <div class="form-group">
+                                <label>Database Name <span style="opacity:.6;font-weight:400">(Optional — defaults to domain prefix)</span></label>
+                                <input type="text" class="form-control" name="db_name" placeholder="e.g. mysite_db">
+                            </div>
+                            <div class="form-group">
+                                <label>Database User <span style="opacity:.6;font-weight:400">(Optional — defaults to domain prefix + _user)</span></label>
+                                <input type="text" class="form-control" name="db_user" placeholder="e.g. mysite_user">
+                            </div>
+                            <div class="form-group">
+                                <label>Database Password</label>
+                                <input type="password" class="form-control" name="db_pass" required>
+                            </div>
+                            <div class="form-group">
+                                <label>SSL Options</label>
+                                <select class="form-control" name="ssl" onchange="document.getElementById('lamp-le-email').classList.toggle('hidden', this.value !== '4')" required>
+                                    <option value="1">HTTP Only</option>
+                                    <option value="2">HTTPS (Self-Signed)</option>
+                                    <option value="4">HTTPS (Let's Encrypt Automated)</option>
+                                </select>
+                            </div>
+                            <div class="form-group hidden" id="lamp-le-email">
+                                <label>Let's Encrypt Admin Email</label>
+                                <input type="email" class="form-control" name="le_email" placeholder="admin@example.com">
+                            </div>
+                            <div class="form-group">
+                                <label>Document Root <span style="opacity:.6;font-weight:400">(Optional — defaults to /var/www/domain)</span></label>
+                                <input type="text" class="form-control" name="docroot" placeholder="e.g. /var/www/mysite">
+                            </div>
+                            <hr>
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" name="use_site_files" onchange="document.getElementById('lamp-sitepath').classList.toggle('hidden', !this.checked)"> Use existing site files
+                                </label>
+                            </div>
+                            <div class="form-group hidden" id="lamp-sitepath">
+                                <label>Path to existing site files <span style="opacity:.6;font-weight:400">(server-side path)</span></label>
+                                <input type="text" class="form-control" name="site_files_path" placeholder="e.g. /home/user/mysite">
+                            </div>
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" name="import_sql" onchange="document.getElementById('lamp-sqlpath').classList.toggle('hidden', !this.checked)"> Import existing SQL database dump
+                                </label>
+                            </div>
+                            <div class="form-group hidden" id="lamp-sqlpath">
+                                <label>SQL file path <span style="opacity:.6;font-weight:400">(full path or filename inside docroot)</span></label>
+                                <input type="text" class="form-control" name="sql_path" placeholder="e.g. /home/user/backup.sql">
+                            </div>
+                            <button type="submit" class="btn btn-primary">Create LAMP Site</button>
+                        </form>
+                    </div>
+
+                    <!-- LEMP -->
+                    <div id="tab-makesite-lemp" class="tab-pane">
+                        <form onsubmit="submitApiForm(event, '/api/makesite/lemp', 'makesite-term')">
+                            <div class="form-group">
+                                <label>Domain Name</label>
+                                <input type="text" class="form-control" name="domain" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" name="create_dns" onchange="document.getElementById('lemp-ip').classList.toggle('hidden')"> Create BIND9 DNS Zones
+                                </label>
+                            </div>
+                            <div class="form-group hidden" id="lemp-ip">
+                                <label>Server IP</label>
+                                <input type="text" class="form-control" name="ip">
+                            </div>
+                            <div class="form-group">
+                                <label>Database Name <span style="opacity:.6;font-weight:400">(Optional — defaults to domain prefix)</span></label>
+                                <input type="text" class="form-control" name="db_name" placeholder="e.g. mysite_db">
+                            </div>
+                            <div class="form-group">
+                                <label>Database User <span style="opacity:.6;font-weight:400">(Optional — defaults to domain prefix + _user)</span></label>
+                                <input type="text" class="form-control" name="db_user" placeholder="e.g. mysite_user">
+                            </div>
+                            <div class="form-group">
+                                <label>Database Password</label>
+                                <input type="password" class="form-control" name="db_pass" required>
+                            </div>
+                            <div class="form-group">
+                                <label>SSL Options</label>
+                                <select class="form-control" name="ssl" onchange="document.getElementById('lemp-le-email').classList.toggle('hidden', this.value !== '4')" required>
+                                    <option value="1">HTTP Only</option>
+                                    <option value="2">HTTPS (Self-Signed)</option>
+                                    <option value="4">HTTPS (Let's Encrypt Automated)</option>
+                                </select>
+                            </div>
+                            <div class="form-group hidden" id="lemp-le-email">
+                                <label>Let's Encrypt Admin Email</label>
+                                <input type="email" class="form-control" name="le_email" placeholder="admin@example.com">
+                            </div>
+                            <div class="form-group">
+                                <label>Document Root <span style="opacity:.6;font-weight:400">(Optional — defaults to /var/www/domain)</span></label>
+                                <input type="text" class="form-control" name="docroot" placeholder="e.g. /var/www/mysite">
+                            </div>
+                            <hr>
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" name="use_site_files" onchange="document.getElementById('lemp-sitepath').classList.toggle('hidden', !this.checked)"> Use existing site files
+                                </label>
+                            </div>
+                            <div class="form-group hidden" id="lemp-sitepath">
+                                <label>Path to existing site files <span style="opacity:.6;font-weight:400">(server-side path)</span></label>
+                                <input type="text" class="form-control" name="site_files_path" placeholder="e.g. /home/user/mysite">
+                            </div>
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" name="import_sql" onchange="document.getElementById('lemp-sqlpath').classList.toggle('hidden', !this.checked)"> Import existing SQL database dump
+                                </label>
+                            </div>
+                            <div class="form-group hidden" id="lemp-sqlpath">
+                                <label>SQL file path <span style="opacity:.6;font-weight:400">(full path or filename inside docroot)</span></label>
+                                <input type="text" class="form-control" name="sql_path" placeholder="e.g. /home/user/backup.sql">
+                            </div>
+                            <button type="submit" class="btn btn-primary">Create LEMP Site</button>
+                        </form>
+                    </div>
+
+                    <!-- WordPress -->
+                    <div id="tab-makesite-wordpress" class="tab-pane">
+                        <form onsubmit="submitApiForm(event, '/api/makesite/wordpress', 'makesite-term')">
+                            <div class="form-group">
+                                <label>Web Server</label>
+                                <select class="form-control" name="server" required>
+                                    <option value="apache">Apache</option>
+                                    <option value="nginx">Nginx</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Domain Name</label>
+                                <input type="text" class="form-control" name="domain" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" name="create_dns" onchange="document.getElementById('wp-ip').classList.toggle('hidden')"> Create BIND9 DNS Zones
+                                </label>
+                            </div>
+                            <div class="form-group hidden" id="wp-ip">
+                                <label>Server IP</label>
+                                <input type="text" class="form-control" name="ip">
+                            </div>
+                            <div class="form-group">
+                                <label>Database Password</label>
+                                <input type="password" class="form-control" name="db_pass" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Install WordPress</button>
+                        </form>
+                    </div>
+
+                    <!-- Static (Full Site) -->
+                    <div id="tab-makesite-static" class="tab-pane">
+                        <form onsubmit="submitApiForm(event, '/api/makesite/static', 'makesite-term')">
+                            <div class="form-group">
+                                <label>Web Server</label>
+                                <select class="form-control" name="server" required>
+                                    <option value="apache">Apache</option>
+                                    <option value="nginx">Nginx</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Domain Name</label>
+                                <input type="text" class="form-control" name="domain" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" name="create_dns" onchange="document.getElementById('static-ip').classList.toggle('hidden')"> Create BIND9 DNS Zones
+                                </label>
+                            </div>
+                            <div class="form-group hidden" id="static-ip">
+                                <label>Server IP</label>
+                                <input type="text" class="form-control" name="ip">
+                            </div>
+                            <div class="form-group">
+                                <label>SSL Options</label>
+                                <select class="form-control" name="ssl" onchange="document.getElementById('static-certs').classList.toggle('hidden', this.value !== '3'); document.getElementById('static-le-email').classList.toggle('hidden', this.value !== '4');" required>
+                                    <option value="1">HTTP Only</option>
+                                    <option value="2">HTTPS (Self-Signed)</option>
+                                    <option value="3">HTTPS (Existing Cert)</option>
+                                    <option value="4">HTTPS (Let's Encrypt Automated)</option>
+                                </select>
+                            </div>
+                            <div class="form-group hidden" id="static-le-email">
+                                <label>Let's Encrypt Admin Email</label>
+                                <input type="email" class="form-control" name="le_email" placeholder="admin@example.com">
+                            </div>
+                            <div id="static-certs" class="hidden">
+                                <div class="form-group">
+                                    <label>Certificate Path</label>
+                                    <input type="text" class="form-control" name="cert_path" placeholder="/etc/ssl/mycert.crt">
+                                </div>
+                                <div class="form-group">
+                                    <label>Key Path</label>
+                                    <input type="text" class="form-control" name="key_path" placeholder="/etc/ssl/mycert.key">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Document Root (Optional)</label>
+                                <input type="text" class="form-control" name="docroot" placeholder="Default: /var/www/domain.com">
+                            </div>
+                            <hr>
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" name="use_site_files" onchange="document.getElementById('static-sitepath').classList.toggle('hidden', !this.checked)"> Use existing site files
+                                </label>
+                            </div>
+                            <div class="form-group hidden" id="static-sitepath">
+                                <label>Path to existing site files <span style="opacity:.6;font-weight:400">(server-side path)</span></label>
+                                <input type="text" class="form-control" name="site_files_path" placeholder="e.g. /home/user/mysite">
+                            </div>
+                            <button type="submit" class="btn btn-primary">Create Full Site</button>
+                        </form>
+                    </div>
+
+                    <!-- Reverse Proxy -->
+                    <div id="tab-makesite-proxy" class="tab-pane">
+                        <form onsubmit="submitApiForm(event, '/api/makesite/proxy', 'makesite-term')">
+                            <div class="form-group">
+                                <label>Web Server</label>
+                                <select class="form-control" name="server" required>
+                                    <option value="apache">Apache</option>
+                                    <option value="nginx">Nginx</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Domain Name</label>
+                                <input type="text" class="form-control" name="domain" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Backend Target URL</label>
+                                <input type="text" class="form-control" name="backend" placeholder="http://127.0.0.1:3000" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Create Reverse Proxy</button>
+                        </form>
+                    </div>
+
+                    <div id="makesite-term" class="terminal"></div>
+                </div>
+            </section>
+
+            <!-- Manage Sites Page -->
+            <section id="page-managesites" class="page-section">
+                <div class="page-header">
+                    <h2>Manage Sites</h2>
+                    <p>View, modify, enable, disable, or delete active web server configurations.</p>
+                </div>
+
+                <div class="card">
+                    <div class="sites-table-wrap">
+                        <table class="sites-table" id="sites-table">
+                            <thead>
+                                <tr>
+                                    <th>Domain</th>
+                                    <th>Server</th>
+                                    <th>Type</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="sites-tbody">
+                                <tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted)">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Modify Site Modal -->
+            <div id="modify-site-modal" class="modal-overlay">
+                <div class="modal-box">
+                    <div class="modal-header">
+                        <h3 id="modify-site-title">Modify Site</h3>
+                        <button class="modal-close" onclick="closeModifyModal()">&times;</button>
+                    </div>
+
+                    <div class="content-tabs">
+                        <button class="content-tab-btn active" data-tab="docroot" onclick="switchModifyTab('docroot')">Doc Root</button>
+                        <button class="content-tab-btn" data-tab="dbpass" onclick="switchModifyTab('dbpass')">DB Password</button>
+                        <button class="content-tab-btn" data-tab="vhost" onclick="switchModifyTab('vhost')">VHost Config</button>
+                    </div>
+
+                    <div id="mod-tab-docroot" class="tab-pane active">
+                        <form onsubmit="submitModifySite(event, 'update_docroot')">
+                            <input type="hidden" id="mod-domain" name="domain">
+                            <input type="hidden" id="mod-server" name="server">
+                            <div class="form-group">
+                                <label>New Document Root</label>
+                                <input type="text" class="form-control" name="docroot" id="mod-docroot-input" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Update Document Root</button>
+                        </form>
+                    </div>
+
+                    <div id="mod-tab-dbpass" class="tab-pane">
+                        <form onsubmit="submitModifySite(event, 'update_db_pass')">
+                            <input type="hidden" id="mod-domain-db" name="domain">
+                            <div class="form-group">
+                                <label>New Database Password</label>
+                                <input type="password" class="form-control" name="db_pass" required autocomplete="new-password">
+                            </div>
+                            <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:24px">Updates MariaDB and syncs the password in <code>wp-config.php</code> or <code>index.php</code> automatically.</p>
+                            <button type="submit" class="btn btn-primary">Update Password</button>
+                        </form>
+                    </div>
+
+                    <div id="mod-tab-vhost" class="tab-pane">
+                        <form onsubmit="submitModifySite(event, 'update_vhost')">
+                            <input type="hidden" id="mod-domain-vhost" name="domain">
+                            <input type="hidden" id="mod-server-vhost" name="server">
+                            <div class="form-group">
+                                <label>Virtual Host Configuration</label>
+                                <textarea class="form-control" name="config" id="mod-vhost-content" rows="16"></textarea>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Save Configuration</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MariaDB Manager -->
+            <section id="page-mariadb" class="page-section">
+                <div class="page-header">
+                    <h2>MariaDB Manager</h2>
+                    <p>Manage databases and users.</p>
+                </div>
+                <div class="card">
+                    <div class="content-tabs">
+                        <button class="content-tab-btn active" data-tab="db" onclick="switchTab('mariadb', 'db')">Databases</button>
+                        <button class="content-tab-btn" data-tab="users" onclick="switchTab('mariadb', 'users')">Users</button>
+                    </div>
+
+                    <!-- Databases -->
+                    <div id="tab-mariadb-db" class="tab-pane active">
+                        <form onsubmit="submitApiForm(event, '/api/manage/mariadb', 'mariadb-term')">
+                            <input type="hidden" name="type" value="database">
+                            <div class="form-group">
+                                <label>Action</label>
+                                <select class="form-control" name="action" id="mariadb-db-action" onchange="toggleMariadbDbFields()" required>
+                                    <option value="list">List Databases</option>
+                                    <option value="create">Create Database</option>
+                                    <option value="drop">Drop Database</option>
+                                    <option value="inspect">Inspect Database</option>
+                                    <option value="backup">Backup Database</option>
+                                    <option value="restore">Restore Database</option>
+                                </select>
+                            </div>
+                            <div class="form-group hidden" id="mariadb-db-name">
+                                <label>Database Name</label>
+                                <input type="text" class="form-control" name="db_name">
+                            </div>
+                            <div class="form-group hidden" id="mariadb-db-path">
+                                <label>Backup/Restore File Path</label>
+                                <input type="text" class="form-control" name="file_path" placeholder="/root/backup.sql">
+                            </div>
+                            <div class="form-group hidden" id="mariadb-db-confirm">
+                                <label class="checkbox-label" style="color: var(--danger)">
+                                    <input type="checkbox" name="confirm"> I understand this is destructive and confirm the action.
+                                </label>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Execute Action</button>
+                        </form>
+                    </div>
+
+                    <!-- Users -->
+                    <div id="tab-mariadb-users" class="tab-pane">
+                        <form onsubmit="submitApiForm(event, '/api/manage/mariadb', 'mariadb-term')">
+                            <input type="hidden" name="type" value="user">
+                            <div class="form-group">
+                                <label>Action</label>
+                                <select class="form-control" name="action" id="mariadb-user-action" onchange="toggleMariadbUserFields()" required>
+                                    <option value="list">List Users</option>
+                                    <option value="create">Create User</option>
+                                    <option value="drop">Drop User</option>
+                                    <option value="password">Change Password</option>
+                                    <option value="grant">Grant Privileges</option>
+                                    <option value="revoke">Revoke Privileges</option>
+                                </select>
+                            </div>
+                            <div class="form-group hidden" id="mariadb-user-name">
+                                <label>Username</label>
+                                <input type="text" class="form-control" name="username">
+                            </div>
+                            <div class="form-group hidden" id="mariadb-user-pass">
+                                <label>Password</label>
+                                <input type="password" class="form-control" name="password">
+                            </div>
+                            <div class="form-group hidden" id="mariadb-user-db">
+                                <label>Database Name (for privileges)</label>
+                                <input type="text" class="form-control" name="db_name">
+                            </div>
+                            <button type="submit" class="btn btn-primary">Execute Action</button>
+                        </form>
+                    </div>
+
+                    <div id="mariadb-term" class="terminal"></div>
+                </div>
+            </section>
+
+            <!-- Install Services -->
+            <section id="page-services" class="page-section">
+                <div class="page-header">
+                    <h2>Install Services</h2>
+                    <p>Setup Mail, FTP, Samba, and phpMyAdmin.</p>
+                </div>
+                <div class="card">
+                    <div class="content-tabs">
+                        <button class="content-tab-btn active" data-tab="mail" onclick="switchTab('services', 'mail')">Mail Server</button>
+                        <button class="content-tab-btn" data-tab="ftp" onclick="switchTab('services', 'ftp')">FTP Server</button>
+                        <button class="content-tab-btn" data-tab="pma" onclick="switchTab('services', 'pma')">phpMyAdmin</button>
+                        <button class="content-tab-btn" data-tab="samba" onclick="switchTab('services', 'samba')">Samba</button>
+                    </div>
+
+                    <div id="tab-services-mail" class="tab-pane active">
+                        <form onsubmit="submitApiForm(event, '/api/install/mail', 'services-term')">
+                            <p class="mb-4 text-muted">Installs a full mail stack: Postfix, Dovecot, and Roundcube Webmail.</p>
+                            <div class="form-group">
+                                <label>Primary Mail Domain</label>
+                                <input type="text" class="form-control" name="domain" placeholder="example.com" required>
+                            </div>
+                            <div style="display:flex;gap:12px">
+                                <button type="submit" class="btn btn-primary">Install Mail Server</button>
+                                <button type="button" class="btn btn-danger" onclick="submitCustomAction(this, '/api/uninstall/mail')">Uninstall Mail Server</button>
+                            </div>
+
+                            <hr style="border-color: var(--border); margin: 32px 0;">
+                            
+                            <h4>Manage Mail Users</h4>
+                            <div class="sites-table-wrap mb-4">
+                                <table class="sites-table" id="mail-users-table">
+                                    <thead><tr><th>Email Address</th><th>Actions</th></tr></thead>
+                                    <tbody id="mail-users-tbody">
+                                        <tr><td colspan="2" style="text-align:center;padding:16px;color:var(--text-muted)">Load mail users via the sidebar link or API.</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div class="form-group mt-4">
+                                <label>New Mail User (e.g. info@example.com)</label>
+                                <input type="email" class="form-control" name="mail_user">
+                            </div>
+                            <div class="form-group">
+                                <label>Password</label>
+                                <input type="password" class="form-control" name="mail_pass">
+                            </div>
+                            <button type="button" class="btn btn-primary" onclick="submitCustomAction(this, '/api/manage/mail?action=add_user')">Add Mail User</button>
+                        </form>
+                    </div>
+
+                    <div id="tab-services-ftp" class="tab-pane">
+                        <form onsubmit="submitApiForm(event, '/api/install/ftp', 'services-term')">
+                            <p class="mb-4 text-muted">Installs vsftpd and configures user isolation.</p>
+                            <div style="display:flex;gap:12px" class="mb-4">
+                                <button type="submit" class="btn btn-primary">Install FTP Server</button>
+                                <button type="button" class="btn btn-danger" onclick="submitCustomAction(this, '/api/uninstall/ftp')">Uninstall FTP Server</button>
+                            </div>
+                            
+                            <hr style="border-color: var(--border); margin: 20px 0;">
+                            
+                            <h4>Add FTP User</h4>
+                            <div class="form-group mt-4">
+                                <label>Username</label>
+                                <input type="text" class="form-control" name="username">
+                            </div>
+                            <div class="form-group">
+                                <label>Password</label>
+                                <input type="password" class="form-control" name="password">
+                            </div>
+                            <button type="button" class="btn btn-primary" onclick="submitCustomAction(this, '/api/install/ftp_user')">Add FTP User</button>
+                        </form>
+                    </div>
+
+                    <div id="tab-services-pma" class="tab-pane">
+                        <form onsubmit="submitApiForm(event, '/api/install/pma', 'services-term')">
+                            <p class="mb-4 text-muted">Installs phpMyAdmin and configures it securely under a random alias or subdomain.</p>
+                            <div style="display:flex;gap:12px">
+                                <button type="submit" class="btn btn-primary">Install phpMyAdmin</button>
+                                <button type="button" class="btn btn-danger" onclick="submitCustomAction(this, '/api/uninstall/pma')">Uninstall phpMyAdmin</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <div id="tab-services-samba" class="tab-pane">
+                        <form onsubmit="submitApiForm(event, '/api/install/samba', 'services-term')">
+                            <p class="mb-4 text-muted">Installs Samba for Windows file sharing.</p>
+                            <div style="display:flex;gap:12px" class="mb-4">
+                                <button type="submit" class="btn btn-primary">Install Samba Server</button>
+                                <button type="button" class="btn btn-danger" onclick="submitCustomAction(this, '/api/uninstall/samba')">Uninstall Samba Server</button>
+                            </div>
+
+                            <hr style="border-color: var(--border); margin: 20px 0;">
+                            
+                            <h4>Add Samba Share</h4>
+                            <div class="form-group mt-4">
+                                <label>Share Name</label>
+                                <input type="text" class="form-control" name="share_name">
+                            </div>
+                            <div class="form-group">
+                                <label>Directory Path</label>
+                                <input type="text" class="form-control" name="path" placeholder="/var/www/example.com">
+                            </div>
+                            <div class="form-group">
+                                <label>Allowed Linux User</label>
+                                <input type="text" class="form-control" name="user">
+                            </div>
+                            <button type="button" class="btn btn-primary" onclick="submitCustomAction(this, '/api/install/samba_share')">Add Share</button>
+                        </form>
+                    </div>
+
+                    <div id="services-term" class="terminal"></div>
+                </div>
+            </section>
+
+            <!-- Server Management -->
+            <section id="page-server" class="page-section">
+                <div class="page-header">
+                    <h2>Server Management</h2>
+                    <p>Control system services and firewall rules.</p>
+                </div>
+
+                <div class="card">
+                    <div class="content-tabs">
+                        <button class="content-tab-btn active" data-tab="service-ctrl" onclick="switchTab('server', 'service-ctrl')">Services Control</button>
+                        <button class="content-tab-btn" data-tab="firewall" onclick="switchTab('server', 'firewall')">Firewall (UFW)</button>
+                        <button class="content-tab-btn" data-tab="reload" onclick="switchTab('server', 'reload')">Reload All</button>
+                        <button class="content-tab-btn" data-tab="os" onclick="switchTab('server', 'os')">OS Maintenance</button>
+                    </div>
+
+                    <!-- Services Control -->
+                    <div id="tab-server-service-ctrl" class="tab-pane active">
+                        <form onsubmit="submitApiForm(event, '/api/manage/service', 'server-term')">
+                            <div class="form-group">
+                                <label>Select Service</label>
+                                <select class="form-control" name="service" required>
+                                    <option value="apache2">Apache2</option>
+                                    <option value="nginx">Nginx</option>
+                                    <option value="bind9">BIND9</option>
+                                    <option value="mariadb">MariaDB</option>
+                                    <option value="postfix">Postfix</option>
+                                    <option value="dovecot">Dovecot</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Action</label>
+                                <select class="form-control" name="action" required>
+                                    <option value="start">Start</option>
+                                    <option value="stop">Stop</option>
+                                    <option value="restart">Restart</option>
+                                    <option value="enable">Enable (on boot)</option>
+                                    <option value="disable">Disable</option>
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Execute Action</button>
+                        </form>
+                    </div>
+
+                    <!-- Firewall -->
+                    <div id="tab-server-firewall" class="tab-pane">
+                        <form onsubmit="submitApiForm(event, '/api/manage/firewall', 'server-term')">
+                            <div class="form-group">
+                                <label>Action</label>
+                                <select class="form-control" name="action" id="fw-action" onchange="document.getElementById('fw-port').classList.toggle('hidden', !['allow','deny'].includes(this.value))" required>
+                                    <option value="list">List Active Rules</option>
+                                    <option value="enable">Enable UFW</option>
+                                    <option value="disable">Disable UFW</option>
+                                    <option value="allow">Allow Port</option>
+                                    <option value="deny">Deny Port</option>
+                                </select>
+                            </div>
+                            <div class="form-group hidden" id="fw-port">
+                                <label>Port (e.g. 80/tcp)</label>
+                                <input type="text" class="form-control" name="port">
+                            </div>
+                            <button type="submit" class="btn btn-primary">Apply Firewall Rule</button>
+                        </form>
+                    </div>
+
+                    <!-- Reload All -->
+                    <div id="tab-server-reload" class="tab-pane">
+                        <form onsubmit="submitApiForm(event, '/api/manage/reload', 'server-term')">
+                            <p class="mb-4 text-muted">This will check for pending configuration changes in Apache, Nginx, and BIND9 and reload them cleanly.</p>
+                            <button type="submit" class="btn btn-primary">Reload Services</button>
+                        </form>
+                    </div>
+
+                    <!-- OS Maintenance -->
+                    <div id="tab-server-os" class="tab-pane">
+                        <form onsubmit="submitApiForm(event, '/api/manage/os', 'server-term')">
+                            <input type="hidden" name="action" value="fix_dpkg">
+                            <p class="mb-4 text-muted">Run this if you receive errors about broken dependencies or interrupted apt installations. It runs <code>dpkg --configure -a</code> and <code>apt --fix-broken install</code>.</p>
+                            <button type="submit" class="btn btn-primary">Fix Broken Packages</button>
+                        </form>
+                    </div>
+
+                    <div id="server-term" class="terminal"></div>
+                </div>
+            </section>
+            <!-- DNS Zones -->
+            <section id="page-dns" class="page-section">
+                <div class="page-header">
+                    <h2>DNS Zones (BIND9)</h2>
+                    <p>Manage domain zones, reverse zones, and MX records.</p>
+                </div>
+
+                <div class="card">
+                    <div class="content-tabs">
+                        <button class="content-tab-btn active" data-tab="list" onclick="switchTab('dns', 'list')">Manage Zones</button>
+                        <button class="content-tab-btn" data-tab="create" onclick="switchTab('dns', 'create')">Create Zone</button>
+                        <button class="content-tab-btn" data-tab="mx" onclick="switchTab('dns', 'mx')">MX Records</button>
+                        <button class="content-tab-btn" data-tab="test" onclick="switchTab('dns', 'test')">Test DNS</button>
+                    </div>
+
+                    <div id="tab-dns-list" class="tab-pane active">
+                        <div class="sites-table-wrap">
+                            <table class="sites-table" id="dns-table">
+                                <thead>
+                                    <tr>
+                                        <th>Domain / Zone</th>
+                                        <th>Type</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="dns-tbody">
+                                    <tr><td colspan="3" style="text-align:center;padding:32px;color:var(--text-muted)">Loading...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div id="tab-dns-create" class="tab-pane">
+                        <form onsubmit="submitApiForm(event, '/api/manage/dns', 'dns-term')">
+                            <input type="hidden" name="action" value="create">
+                            <div class="form-group">
+                                <label>Zone Type</label>
+                                <select class="form-control" name="type" id="dns-create-type" onchange="document.getElementById('dns-ip-group').classList.toggle('hidden', this.value === 'forward')" required>
+                                    <option value="forward">Forward Zone Only</option>
+                                    <option value="reverse">Reverse Zone Only</option>
+                                    <option value="both">Both (Forward + Reverse)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Domain Name</label>
+                                <input type="text" class="form-control" name="domain" required>
+                            </div>
+                            <div class="form-group hidden" id="dns-ip-group">
+                                <label>Server IP (Required for Reverse Zones)</label>
+                                <input type="text" class="form-control" name="ip">
+                            </div>
+                            <button type="submit" class="btn btn-primary">Create DNS Zone</button>
+                        </form>
+                    </div>
+
+                    <div id="tab-dns-mx" class="tab-pane">
+                        <form onsubmit="submitApiForm(event, '/api/manage/dns', 'dns-term')">
+                            <div class="form-group">
+                                <label>Action</label>
+                                <select class="form-control" name="action" id="dns-mx-action" onchange="document.getElementById('mx-add-fields').classList.toggle('hidden', this.value !== 'mx_add')" required>
+                                    <option value="mx_list">List MX Records</option>
+                                    <option value="mx_add">Add MX Record</option>
+                                    <option value="mx_remove">Remove MX Record</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Domain Name</label>
+                                <input type="text" class="form-control" name="domain" required>
+                            </div>
+                            <div id="mx-add-fields" class="hidden">
+                                <div class="form-group">
+                                    <label>Mail Server Hostname (e.g. mail.example.com)</label>
+                                    <input type="text" class="form-control" name="mail_host">
+                                </div>
+                                <div class="form-group">
+                                    <label>Priority</label>
+                                    <input type="number" class="form-control" name="priority" value="10">
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Execute Action</button>
+                        </form>
+                    </div>
+
+                    <div id="tab-dns-test" class="tab-pane">
+                        <form onsubmit="submitApiForm(event, '/api/manage/dns', 'dns-term')">
+                            <input type="hidden" name="action" value="test">
+                            <p class="text-muted mb-4">Run named-checkconf and named-checkzone for a specific domain.</p>
+                            <div class="form-group">
+                                <label>Domain Name (Optional - leave blank to just test config)</label>
+                                <input type="text" class="form-control" name="domain">
+                            </div>
+                            <button type="submit" class="btn btn-primary">Run DNS Test</button>
+                        </form>
+                    </div>
+
+                    <div id="dns-term" class="terminal"></div>
+                </div>
+            </section>
+
+            <!-- Network Configuration -->
+            <section id="page-network" class="page-section">
+                <div class="page-header">
+                    <h2>Network Configuration</h2>
+                    <p>Manage Server IP addresses (Static/DHCP).</p>
+                </div>
+
+                <div class="card">
+                    <form onsubmit="submitApiForm(event, '/api/manage/network', 'network-term')">
+                        <div class="form-group">
+                            <label>Action</label>
+                            <select class="form-control" name="action" id="net-action" onchange="document.getElementById('net-static-fields').classList.toggle('hidden', this.value !== 'static')" required>
+                                <option value="show">Show Current IP Config</option>
+                                <option value="static">Set Static IP</option>
+                                <option value="dhcp">Set DHCP</option>
+                                <option value="restore">Restore Backup</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Interface Name (e.g. eth0)</label>
+                            <input type="text" class="form-control" name="iface" required>
+                        </div>
+
+                        <div id="net-static-fields" class="hidden">
+                            <div class="form-group">
+                                <label>New IP Address (e.g. 192.168.1.100)</label>
+                                <input type="text" class="form-control" name="ip">
+                            </div>
+                            <div class="form-group">
+                                <label>Subnet Mask (e.g. 255.255.255.0)</label>
+                                <input type="text" class="form-control" name="netmask" value="255.255.255.0">
+                            </div>
+                            <div class="form-group">
+                                <label>Gateway (e.g. 192.168.1.1)</label>
+                                <input type="text" class="form-control" name="gateway">
+                            </div>
+                        </div>
+
+                        <div class="form-group mt-4">
+                            <label class="checkbox-label" style="color: var(--danger)">
+                                <input type="checkbox" name="confirm"> I understand network changes may cause me to lose SSH connectivity.
+                            </label>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary mt-4">Apply Network Changes</button>
+                    </form>
+                    <div id="network-term" class="terminal"></div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+    <script src="app.js?v=4"></script>
+</body>
+</html>
