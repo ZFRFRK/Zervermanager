@@ -8062,7 +8062,12 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
         
         try:
             domain = data.get("domain", "")
-            dns_enabled = bool(data.get("create_dns"))
+            if "create_dns" in data:
+                dns_enabled = bool(data.get("create_dns"))
+            else:
+                import re
+                is_ip = bool(re.match(r"^\d{1,3}(\.\d{1,3}){3}$", domain))
+                dns_enabled = bool(domain and not is_ip)
             ip = data.get("ip", "")
             db_pass = data.get("db_pass", "")
             
