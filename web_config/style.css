@@ -343,8 +343,13 @@ body::after {
 }
 
 @keyframes pageIn {
-    0%   { opacity: 0; transform: translateX(-30px); filter: blur(4px); }
-    100% { opacity: 1; transform: translateX(0);      filter: blur(0); }
+    0%   { opacity: 0; transform: translateY(8px); filter: blur(4px); }
+    100% { opacity: 1; transform: translateY(0);      filter: blur(0); }
+}
+
+@keyframes pageOut {
+    0%   { opacity: 1; transform: translateY(0); filter: blur(0); }
+    100% { opacity: 0; transform: translateY(-6px); filter: blur(2px); }
 }
 
 /* ══════════════════════════════════════════════
@@ -478,12 +483,48 @@ body::after {
     gap: 8px;
 }
 
-.status-label {
-    font-size: 0.82rem;
-    font-weight: 600;
-    font-family: var(--font-mono);
+.status-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+    transition: color 0.3s ease;
+}
+
+.status-box:hover .status-icon {
     color: var(--text-muted);
-    letter-spacing: 0.01em;
+}
+
+.status-box-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 2px;
+    margin-bottom: 6px;
+}
+
+.status-box-actions {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    margin-top: auto;
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+}
+
+.status-box-actions .btn-sm {
+    padding: 6px 0;
+    font-size: 0.65rem;
+    text-align: center;
+    justify-content: center;
+}
+
+.status-label {
+    font-size: 0.95rem;
+    font-weight: 600;
+    font-family: var(--font-ui);
+    color: var(--text);
+    letter-spacing: -0.01em;
 }
 
 /* Pulsing indicator dot */
@@ -557,59 +598,95 @@ body::after {
 .badge.inactive{ background: rgba(244,63,94,0.18);   color: var(--danger);  border-color: rgba(244,63,94,0.3);  }
 .badge.warning { background: rgba(251,191,36,0.18);  color: var(--warning); border-color: rgba(251,191,36,0.3); }
 
+/* Large badge with full fill for dashboard */
+.badge-lg {
+    font-size: 0.72rem;
+    padding: 6px 12px;
+    border-radius: 6px;
+    letter-spacing: 0.08em;
+}
+
+.badge-lg.active {
+    background: var(--success);
+    color: #fff;
+    border-color: var(--success);
+    box-shadow: 0 4px 12px var(--success-glow);
+}
+
+.badge-lg.inactive {
+    background: var(--danger);
+    color: #fff;
+    border-color: var(--danger);
+    box-shadow: 0 4px 12px var(--danger-glow);
+}
+
+.badge-lg.warning {
+    background: var(--warning);
+    color: #fff;
+    border-color: var(--warning);
+    box-shadow: 0 4px 12px var(--warning-glow);
+}
+
 /* ══════════════════════════════════════════════
-   CONTENT TABS
+   CONTENT TABS — Pill style
 ══════════════════════════════════════════════ */
 .content-tabs {
     display: flex;
-    gap: 2px;
-    margin-bottom: 32px;
-    border-bottom: 1px solid var(--border);
+    gap: 4px;
+    margin-bottom: 28px;
+    padding: 4px;
+    background: rgba(0,0,0,0.2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
     overflow-x: auto;
     scrollbar-width: none;
-    padding: 0 4px;
+    flex-shrink: 0;
 }
+.content-tabs::-webkit-scrollbar { display: none; }
 
 .content-tab-btn {
     background: transparent;
-    border: none;
-    color: var(--text-dim);
-    padding: 11px 16px;
-    font-size: 0.84rem;
-    font-weight: 500;
-    font-family: var(--font-ui);
+    border: 1px solid transparent;
+    color: #7c75a0;
+    padding: 7px 14px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    font-family: var(--font-mono);
     cursor: pointer;
-    transition: color 0.2s ease;
-    margin-bottom: -1px;
-    position: relative;
+    border-radius: var(--radius-xs);
+    transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
     white-space: nowrap;
-    letter-spacing: -0.01em;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    position: relative;
 }
 
-.content-tab-btn::after {
-    content: '';
-    position: absolute;
-    bottom: 0; left: 0; width: 100%; height: 2px;
-    background: linear-gradient(90deg, var(--accent), var(--accent2));
-    transform: scaleX(0);
-    transform-origin: center;
-    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-    border-radius: 2px 2px 0 0;
+.content-tab-btn:hover {
+    color: var(--text-muted);
+    background: rgba(167,139,250,0.05);
+    border-color: rgba(167,139,250,0.1);
 }
 
-.content-tab-btn:hover { color: var(--text-muted); }
-.content-tab-btn.active { color: var(--accent-hover); font-weight: 600; }
-.content-tab-btn.active::after { transform: scaleX(1); }
+.content-tab-btn.active {
+    color: var(--accent-hover);
+    background: rgba(167,139,250,0.12);
+    border-color: rgba(167,139,250,0.25);
+    box-shadow: 0 0 12px rgba(167,139,250,0.08), inset 0 1px 0 rgba(255,255,255,0.06);
+}
 
 .tab-pane { display: none; opacity: 0; }
 .tab-pane.active {
     display: block;
-    animation: fadeInTab 0.3s ease forwards;
+    animation: fadeInTab 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 @keyframes fadeInTab {
-    from { opacity: 0; transform: translateX(-15px); }
-    to   { opacity: 1; transform: translateX(0); }
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tab-pane.active { animation: none; opacity: 1; }
 }
 
 /* ══════════════════════════════════════════════
@@ -1100,9 +1177,133 @@ h4 {
 }
 .btn-sm.btn-delete:hover {
     background: rgba(244,63,94,0.08);
-    border-color: rgba(244,63,94,0.4);
     box-shadow: 0 0 10px rgba(244,63,94,0.1);
 }
+
+/* ══════════════════════════════════════════════
+   FORM VALIDATION ERRORS (Item 4)
+══════════════════════════════════════════════ */
+.form-group.field-error .form-control {
+    border-color: rgba(244,63,94,0.5);
+    background: rgba(244,63,94,0.04);
+    box-shadow: 0 0 0 3px rgba(244,63,94,0.08);
+    animation: shake 0.38s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+.form-group.field-error label {
+    color: var(--danger);
+}
+
+.field-error-msg {
+    display: none;
+    font-size: 0.72rem;
+    color: var(--danger);
+    font-family: var(--font-ui);
+    margin-top: 5px;
+    padding-left: 2px;
+    opacity: 0.9;
+}
+
+.form-group.field-error .field-error-msg {
+    display: block;
+    animation: fadeInDown 0.2s ease;
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    20%       { transform: translateX(-6px); }
+    40%       { transform: translateX(6px); }
+    60%       { transform: translateX(-4px); }
+    80%       { transform: translateX(4px); }
+}
+
+@keyframes fadeInDown {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .form-group.field-error .form-control { animation: none; }
+}
+
+/* ══════════════════════════════════════════════
+   EMPTY STATE (Item 6)
+══════════════════════════════════════════════ */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 64px 32px;
+    text-align: center;
+    gap: 14px;
+}
+
+.empty-state-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: rgba(167,139,250,0.07);
+    border: 1px solid rgba(167,139,250,0.12);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #5a5278;
+    margin-bottom: 6px;
+}
+
+.empty-state-title {
+    font-family: var(--font-mono);
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: -0.01em;
+}
+
+.empty-state-sub {
+    font-size: 0.82rem;
+    color: #5a5278;
+    font-family: var(--font-ui);
+    line-height: 1.5;
+    max-width: 260px;
+}
+
+.empty-state .btn {
+    margin-top: 6px;
+    font-size: 0.78rem;
+    padding: 8px 18px;
+}
+
+/* ══════════════════════════════════════════════
+   TABLE ROW HOVER (Item 2)
+══════════════════════════════════════════════ */
+.data-table tbody tr {
+    transition: background 0.15s ease;
+    border-radius: var(--radius-xs);
+}
+
+.data-table tbody tr:hover {
+    background: rgba(167,139,250,0.04);
+}
+
+.data-table tbody tr:hover td:first-child {
+    color: var(--text);
+}
+
+/* Clickable domain link in sites table */
+.site-domain-link {
+    color: var(--text);
+    text-decoration: none;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    transition: color 0.15s ease;
+}
+.site-domain-link:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.site-domain-link svg { opacity: 0.4; transition: opacity 0.15s ease; flex-shrink: 0; }
+.site-domain-link:hover svg { opacity: 0.8; }
+
 
 /* ══════════════════════════════════════════════
    MODAL
@@ -2129,3 +2330,57 @@ kbd {
     border-color: rgba(244,63,94,1);
     transform: scale(1.1);
 }
+
+/* P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%
+   VHOST SYNTAX EDITOR OVERLAY
+P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P%P% */
+.vhost-editor .editor-wrap {
+    position: relative;
+    width: 100%;
+    height: 400px;
+    background: var(--bg-darker);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+.editor-textarea, .editor-pre {
+    margin: 0;
+    padding: 14px;
+    border: 0;
+    width: 100%;
+    height: 100%;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    line-height: 1.5;
+    tab-size: 4;
+}
+.editor-textarea {
+    position: absolute;
+    top: 0; left: 0;
+    z-index: 2;
+    background: transparent;
+    color: transparent;
+    caret-color: var(--text);
+    resize: none;
+    outline: none;
+    white-space: pre;
+    overflow: auto;
+}
+.editor-pre {
+    position: absolute;
+    top: 0; left: 0;
+    z-index: 1;
+    background: transparent;
+    color: var(--text-dim);
+    overflow: hidden;
+    pointer-events: none;
+    white-space: pre;
+}
+/* Syntax Highlighting Colors */
+.editor-pre .hl-keyword { color: #ff7b72; font-weight: 600; }
+.editor-pre .hl-directive { color: #79c0ff; }
+.editor-pre .hl-string { color: #a5d6ff; }
+.editor-pre .hl-comment { color: #8b949e; font-style: italic; }
+.editor-pre .hl-variable { color: #d2a8ff; }
+.editor-pre .hl-value { color: #c9d1d9; }
+

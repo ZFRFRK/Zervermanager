@@ -160,23 +160,38 @@ function showAlert(title, msg) {
 
 // Page Navigation
 function switchPage(pageId) {
-    // Hide all pages
-    document.querySelectorAll('.page-section').forEach(p => p.classList.remove('active'));
-    // Deactivate all nav items
-    document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+    const current = document.querySelector('.page-section.active');
     
-    // Show selected page
-    document.getElementById('page-' + pageId).classList.add('active');
-    // Activate nav item
-    document.querySelector('[data-page="' + pageId + '"]').classList.add('active');
-    
-    // Load data for specific pages
-    if (pageId === 'managesites') {
-        loadSites();
-    } else if (pageId === 'dns') {
-        loadDNS();
-    } else if (pageId === 'services') {
-        loadMailUsers();
+    const finishSwitch = () => {
+        // Hide all pages
+        document.querySelectorAll('.page-section').forEach(p => {
+            p.classList.remove('active');
+            p.style.animation = ''; // clear pageOut
+        });
+        // Deactivate all nav items
+        document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+        
+        // Show selected page
+        document.getElementById('page-' + pageId).classList.add('active');
+        // Activate nav item
+        const navItem = document.querySelector('[data-page="' + pageId + '"]');
+        if (navItem) navItem.classList.add('active');
+        
+        // Load data for specific pages
+        if (pageId === 'managesites') {
+            loadSites();
+        } else if (pageId === 'dns') {
+            loadDNS();
+        } else if (pageId === 'services') {
+            loadMailUsers();
+        }
+    };
+
+    if (current && current.id !== 'page-' + pageId && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        current.style.animation = 'pageOut 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards';
+        setTimeout(finishSwitch, 140);
+    } else {
+        finishSwitch();
     }
 }
 
@@ -201,6 +216,41 @@ async function submitApiForm(event, endpoint, terminalId) {
     const btn = form.querySelector('button[type="submit"]');
     const term = document.getElementById(terminalId);
     
+    // Clear previous errors
+    form.querySelectorAll('.field-error').forEach(el => el.classList.remove('field-error'));
+    
+    // Client-side validation
+    let isValid = true;
+    let firstErrorField = null;
+    form.querySelectorAll('[required]').forEach(field => {
+        if (!field.value.trim()) {
+            isValid = false;
+            const group = field.closest('.form-group');
+            if (group) {
+                group.classList.add('field-error');
+                if (!firstErrorField) firstErrorField = field;
+                if (!group.querySelector('.field-error-msg')) {
+                    const msg = document.createElement('span');
+                    msg.className = 'field-error-msg';
+                    msg.innerText = 'This field is required';
+                    group.appendChild(msg);
+                }
+            }
+        }
+    });
+
+    form.querySelectorAll('[required]').forEach(field => {
+        field.addEventListener('input', function() {
+            const group = this.closest('.form-group');
+            if (group) group.classList.remove('field-error');
+        }, { once: true });
+    });
+
+    if (!isValid) {
+        if (firstErrorField) firstErrorField.focus();
+        return;
+    }
+
     // Gather form data into JSON
     const formData = new FormData(form);
     const payload = {};
@@ -327,18 +377,21 @@ async function fetchStatus() {
             const el = document.getElementById(id);
             if (!el) return;
             const s = status.toLowerCase();
+            const isLg = el.classList.contains('badge-lg');
+            const baseClass = isLg ? 'badge badge-lg' : 'badge';
+
             if (s === 'running') {
                 el.innerText = 'RUNNING';
-                el.className = 'badge active';
+                el.className = baseClass + ' active';
             } else if (s === 'stopped') {
                 el.innerText = 'STOPPED';
-                el.className = 'badge inactive';
+                el.className = baseClass + ' inactive';
             } else if (s.includes('not installed') || s.includes('not found')) {
                 el.innerText = 'NOT INSTALLED';
-                el.className = 'badge warning';
+                el.className = baseClass + ' warning';
             } else {
                 el.innerText = status.toUpperCase();
-                el.className = 'badge';
+                el.className = baseClass;
             }
         };
 
@@ -351,21 +404,61 @@ async function fetchStatus() {
         updateBadge('ufw-val', data.ufw || 'Unknown');
 
         // Update Top Bar
-        const updateTb = (id, st) => {
+        const updateTb = (id, st, serviceName) => {
             const el = document.getElementById(id);
             if(!el) return;
             const s = st.toLowerCase();
             el.className = 'top-bar-svc ' + (s === 'running' ? 'is-running' : (s === 'stopped' ? 'is-stopped' : 'is-warning'));
+            
+            if (serviceName) {
+                el.style.cursor = 'pointer';
+                el.onclick = () => {
+                    switchPage('server');
+                    const sel = document.getElementById('manage-service');
+                    if (sel) sel.value = serviceName;
+                };
+            }
         };
-        updateTb('tb-apache2', data.apache2 || '');
-        updateTb('tb-nginx', data.nginx || '');
-        updateTb('tb-bind9', data.bind9 || '');
-        updateTb('tb-mariadb', data.mariadb || '');
-        updateTb('tb-postfix', data.postfix || '');
-        updateTb('tb-ufw', data.ufw || '');
+        updateTb('tb-apache2', data.apache2 || '', 'apache2');
+        updateTb('tb-nginx', data.nginx || '', 'nginx');
+        updateTb('tb-bind9', data.bind9 || '', 'bind9');
+        updateTb('tb-mariadb', data.mariadb || '', 'mariadb');
+        updateTb('tb-postfix', data.postfix || '', 'postfix');
+        updateTb('tb-ufw', data.ufw || '', 'ufw');
         
     } catch (e) {
         console.error("Status fetch failed:", e);
+    }
+}
+
+// Quick service action from dashboard
+async function quickServiceAction(service, action) {
+    const actionCap = action.charAt(0).toUpperCase() + action.slice(1);
+    const ok = await showConfirm(
+        actionCap + ' ' + service,
+        'Are you sure you want to <strong>' + action + '</strong> ' + service + '?'
+    );
+    if (!ok) return;
+
+    try {
+        const res = await fetch('/api/manage/service', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({service: service, action: action})
+        });
+        const text = await res.text();
+        const parts = text.split('\n===RESULT===\n');
+        const jsonStr = parts.length > 1 ? parts[1] : parts[0];
+        const data = JSON.parse(jsonStr);
+
+        if (data.success || data.status === 'success') {
+            showToast(service + ' ' + action + ' successful.', 'success');
+            fetchStatus();
+        } else {
+            showAlert('Action Failed', 'Failed to ' + action + ' ' + service + '. Check logs.');
+        }
+    } catch (e) {
+        showAlert('Error', 'Network error: ' + e.message);
     }
 }
 
@@ -420,7 +513,16 @@ async function loadSites() {
         const sites = await res.json();
 
         if (sites.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px">No sites found.</td></tr>';
+            tbody.innerHTML = `<tr><td colspan="5" style="padding:0">
+                <div class="empty-state">
+                    <div class="empty-state-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                    </div>
+                    <div class="empty-state-title">No sites configured yet</div>
+                    <div class="empty-state-sub">Create your first site with the Make Site tool.</div>
+                    <button class="btn btn-primary" onclick="switchPage('makesite')">Make Site</button>
+                </div>
+            </td></tr>`;
             return;
         }
 
@@ -431,23 +533,21 @@ async function loadSites() {
             const statusText = s.enabled ? 'Enabled' : 'Disabled';
             const toggleAction = s.enabled ? 'disable' : 'enable';
             const toggleText = s.enabled ? 'Disable' : 'Enable';
+            const toggleBtnClass = s.enabled ? '' : 'btn-toggle';
             const d = s.domain;
             const sv = s.server;
             const tp = s.type;
             const dr = s.docroot;
 
             rows += '<tr>';
-            rows += '<td style="font-weight:500">' + d + '</td>';
+            rows += `<td><a href="http://${d}" target="_blank" class="site-domain-link"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg> ${d}</a></td>`;
             rows += '<td><span class="badge" style="background:var(--bg-lighter)">' + sv + '</span></td>';
             rows += '<td><span class="badge" style="background:var(--bg-lighter)">' + tp + '</span></td>';
             rows += '<td><span class="badge ' + statusClass + '">' + statusText + '</span></td>';
-            rows += '<td style="display:flex;gap:6px;flex-wrap:wrap">';
-            rows += '<button class="btn btn-primary" style="padding:4px 10px;font-size:0.75rem" ';
-            rows += 'onclick="toggleSite(\'' + sv + '\',\'' + d + '\',\'' + toggleAction + '\')">' + toggleText + '</button>';
-            rows += '<button class="btn btn-primary" style="padding:4px 10px;font-size:0.75rem;background:var(--bg-lighter);color:var(--text-color)" ';
-            rows += 'onclick="openModifyModal(\'' + sv + '\',\'' + d + '\',\'' + tp + '\',\'' + dr.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + '\')">Modify</button>';
-            rows += '<button class="btn btn-primary" style="padding:4px 10px;font-size:0.75rem;background:var(--danger);color:#fff" ';
-            rows += 'onclick="deleteSite(\'' + sv + '\',\'' + d + '\')">Delete</button>';
+            rows += '<td class="actions-cell" style="display:flex;gap:6px;flex-wrap:wrap">';
+            rows += `<button class="btn-sm ${toggleBtnClass}" onclick="toggleSite('${sv}','${d}','${toggleAction}')">${toggleText}</button>`;
+            rows += `<button class="btn-sm btn-modify" onclick="openModifyModal('${sv}','${d}','${tp}','${dr.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}')">Modify</button>`;
+            rows += `<button class="btn-sm btn-delete" onclick="deleteSite('${sv}','${d}')">Delete</button>`;
             rows += '</td></tr>';
         }
         tbody.innerHTML = rows;
@@ -517,11 +617,15 @@ function openModifyModal(server, domain, type, docroot) {
     if (dbBtn) dbBtn.style.display = hasDb ? '' : 'none';
 
     document.getElementById('mod-vhost-content').value = 'Loading configuration...';
+    updateHighlighting('Loading configuration...');
+    
     siteAction({action: 'get_vhost', server: server, domain: domain}).then(function(res) {
         if (res && res.success) {
             document.getElementById('mod-vhost-content').value = res.message;
+            updateHighlighting(res.message);
         } else {
             document.getElementById('mod-vhost-content').value = 'Failed to load configuration.';
+            updateHighlighting('Failed to load configuration.');
         }
     });
 
@@ -554,7 +658,15 @@ async function loadDNS() {
         const data = await res.json();
         
         if (!data || data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:32px;color:var(--text-muted)">No DNS zones found.</td></tr>';
+            tbody.innerHTML = `<tr><td colspan="3" style="padding:0">
+                <div class="empty-state">
+                    <div class="empty-state-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2H3v16h5v4l4-4h5l4-4V2zM11 11V7M16 11V7"/></svg>
+                    </div>
+                    <div class="empty-state-title">No DNS zones found</div>
+                    <div class="empty-state-sub">Zones are automatically created when making a site, or you can add them manually.</div>
+                </div>
+            </td></tr>`;
             return;
         }
         
@@ -682,6 +794,54 @@ async function submitModifySite(event, actionType) {
     } finally {
         btn.innerText = originalText;
         btn.disabled = false;
+        closeModifyModal();
+    }
+}
+
+// --- VHost Pseudo-Editor Syntax Highlighting ---
+function escapeHtml(text) {
+    return text.replace(/&/g, '&amp;')
+               .replace(/</g, '&lt;')
+               .replace(/>/g, '&gt;');
+}
+
+function updateHighlighting(text) {
+    let html = escapeHtml(text || '');
+    
+    // Nginx / Apache highlighting rules
+    
+    // 1. Comments
+    html = html.replace(/(#.*)/g, '<span class="hl-comment">$1</span>');
+    
+    // 2. Directives (e.g., ServerName, listen, root)
+    html = html.replace(/^([ \t]*)([a-zA-Z_]+)(?=\s)/gm, '$1<span class="hl-directive">$2</span>');
+    
+    // 3. Keywords/Blocks (e.g., server {, <VirtualHost>)
+    html = html.replace(/(server|location|upstream|http|events)\b(?=\s*\{)/g, '<span class="hl-keyword">$1</span>');
+    html = html.replace(/&lt;(\/?(?:VirtualHost|Directory|Files|Location)[^&]*)&gt;/gi, '<span class="hl-keyword">&lt;$1&gt;</span>');
+    
+    // 4. Variables (e.g., $host, %{HTTP_HOST})
+    html = html.replace(/(\$[\w_]+)/g, '<span class="hl-variable">$1</span>');
+    html = html.replace(/(%\{[^}]+\})/g, '<span class="hl-variable">$1</span>');
+
+    // 5. Strings
+    html = html.replace(/(".*?")/g, '<span class="hl-string">$1</span>');
+    html = html.replace(/('.*?')/g, '<span class="hl-string">$1</span>');
+    
+    // 6. Values (numbers, paths, ips) - simplified catch-all for remaining tokens
+    // html = html.replace(/([ \t]+)([a-zA-Z0-9_\-\.\/:]+)(?=;|\s|$)/gm, '$1<span class="hl-value">$2</span>');
+
+    const codeEl = document.getElementById('mod-vhost-highlight');
+    if (codeEl) {
+        codeEl.innerHTML = html + '\n';
+    }
+}
+
+function syncScroll(el) {
+    const pre = el.nextElementSibling;
+    if (pre && pre.classList.contains('editor-pre')) {
+        pre.scrollTop = el.scrollTop;
+        pre.scrollLeft = el.scrollLeft;
     }
 }
 
