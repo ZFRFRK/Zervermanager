@@ -52,9 +52,9 @@
         <!-- RIGHT — Mai slideshow panel -->
         <div class="splash-right">
             <div class="splash-photos">
-                <img class="splash-photo active"  src="Mai Ouzuka.jpg"     alt="Ouzuka Mai">
-                <img class="splash-photo"          src="Ouzuka Mai.jpg"     alt="Ouzuka Mai">
-                <img class="splash-photo"          src="Ouzuka_Mai_2_.jpg"  alt="Ouzuka Mai">
+                <img class="splash-photo active"  src="loading1.jpg"     alt="Loading 1">
+                <img class="splash-photo"          src="loading2.jpg"     alt="Loading 2">
+                <img class="splash-photo"          src="loading3.jpg"  alt="Loading 3">
             </div>
             <div class="splash-photo-overlay"></div>
             <div class="splash-photo-caption">
@@ -118,6 +118,13 @@
                     <button class="nav-item" data-page="network" onclick="switchPage('network')">
                         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M17.778 8.222c-4.296-4.296-11.26-4.296-15.556 0A1 1 0 01.808 6.808c5.076-5.077 13.308-5.077 18.384 0a1 1 0 01-1.414 1.414zM14.95 11.05a7 7 0 00-9.9 0 1 1 0 01-1.414-1.414 9 9 0 0112.728 0 1 1 0 01-1.414 1.414zM12.12 13.88a3 3 0 00-4.242 0 1 1 0 01-1.415-1.415 5 5 0 017.072 0 1 1 0 01-1.415 1.415zM9 16a1 1 0 112 0 1 1 0 01-2 0z" clip-rule="evenodd"/></svg>
                         Network
+                    </button>
+                </div>
+                <div class="nav-section">
+                    <div class="nav-section-title">Support</div>
+                    <button class="nav-item" data-page="help" onclick="switchPage('help')">
+                        <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
+                        Help
                     </button>
                 </div>
             </nav>
@@ -1036,6 +1043,36 @@
                     <div id="network-term" class="terminal"></div>
                 </div>
             </section>
+            <!-- Help Page -->
+            <section id="page-help" class="page-section">
+                <div class="page-header">
+                    <h2>Help & Documentation</h2>
+                    <p>Learn how to use Zervermanager effectively.</p>
+                </div>
+                <div class="card">
+                    <h3>Overview</h3>
+                    <p>Zervermanager is a lightweight control panel for Debian servers.</p>
+                    <ul style="padding-left: 20px; margin-bottom: 20px; color: var(--text-muted); line-height: 1.8;">
+                        <li><strong>Dashboard</strong>: View the real-time status of your server's core services.</li>
+                        <li><strong>Make Site</strong>: Automatically generate configurations for Nginx/Apache, create databases, and optionally create DNS zones all at once.</li>
+                        <li><strong>Manage Sites</strong>: Enable, disable, or completely delete existing web sites and their associated configs.</li>
+                        <li><strong>DNS Zones</strong>: View and manage BIND9 DNS records.</li>
+                        <li><strong>MariaDB</strong>: View databases, users, and optionally drop them.</li>
+                        <li><strong>Install Services</strong>: Manage system packages and create Mailbox users for Postfix/Dovecot.</li>
+                        <li><strong>Server</strong>: Reboot the server or manage global configurations.</li>
+                        <li><strong>Network</strong>: View and apply static IP settings.</li>
+                    </ul>
+                    <p style="margin-bottom: 24px;">
+                        <button class="btn btn-primary" onclick="openVideo()" style="padding: 10px 20px; font-size: 0.95rem; display: inline-flex; align-items: center; gap: 8px;">
+                            <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><path d="M4 4l12 6-12 6z"/></svg>
+                            Watch Tutorial Video
+                        </button>
+                    </p>
+                    <p style="color: var(--text-dim); font-size: 0.9em;">
+                        <strong>Tip:</strong> Press <kbd>?</kbd> at any time to view keyboard navigation shortcuts.
+                    </p>
+                </div>
+            </section>
 
         </main>
     </div>
@@ -1058,6 +1095,7 @@
                 <div class="kbd-row"><span class="kbd-desc">Install Services</span><span class="kbd-keys"><kbd>g</kbd><kbd>i</kbd></span></div>
                 <div class="kbd-row"><span class="kbd-desc">Server Management</span><span class="kbd-keys"><kbd>g</kbd><kbd>v</kbd></span></div>
                 <div class="kbd-row"><span class="kbd-desc">Network</span><span class="kbd-keys"><kbd>g</kbd><kbd>n</kbd></span></div>
+                <div class="kbd-row"><span class="kbd-desc">Help</span><span class="kbd-keys"><kbd>g</kbd><kbd>h</kbd></span></div>
                 <div class="kbd-section-title">Actions</div>
                 <div class="kbd-row"><span class="kbd-desc">Reload All Services</span><span class="kbd-keys"><kbd>r</kbd></span></div>
                 <div class="kbd-row"><span class="kbd-desc">Show this help</span><span class="kbd-keys"><kbd>?</kbd></span></div>
@@ -1069,5 +1107,31 @@
     <!-- ── Toast Container ── -->
     <div class="toast-container" id="toast-container"></div>
 
+    <!-- ── Video Overlay ── -->
+    <div class="video-overlay" id="video-overlay" onclick="closeVideo()">
+        <div class="video-container" onclick="event.stopPropagation()">
+            <button class="close-video-btn" onclick="closeVideo()">✖</button>
+            <video id="tutorial-video" controls>
+                <source src="video.mp4" type="video/mp4">
+                Your browser does not support the video tag.
+            </video>
+        </div>
+    </div>
+
+    <script>
+        function openVideo() {
+            const overlay = document.getElementById('video-overlay');
+            const video = document.getElementById('tutorial-video');
+            overlay.classList.add('open');
+            video.play().catch(e => console.log('Autoplay prevented'));
+        }
+        function closeVideo() {
+            const overlay = document.getElementById('video-overlay');
+            const video = document.getElementById('tutorial-video');
+            overlay.classList.remove('open');
+            video.pause();
+            video.currentTime = 0;
+        }
+    </script>
 </body>
 </html>
