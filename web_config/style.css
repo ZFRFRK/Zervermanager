@@ -372,12 +372,8 @@ body::after {
     letter-spacing: -0.04em;
     line-height: 1.1;
     margin-bottom: 10px;
-
-    /* Gradient text */
-    background: linear-gradient(135deg, #ffffff 0%, rgba(196,181,253,0.9) 60%, var(--accent2) 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    color: var(--text);
+    text-wrap: balance;
 }
 
 .page-header p {
@@ -625,10 +621,13 @@ body::after {
 }
 
 label {
-    display: block;
-    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 0.76rem;
     font-weight: 600;
-    color: var(--text-dim);
+    color: #7c75a0; /* raised from --text-dim #4a4265 for WCAG AA contrast */
     margin-bottom: 8px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -637,6 +636,80 @@ label {
 }
 
 .form-group:focus-within label { color: var(--accent); }
+
+/* Optional / hint text within a label */
+.label-hint {
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+    font-size: 0.72rem;
+    color: #5a5278; /* slightly above --text-dim */
+    font-family: var(--font-ui);
+}
+
+/* Auto-DNS badge shown next to Server IP label */
+.label-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    line-height: 1.4;
+}
+
+.label-badge-auto {
+    background: rgba(34,211,238,0.1);
+    color: var(--accent2);
+    border: 1px solid rgba(34,211,238,0.2);
+}
+
+.label-badge-auto::before {
+    content: '';
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent2);
+    box-shadow: 0 0 5px rgba(34,211,238,0.6);
+    flex-shrink: 0;
+}
+
+/* Form section dividers — thin accent line + label */
+.form-section {
+    margin: 28px 0 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    font-weight: 600;
+    color: #5a5278;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.form-section::before,
+.form-section::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+}
+
+.form-section::before { flex: 0 0 0px; } /* left side: none — flush with label */
+
+/* Button row — for grouped action buttons */
+.btn-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
 
 .form-control {
     width: 100%;
@@ -653,7 +726,7 @@ label {
 }
 
 select.form-control {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%234d4665' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237c75a0' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 14px center;
     padding-right: 38px;
@@ -669,23 +742,47 @@ select.form-control {
     box-shadow: 0 0 0 3px rgba(167,139,250,0.08), 0 0 20px rgba(167,139,250,0.05);
 }
 
-.form-control::placeholder { color: var(--text-dim); font-size: 0.84rem; }
+.form-control::placeholder { color: #5a5278; font-size: 0.84rem; }
+
+textarea.form-control {
+    resize: vertical;
+    min-height: 140px;
+    line-height: 1.6;
+}
 
 /* ══════════════════════════════════════════════
-   CHECKBOX
+   CHECKBOX — Toggle card style
 ══════════════════════════════════════════════ */
 .checkbox-label {
     display: inline-flex;
     align-items: center;
     gap: 10px;
     cursor: pointer;
-    font-size: 0.88rem;
+    font-size: 0.875rem;
     font-weight: 500;
     color: var(--text-muted);
     user-select: none;
     font-family: var(--font-ui);
     text-transform: none;
     letter-spacing: normal;
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    transition: all 0.18s ease;
+    width: 100%;
+    background: rgba(255,255,255,0.02);
+}
+
+.checkbox-label:hover {
+    border-color: rgba(167,139,250,0.12);
+    background: rgba(167,139,250,0.04);
+    color: var(--text);
+}
+
+.checkbox-label:has(input:checked) {
+    border-color: rgba(167,139,250,0.22);
+    background: rgba(167,139,250,0.07);
+    color: var(--accent-hover);
 }
 
 .checkbox-label input[type="checkbox"] {
@@ -694,6 +791,19 @@ select.form-control {
     accent-color: var(--accent);
     cursor: pointer;
     flex-shrink: 0;
+}
+
+/* Danger variant for destructive confirms */
+.checkbox-label.danger {
+    color: var(--danger);
+}
+.checkbox-label.danger:hover {
+    border-color: rgba(244,63,94,0.2);
+    background: rgba(244,63,94,0.05);
+}
+.checkbox-label.danger:has(input:checked) {
+    border-color: rgba(244,63,94,0.3);
+    background: rgba(244,63,94,0.08);
 }
 
 /* ══════════════════════════════════════════════
@@ -766,6 +876,33 @@ select.form-control {
     border-color: rgba(244, 63, 94, 0.5);
     box-shadow: 0 0 16px rgba(244,63,94,0.15);
     color: var(--danger);
+}
+
+/* Solid danger — used as the OK button inside the confirm dialog */
+.btn-danger-solid {
+    background: linear-gradient(135deg, #f43f5e 0%, #be123c 100%);
+    border-color: rgba(244,63,94,0.5);
+    color: #fff;
+    font-weight: 700;
+    box-shadow: 0 4px 20px rgba(244,63,94,0.25), inset 0 1px 0 rgba(255,255,255,0.1);
+}
+.btn-danger-solid:hover {
+    background: linear-gradient(135deg, #fb7185 0%, #e11d48 100%);
+    border-color: rgba(244,63,94,0.8);
+    box-shadow: 0 6px 28px rgba(244,63,94,0.4);
+    color: #fff;
+}
+
+/* Ghost — neutral cancel button */
+.btn-ghost {
+    background: transparent;
+    border-color: var(--border-light);
+    color: var(--text-muted);
+}
+.btn-ghost:hover {
+    background: rgba(255,255,255,0.04);
+    border-color: rgba(255,255,255,0.15);
+    color: var(--text);
 }
 
 /* ══════════════════════════════════════════════
@@ -847,12 +984,11 @@ hr {
 
 h4 {
     font-family: var(--font-mono);
-    font-size: 0.82rem;
-    font-weight: 700;
+    font-size: 0.88rem;
+    font-weight: 600;
     color: var(--text-muted);
-    margin-bottom: 16px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    margin-bottom: 14px;
+    letter-spacing: -0.01em;
 }
 
 /* ══════════════════════════════════════════════
@@ -1021,6 +1157,107 @@ h4 {
     to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+/* ══════════════════════════════════════════════
+   DIALOG (custom confirm / alert)
+══════════════════════════════════════════════ */
+.dialog-box {
+    width: 420px;
+    max-width: 92vw;
+    padding: 28px 32px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    z-index: 200;
+}
+
+.dialog-box {
+    /* danger-tinted top glow */
+    border-color: rgba(244,63,94,0.18);
+    box-shadow: 0 32px 64px rgba(0,0,0,0.7), 0 0 0 1px rgba(244,63,94,0.06) inset, 0 0 60px rgba(244,63,94,0.06);
+}
+.dialog-box::before {
+    background: linear-gradient(90deg, transparent, var(--danger), transparent);
+    opacity: 0.3;
+}
+
+/* Info variant: purple glow (for non-destructive alerts) */
+.dialog-box.dialog-info {
+    border-color: rgba(167,139,250,0.2);
+    box-shadow: 0 32px 64px rgba(0,0,0,0.7), 0 0 0 1px rgba(167,139,250,0.05) inset, 0 0 60px rgba(124,58,237,0.08);
+}
+.dialog-box.dialog-info::before {
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: 0.5;
+}
+
+.dialog-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: rgba(244,63,94,0.1);
+    border: 1px solid rgba(244,63,94,0.2);
+    color: var(--danger);
+    margin-bottom: 18px;
+    flex-shrink: 0;
+}
+
+.dialog-box.dialog-info .dialog-icon {
+    background: rgba(167,139,250,0.1);
+    border-color: rgba(167,139,250,0.2);
+    color: var(--accent);
+}
+
+.dialog-body {
+    flex: 1;
+}
+
+.dialog-title {
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.02em;
+    margin-bottom: 10px;
+}
+
+.dialog-msg {
+    font-family: var(--font-ui);
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    line-height: 1.6;
+}
+
+.dialog-msg strong {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.dialog-footer {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+}
+
+/* The confirm dialog's ok btn has full danger-solid styling */
+#dialog-ok-btn.danger-solid {
+    background: linear-gradient(135deg, #f43f5e 0%, #be123c 100%);
+    border-color: rgba(244,63,94,0.5);
+    color: #fff;
+    font-weight: 700;
+    box-shadow: 0 4px 20px rgba(244,63,94,0.25), inset 0 1px 0 rgba(255,255,255,0.1);
+}
+#dialog-ok-btn.danger-solid:hover {
+    background: linear-gradient(135deg, #fb7185 0%, #e11d48 100%);
+    box-shadow: 0 6px 28px rgba(244,63,94,0.4);
+    color: #fff;
+}
+
 .modal-header {
     display: flex;
     justify-content: space-between;
@@ -1173,7 +1410,7 @@ h4 {
 ══════════════════════════════════════════════ */
 .card-split {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 420px 1fr;
     gap: 0;
     min-height: 0;
 }

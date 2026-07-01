@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=9">
+    <link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
 
@@ -249,21 +249,19 @@
                                 <label>Domain Name</label>
                                 <input type="text" class="form-control" name="domain" required>
                             </div>
-                            <div class="form-group">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" name="create_dns" onchange="document.getElementById('lamp-ip').classList.toggle('hidden')"> Create BIND9 DNS Zones
+                            <div class="form-group" id="lamp-ip">
+                                <label>Server IP
+                                    <span class="label-badge label-badge-auto">auto-dns</span>
+                                    <span class="label-hint">— leave blank to use current server IP</span>
                                 </label>
-                            </div>
-                            <div class="form-group hidden" id="lamp-ip">
-                                <label>Server IP</label>
-                                <input type="text" class="form-control" name="ip">
+                                <input type="text" class="form-control" name="ip" placeholder="e.g. 192.168.1.10">
                             </div>
                             <div class="form-group">
-                                <label>Database Name <span style="opacity:.6;font-weight:400">(Optional — defaults to domain prefix)</span></label>
+                                <label>Database Name <span class="label-hint">— optional, defaults to domain prefix</span></label>
                                 <input type="text" class="form-control" name="db_name" placeholder="e.g. mysite_db">
                             </div>
                             <div class="form-group">
-                                <label>Database User <span style="opacity:.6;font-weight:400">(Optional — defaults to domain prefix + _user)</span></label>
+                                <label>Database User <span class="label-hint">— optional, defaults to domain prefix + _user</span></label>
                                 <input type="text" class="form-control" name="db_user" placeholder="e.g. mysite_user">
                             </div>
                             <div class="form-group">
@@ -283,17 +281,19 @@
                                 <input type="email" class="form-control" name="le_email" placeholder="admin@example.com">
                             </div>
                             <div class="form-group">
-                                <label>Document Root <span style="opacity:.6;font-weight:400">(Optional — defaults to /var/www/domain)</span></label>
+                                <label>Document Root <span class="label-hint">— optional, defaults to /var/www/domain</span></label>
                                 <input type="text" class="form-control" name="docroot" placeholder="e.g. /var/www/mysite">
                             </div>
-                            <hr>
+
+                            <div class="form-section">Advanced</div>
+
                             <div class="form-group">
                                 <label class="checkbox-label">
                                     <input type="checkbox" name="use_site_files" onchange="document.getElementById('lamp-sitepath').classList.toggle('hidden', !this.checked)"> Use existing site files
                                 </label>
                             </div>
                             <div class="form-group hidden" id="lamp-sitepath">
-                                <label>Path to existing site files <span style="opacity:.6;font-weight:400">(server-side path)</span></label>
+                                <label>Path to existing site files <span class="label-hint">— server-side path</span></label>
                                 <div class="drop-zone" id="lamp-dropzone">
                                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:8px;opacity:0.7;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg><br>
                                     Drag and drop your site's .zip file here<br>
@@ -307,10 +307,12 @@
                                 </label>
                             </div>
                             <div class="form-group hidden" id="lamp-sqlpath">
-                                <label>SQL file path <span style="opacity:.6;font-weight:400">(full path or filename inside docroot)</span></label>
+                                <label>SQL file path <span class="label-hint">— full path or filename inside docroot</span></label>
                                 <input type="text" class="form-control" name="sql_path" placeholder="e.g. /home/user/backup.sql">
                             </div>
-                            <button type="submit" class="btn btn-primary">Create LAMP Site</button>
+                            <div class="btn-row">
+                                <button type="submit" class="btn btn-primary">Create LAMP Site</button>
+                            </div>
                         </form>
                     </div>
 
@@ -321,21 +323,19 @@
                                 <label>Domain Name</label>
                                 <input type="text" class="form-control" name="domain" required>
                             </div>
-                            <div class="form-group">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" name="create_dns" onchange="document.getElementById('lemp-ip').classList.toggle('hidden')"> Create BIND9 DNS Zones
+                            <div class="form-group" id="lemp-ip">
+                                <label>Server IP
+                                    <span class="label-badge label-badge-auto">auto-dns</span>
+                                    <span class="label-hint">— leave blank to use current server IP</span>
                                 </label>
-                            </div>
-                            <div class="form-group hidden" id="lemp-ip">
-                                <label>Server IP</label>
-                                <input type="text" class="form-control" name="ip">
+                                <input type="text" class="form-control" name="ip" placeholder="e.g. 192.168.1.10">
                             </div>
                             <div class="form-group">
-                                <label>Database Name <span style="opacity:.6;font-weight:400">(Optional — defaults to domain prefix)</span></label>
+                                <label>Database Name <span class="label-hint">— optional, defaults to domain prefix</span></label>
                                 <input type="text" class="form-control" name="db_name" placeholder="e.g. mysite_db">
                             </div>
                             <div class="form-group">
-                                <label>Database User <span style="opacity:.6;font-weight:400">(Optional — defaults to domain prefix + _user)</span></label>
+                                <label>Database User <span class="label-hint">— optional, defaults to domain prefix + _user</span></label>
                                 <input type="text" class="form-control" name="db_user" placeholder="e.g. mysite_user">
                             </div>
                             <div class="form-group">
@@ -355,17 +355,19 @@
                                 <input type="email" class="form-control" name="le_email" placeholder="admin@example.com">
                             </div>
                             <div class="form-group">
-                                <label>Document Root <span style="opacity:.6;font-weight:400">(Optional — defaults to /var/www/domain)</span></label>
+                                <label>Document Root <span class="label-hint">— optional, defaults to /var/www/domain</span></label>
                                 <input type="text" class="form-control" name="docroot" placeholder="e.g. /var/www/mysite">
                             </div>
-                            <hr>
+
+                            <div class="form-section">Advanced</div>
+
                             <div class="form-group">
                                 <label class="checkbox-label">
                                     <input type="checkbox" name="use_site_files" onchange="document.getElementById('lemp-sitepath').classList.toggle('hidden', !this.checked)"> Use existing site files
                                 </label>
                             </div>
                             <div class="form-group hidden" id="lemp-sitepath">
-                                <label>Path to existing site files <span style="opacity:.6;font-weight:400">(server-side path)</span></label>
+                                <label>Path to existing site files <span class="label-hint">— server-side path</span></label>
                                 <div class="drop-zone" id="lemp-dropzone">
                                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:8px;opacity:0.7;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg><br>
                                     Drag and drop your site's .zip file here<br>
@@ -379,10 +381,12 @@
                                 </label>
                             </div>
                             <div class="form-group hidden" id="lemp-sqlpath">
-                                <label>SQL file path <span style="opacity:.6;font-weight:400">(full path or filename inside docroot)</span></label>
+                                <label>SQL file path <span class="label-hint">— full path or filename inside docroot</span></label>
                                 <input type="text" class="form-control" name="sql_path" placeholder="e.g. /home/user/backup.sql">
                             </div>
-                            <button type="submit" class="btn btn-primary">Create LEMP Site</button>
+                            <div class="btn-row">
+                                <button type="submit" class="btn btn-primary">Create LEMP Site</button>
+                            </div>
                         </form>
                     </div>
 
@@ -400,20 +404,20 @@
                                 <label>Domain Name</label>
                                 <input type="text" class="form-control" name="domain" required>
                             </div>
-                            <div class="form-group">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" name="create_dns" onchange="document.getElementById('wp-ip').classList.toggle('hidden')"> Create BIND9 DNS Zones
+                            <div class="form-group" id="wp-ip">
+                                <label>Server IP
+                                    <span class="label-badge label-badge-auto">auto-dns</span>
+                                    <span class="label-hint">— leave blank to use current server IP</span>
                                 </label>
-                            </div>
-                            <div class="form-group hidden" id="wp-ip">
-                                <label>Server IP</label>
-                                <input type="text" class="form-control" name="ip">
+                                <input type="text" class="form-control" name="ip" placeholder="e.g. 192.168.1.10">
                             </div>
                             <div class="form-group">
                                 <label>Database Password</label>
                                 <input type="password" class="form-control" name="db_pass" required>
                             </div>
-                            <button type="submit" class="btn btn-primary">Install WordPress</button>
+                            <div class="btn-row">
+                                <button type="submit" class="btn btn-primary">Install WordPress</button>
+                            </div>
                         </form>
                     </div>
 
@@ -431,14 +435,12 @@
                                 <label>Domain Name</label>
                                 <input type="text" class="form-control" name="domain" required>
                             </div>
-                            <div class="form-group">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" name="create_dns" onchange="document.getElementById('static-ip').classList.toggle('hidden')"> Create BIND9 DNS Zones
+                            <div class="form-group" id="static-ip">
+                                <label>Server IP
+                                    <span class="label-badge label-badge-auto">auto-dns</span>
+                                    <span class="label-hint">— leave blank to use current server IP</span>
                                 </label>
-                            </div>
-                            <div class="form-group hidden" id="static-ip">
-                                <label>Server IP</label>
-                                <input type="text" class="form-control" name="ip">
+                                <input type="text" class="form-control" name="ip" placeholder="e.g. 192.168.1.10">
                             </div>
                             <div class="form-group">
                                 <label>SSL Options</label>
@@ -464,17 +466,18 @@
                                 </div>
                             </div>
                             <div class="form-group">
-                                <label>Document Root (Optional)</label>
+                                <label>Document Root <span class="label-hint">— optional, defaults to /var/www/domain</span></label>
                                 <input type="text" class="form-control" name="docroot" placeholder="Default: /var/www/domain.com">
                             </div>
-                            <hr>
+                            <div class="form-section">Advanced</div>
+
                             <div class="form-group">
                                 <label class="checkbox-label">
                                     <input type="checkbox" name="use_site_files" onchange="document.getElementById('static-sitepath').classList.toggle('hidden', !this.checked)"> Use existing site files
                                 </label>
                             </div>
                             <div class="form-group hidden" id="static-sitepath">
-                                <label>Path to existing site files <span style="opacity:.6;font-weight:400">(server-side path)</span></label>
+                                <label>Path to existing site files <span class="label-hint">— server-side path</span></label>
                                 <div class="drop-zone" id="static-dropzone">
                                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:8px;opacity:0.7;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg><br>
                                     Drag and drop your site's .zip file here<br>
@@ -482,7 +485,9 @@
                                 </div>
                                 <input type="text" class="form-control" name="site_files_path" id="static-sitepath-input" placeholder="e.g. /home/user/mysite">
                             </div>
-                            <button type="submit" class="btn btn-primary">Create Full Site</button>
+                            <div class="btn-row">
+                                <button type="submit" class="btn btn-primary">Create Full Site</button>
+                            </div>
                         </form>
                     </div>
 
@@ -634,7 +639,7 @@
                                 <input type="text" class="form-control" name="file_path" placeholder="/root/backup.sql">
                             </div>
                             <div class="form-group hidden" id="mariadb-db-confirm">
-                                <label class="checkbox-label" style="color: var(--danger)">
+                                <label class="checkbox-label danger">
                                     <input type="checkbox" name="confirm"> I understand this is destructive and confirm the action.
                                 </label>
                             </div>
@@ -705,7 +710,7 @@
                                 <label>Primary Mail Domain</label>
                                 <input type="text" class="form-control" name="domain" placeholder="example.com" required>
                             </div>
-                            <div style="display:flex;gap:12px">
+                            <div class="btn-row">
                                 <button type="submit" class="btn btn-primary">Install Mail Server</button>
                                 <button type="button" class="btn btn-danger" onclick="submitCustomAction(this, '/api/uninstall/mail')">Uninstall Mail Server</button>
                             </div>
@@ -737,7 +742,7 @@
                     <div id="tab-services-ftp" class="tab-pane">
                         <form onsubmit="submitApiForm(event, '/api/install/ftp', 'services-term')">
                             <p class="mb-4 text-muted">Installs vsftpd and configures user isolation.</p>
-                            <div style="display:flex;gap:12px" class="mb-4">
+                            <div class="btn-row mb-4">
                                 <button type="submit" class="btn btn-primary">Install FTP Server</button>
                                 <button type="button" class="btn btn-danger" onclick="submitCustomAction(this, '/api/uninstall/ftp')">Uninstall FTP Server</button>
                             </div>
@@ -760,7 +765,7 @@
                     <div id="tab-services-pma" class="tab-pane">
                         <form onsubmit="submitApiForm(event, '/api/install/pma', 'services-term')">
                             <p class="mb-4 text-muted">Installs phpMyAdmin and configures it securely under a random alias or subdomain.</p>
-                            <div style="display:flex;gap:12px">
+                            <div class="btn-row">
                                 <button type="submit" class="btn btn-primary">Install phpMyAdmin</button>
                                 <button type="button" class="btn btn-danger" onclick="submitCustomAction(this, '/api/uninstall/pma')">Uninstall phpMyAdmin</button>
                             </div>
@@ -770,7 +775,7 @@
                     <div id="tab-services-samba" class="tab-pane">
                         <form onsubmit="submitApiForm(event, '/api/install/samba', 'services-term')">
                             <p class="mb-4 text-muted">Installs Samba for Windows file sharing.</p>
-                            <div style="display:flex;gap:12px" class="mb-4">
+                            <div class="btn-row mb-4">
                                 <button type="submit" class="btn btn-primary">Install Samba Server</button>
                                 <button type="button" class="btn btn-danger" onclick="submitCustomAction(this, '/api/uninstall/samba')">Uninstall Samba Server</button>
                             </div>
@@ -1033,10 +1038,10 @@
                         </div>
 
                         <div class="form-group mt-4">
-                            <label class="checkbox-label" style="color: var(--danger)">
-                                <input type="checkbox" name="confirm"> I understand network changes may cause me to lose SSH connectivity.
-                            </label>
-                        </div>
+                                <label class="checkbox-label danger">
+                                    <input type="checkbox" name="confirm"> I understand network changes may cause me to lose SSH connectivity.
+                                </label>
+                            </div>
 
                         <button type="submit" class="btn btn-primary mt-4">Apply Network Changes</button>
                     </form>
@@ -1076,7 +1081,7 @@
 
         </main>
     </div>
-    <script src="app.js?v=7"></script>
+    <script src="app.js?v=8"></script>
 
     <!-- ── Keyboard Shortcuts Overlay ── -->
     <div class="kbd-overlay" id="kbd-overlay" onclick="closeKbdOverlay()">
@@ -1106,6 +1111,33 @@
 
     <!-- ── Toast Container ── -->
     <div class="toast-container" id="toast-container"></div>
+
+    <!-- ── Custom Confirm / Alert Modal ── -->
+    <div class="modal-overlay" id="dialog-overlay" onclick="dialogOverlayClick(event)">
+        <div class="modal-box dialog-box" id="dialog-box" onclick="event.stopPropagation()">
+            <!-- Icon -->
+            <div class="dialog-icon" id="dialog-icon">
+                <svg id="dialog-icon-warn" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <svg id="dialog-icon-info" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            </div>
+            <div class="dialog-body">
+                <div class="dialog-title" id="dialog-title">Confirm Action</div>
+                <div class="dialog-msg" id="dialog-msg"></div>
+                <!-- Optional second-step checkbox (e.g. "also delete files") -->
+                <div id="dialog-extra" class="hidden">
+                    <label class="checkbox-label danger" id="dialog-extra-label" style="margin-top:12px">
+                        <input type="checkbox" id="dialog-extra-check">
+                        <span id="dialog-extra-text"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="dialog-footer" id="dialog-footer">
+                <button class="btn btn-ghost" id="dialog-cancel-btn" onclick="dialogCancel()">Cancel</button>
+                <button class="btn btn-danger" id="dialog-ok-btn" onclick="dialogOk()">Delete</button>
+            </div>
+        </div>
+    </div>
+
 
     <!-- ── Video Overlay ── -->
     <div class="video-overlay" id="video-overlay" onclick="closeVideo()">

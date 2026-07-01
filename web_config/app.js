@@ -51,6 +51,113 @@
 }());
 
 
+// ── Custom Dialog Engine ─────────────────────────────────────────────────────
+// Promise-based drop-in replacement for confirm() and alert().
+// Usage:
+//   const ok = await showConfirm('Title', 'Message text', 'Delete');
+//   await showAlert('Title', 'Message text');
+
+let _dialogResolve = null;
+
+function _openDialog({ title, msg, okLabel = 'OK', okClass = 'danger-solid', hasCancel = true, extraText = null, isInfo = false }) {
+    return new Promise(resolve => {
+        _dialogResolve = resolve;
+        const overlay = document.getElementById('dialog-overlay');
+        const box     = document.getElementById('dialog-box');
+        const titleEl = document.getElementById('dialog-title');
+        const msgEl   = document.getElementById('dialog-msg');
+        const okBtn   = document.getElementById('dialog-ok-btn');
+        const cancelBtn = document.getElementById('dialog-cancel-btn');
+        const extraDiv = document.getElementById('dialog-extra');
+        const extraCheck = document.getElementById('dialog-extra-check');
+        const extraTextEl = document.getElementById('dialog-extra-text');
+        const iconWarn = document.getElementById('dialog-icon-warn');
+        const iconInfo = document.getElementById('dialog-icon-info');
+        const dialogIcon = document.getElementById('dialog-icon');
+
+        titleEl.textContent = title;
+        msgEl.innerHTML = msg;
+        okBtn.textContent = okLabel;
+        okBtn.className = 'btn ' + (okClass === 'danger-solid' ? 'btn-danger' : 'btn-' + okClass);
+        if (okClass === 'danger-solid') okBtn.classList.add('danger-solid');
+
+        // Info vs destructive variant
+        box.classList.toggle('dialog-info', isInfo);
+        iconWarn.style.display = isInfo ? 'none' : '';
+        iconInfo.style.display = isInfo ? '' : 'none';
+
+        cancelBtn.style.display = hasCancel ? '' : 'none';
+
+        // Optional extra checkbox
+        if (extraText) {
+            extraTextEl.textContent = extraText;
+            extraCheck.checked = false;
+            extraDiv.classList.remove('hidden');
+        } else {
+            extraDiv.classList.add('hidden');
+        }
+
+        overlay.classList.add('open');
+        // Focus the primary action button
+        setTimeout(() => (hasCancel ? cancelBtn : okBtn).focus(), 80);
+    });
+}
+
+function dialogOk() {
+    const extraCheck = document.getElementById('dialog-extra-check');
+    const extraDiv = document.getElementById('dialog-extra');
+    const hasExtra = !extraDiv.classList.contains('hidden');
+    document.getElementById('dialog-overlay').classList.remove('open');
+    if (_dialogResolve) {
+        _dialogResolve(hasExtra ? { confirmed: true, extra: extraCheck.checked } : true);
+        _dialogResolve = null;
+    }
+}
+
+function dialogCancel() {
+    document.getElementById('dialog-overlay').classList.remove('open');
+    if (_dialogResolve) {
+        _dialogResolve(false);
+        _dialogResolve = null;
+    }
+}
+
+function dialogOverlayClick(e) {
+    // Close on backdrop click (same as cancel)
+    if (e.target === document.getElementById('dialog-overlay')) dialogCancel();
+}
+
+// Keyboard: Enter = OK, Escape = Cancel
+document.addEventListener('keydown', e => {
+    if (!document.getElementById('dialog-overlay').classList.contains('open')) return;
+    if (e.key === 'Enter')  { e.preventDefault(); dialogOk(); }
+    if (e.key === 'Escape') { e.preventDefault(); dialogCancel(); }
+});
+
+/**
+ * Show a confirmation dialog.
+ * @returns {Promise<true|false>} true if user clicked OK, false if cancelled.
+ */
+function showConfirm(title, msg, okLabel = 'Confirm') {
+    return _openDialog({ title, msg, okLabel, okClass: 'danger-solid', hasCancel: true, isInfo: false });
+}
+
+/**
+ * Show a confirmation with an optional checkbox for a secondary choice.
+ * @returns {Promise<{confirmed:true,extra:boolean}|false>}
+ */
+function showConfirmWithExtra(title, msg, okLabel, extraText) {
+    return _openDialog({ title, msg, okLabel, okClass: 'danger-solid', hasCancel: true, extraText, isInfo: false });
+}
+
+/**
+ * Show an informational alert (no cancel button).
+ * @returns {Promise<void>}
+ */
+function showAlert(title, msg) {
+    return _openDialog({ title, msg, okLabel: 'OK', okClass: 'primary', hasCancel: false, isInfo: true });
+}
+
 // Page Navigation
 function switchPage(pageId) {
     // Hide all pages
@@ -352,7 +459,10 @@ async function loadSites() {
 }
 
 async function siteAction(payload, confirmMsg) {
-    if (confirmMsg && !confirm(confirmMsg)) return null;
+    if (confirmMsg) {
+        const ok = await showConfirm('Confirm Action', confirmMsg, 'Proceed');
+        if (!ok) return null;
+    }
 
     try {
         const res = await fetch('/api/manage/site_action', {
@@ -380,10 +490,15 @@ function toggleSite(server, domain, action) {
     siteAction({action: action, server: server, domain: domain});
 }
 
-function deleteSite(server, domain) {
-    if (!confirm('Are you sure you want to completely delete ' + domain + '?')) return;
-    const removeDocroot = confirm('Also delete the document root (website files) for ' + domain + '?');
-    siteAction({action: 'delete', server: server, domain: domain, remove_docroot: removeDocroot});
+async function deleteSite(server, domain) {
+    const result = await showConfirmWithExtra(
+        'Delete Site',
+        'Are you sure you want to completely delete <strong>' + domain + '</strong>?<br><br>This will remove the web server configuration and all associated files.',
+        'Delete Site',
+        'Also delete the document root (website files) for ' + domain
+    );
+    if (!result) return;
+    siteAction({ action: 'delete', server: server, domain: domain, remove_docroot: result.extra });
 }
 
 function openModifyModal(server, domain, type, docroot) {
@@ -461,7 +576,11 @@ async function loadDNS() {
 }
 
 async function deleteDnsZone(domain, type) {
-    if (!confirm('Are you sure you want to delete the ' + type + ' zone for ' + domain + '?')) return;
+    const ok = await showConfirm(
+        'Delete DNS Zone',
+        'Are you sure you want to delete the <strong>' + type + '</strong> zone for <strong>' + domain + '</strong>?'
+    );
+    if (!ok) return;
     
     try {
         const res = await fetch('/api/manage/dns', {
@@ -476,11 +595,12 @@ async function deleteDnsZone(domain, type) {
         
         if (result.success || result.status === 'success') {
             loadDNS();
+            showToast('DNS zone deleted.', 'success');
         } else {
-            alert('Error deleting zone');
+            showAlert('Delete Failed', 'Could not delete the DNS zone. Please check the server logs.');
         }
     } catch (e) {
-        alert('Request failed: ' + e.message);
+        showAlert('Request Failed', 'Network or server error: ' + e.message);
     }
 }
 
@@ -516,7 +636,11 @@ async function loadMailUsers() {
 }
 
 async function deleteMailUser(email) {
-    if (!confirm('Delete mail user ' + email + '?')) return;
+    const ok = await showConfirm(
+        'Delete Mail User',
+        'Are you sure you want to permanently delete the mail account <strong>' + email + '</strong>?'
+    );
+    if (!ok) return;
     try {
         const res = await fetch('/api/manage/mail', {
             method: 'POST',
@@ -530,11 +654,12 @@ async function deleteMailUser(email) {
         
         if (result.success || result.status === 'success') {
             loadMailUsers();
+            showToast('Mail user deleted.', 'success');
         } else {
-            alert('Error deleting user');
+            showAlert('Delete Failed', 'Could not delete the mail user. Please check the server logs.');
         }
     } catch (e) {
-        alert('Request failed');
+        showAlert('Request Failed', 'Network or server error: ' + e.message);
     }
 }
 
@@ -593,7 +718,7 @@ function setupDropZone(dropZoneId, inputPathId) {
         if (!file) return;
         
         if (!file.name.endsWith('.zip')) {
-            alert('Please drop a .zip file containing your site files.');
+            showAlert('Invalid File', 'Please drop a <strong>.zip</strong> file containing your site files.');
             return;
         }
 
