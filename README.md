@@ -87,4 +87,4 @@ python3 tests/run_tests.py
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [AGPL V3 with additional terms](LICENSE).
