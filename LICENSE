@@ -660,55 +660,422 @@ if any, to sign a "copyright disclaimer" for the program, if necessary.
 For more information on this, and how to apply and follow the GNU AGPL, see
 <https://www.gnu.org/licenses/>.
 
-Additional Terms under GNU AGPL v3, Section 7:
+Additional Terms under GNU AGPL v3, Section 7
+Version 1.1 — Effective July 2026
+Copyright (C) 2026 ZFRFRK. All rights reserved.
 
-Copyright (C) 2026 ZFRFRK
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+DEFINITIONS
+
+For the purposes of these additional terms, the following
+definitions apply:
+
+"Software" refers to Zervermanager and all associated source
+code, binaries, documentation, and assets.
+
+"Original Author" refers exclusively to ZFRFRK.
+
+"Written Permission" means explicit approval provided in
+writing via GitHub (https://github.com/ZFRFRK) and
+verifiably sent by the Original Author. Verbal agreements,
+implied consent, and assumed permissions do not qualify.
+
+"Commercial Use" means any use intended for or resulting in
+financial gain, whether direct or indirect, including use
+within a company or organization for business operations.
+
+"Personal Use" means use by a private individual solely for
+non-commercial, non-organizational purposes on their own
+systems.
+
+"Modified Version" means any version of the Software that
+has been altered from its original state in any way,
+however minor.
+
+"Public Fork" means a publicly visible copy of this
+repository hosted on a code sharing platform such as
+GitHub, made under the terms of this license.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 1. ATTRIBUTION PROTECTION
-   All credit notices, "Made by ZFRFRK" displays, author
-   attributions, and copyright headers — whether in source code or
-   user-facing output — may NOT be altered, removed, or obscured in
-   any form without explicit written permission from the original
-   author.
+
+   The following are considered protected attribution elements
+   under this license:
+     - All "Made by ZFRFRK" displays in any user-facing output
+     - All author credit notices in source code comments
+       or headers
+     - All copyright notices referencing ZFRFRK
+     - Any branding, signatures, or watermarks identifying
+       ZFRFRK as the Original Author
+
+   The following actions are STRICTLY AND EXPLICITLY FORBIDDEN
+   without prior Written Permission from the Original Author:
+
+     a) Removing any protected attribution element in any form
+     b) Altering, editing, or modifying any protected
+        attribution element in any way, including rewording
+        or reformatting
+     c) Obscuring, hiding, or rendering any protected
+        attribution element less visible in any way
+     d) Replacing the Original Author's identity with another
+        name, alias, or entity
+     e) Claiming ownership or authorship of the original work
+        or any portion of it
+     f) Distributing, publishing, or deploying any version of
+        this Software — modified or unmodified — with
+        attribution elements removed or altered
+
+   Any violation of this clause constitutes willful copyright
+   infringement and misrepresentation of authorship, and may
+   result in immediate legal action.
+
+   Written Permission must be obtained BEFORE any modification
+   to attribution elements takes place. Permission granted for
+   one use does not extend to any other use.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 2. VISIBLE CREDIT REQUIREMENT
-   Any version of this software, modified or unmodified, must display
-   the original author credit in a manner equally visible to any
-   other branding or credit added by a third party.
+
+   Any version of this Software, whether modified or
+   unmodified, must display the Original Author credit
+   (ZFRFRK) at all times in a manner that is:
+
+     a) Equally or more prominent than any credit added by
+        a third party
+     b) Visible to any user who interacts with the Software
+     c) Present in both the source code and any user-facing
+        output, interface, or documentation
+
+   The following are STRICTLY FORBIDDEN:
+
+     a) Burying or minimizing the Original Author credit in
+        a location where users are unlikely to see it
+     b) Displaying third party branding more prominently
+        than the Original Author credit
+     c) Removing the credit from any compiled, packaged, or
+        deployed version of the Software
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 3. REDISTRIBUTION RESTRICTION
-   Redistribution of this software, in source or binary form, is NOT
-   permitted without explicit written permission from the original
-   author.
+
+   Redistribution of this Software, in any form — including
+   but not limited to source code, compiled binaries,
+   packaged installers, or container images — requires prior
+   explicit Written Permission from the Original Author.
+
+   The following require Written Permission before proceeding:
+
+     a) Sharing, uploading, or publishing this Software on
+        any platform, repository, or website other than a
+        Public Fork as defined in these terms
+     b) Including this Software in any bundle, package, or
+        collection distributed to others
+     c) Mirroring or hosting this Software on any server
+        or service
+     d) Sending or transferring copies of this Software to
+        any third party by any means
+
+   Redistribution granted via Written Permission must still
+   comply with all other terms of this license. Permission
+   to redistribute does not grant permission for Commercial
+   Use or sublicensing.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 4. COMMERCIAL USE RESTRICTION
-   Use of this software for commercial purposes — including but not
-   limited to selling, licensing, or incorporating it into a paid
-   product or service — is NOT permitted without explicit written
-   permission from the original author.
+
+   Any Commercial Use of this Software requires prior
+   explicit Written Permission from the Original Author.
+
+   Commercial Use includes but is not limited to:
+
+     a) Selling access to or copies of this Software
+     b) Incorporating this Software into any paid product
+        or service
+     c) Using this Software to generate revenue directly
+        or indirectly
+     d) Deploying this Software as part of a commercial
+        hosting or SaaS offering
+     e) Using this Software on company infrastructure for
+        business operations
+     f) Licensing this Software to others for a fee
+
+   Any entity — individual, company, or organization — that
+   engages in Commercial Use without Written Permission is
+   in direct violation of this license and may be subject
+   to immediate legal action and liability for damages,
+   including recovery of all revenue generated through
+   such use.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 5. NO SUBLICENSING
-   Modified versions of this software may NOT be sold, relicensed,
-   or distributed under a separate commercial license by any party
-   other than the original author.
+
+   The following are STRICTLY AND EXPLICITLY FORBIDDEN:
+
+     a) Selling, sublicensing, or relicensing this Software
+        or any Modified Version under any terms other than
+        this license
+     b) Granting others rights to this Software beyond what
+        this license explicitly permits
+     c) Incorporating this Software into another project and
+        licensing that project under different terms that
+        conflict with this license
+     d) Transferring any rights granted under this license
+        to a third party
+
+   Only the Original Author holds the right to issue
+   commercial licenses or permissions beyond the scope
+   of this license.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 6. MODIFICATION AND SHARE-ALIKE
-   Modifications to this software are permitted for personal,
-   non-commercial use, provided that all changes are made publicly
-   available under these same terms.
+
+   Modifications to this Software are permitted for Personal
+   Use only, subject to the following conditions:
+
+     a) All Modified Versions must be shared publicly as a
+        Public Fork of the original repository at
+        https://github.com/ZFRFRK/Zervermanager and may
+        not be distributed by any other means without
+        Written Permission
+     b) Modified Versions may NOT be kept private or used
+        solely within a closed organization
+     c) Modifications must not violate any other clause of
+        this license, including attribution and credit
+        requirements
+     d) The Modified Version must clearly state that changes
+        were made from the original and include a changelog
+        as required by clause 8
+     e) All Modified Versions must be licensed under these
+        exact same terms with no alterations to the
+        license itself
+
+   Modification does not grant any additional rights beyond
+   what is explicitly stated in this license.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 7. USE IN OPEN SOURCE PROJECTS
-   This software may be used in other open source projects provided
-   that clear and visible credit is given to the original author
-   (ZFRFRK) in both the source code and any user-facing
-   documentation.
+
+   This Software may be incorporated into other open source
+   projects subject to the following conditions:
+
+     a) Clear and visible credit must be given to the
+        Original Author (ZFRFRK) in both the source code
+        and any user-facing documentation
+     b) The open source project must be licensed under terms
+        compatible with this license and must not grant
+        permissions that conflict with it
+     c) The open source project may NOT use this Software
+        as a basis for any Commercial Use
+     d) Attribution requirements under clauses 1 and 2
+        remain fully in effect regardless of incorporation
+     e) Written Permission is required if incorporation
+        involves any form of redistribution beyond a
+        Public Fork
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 8. FORK REQUIREMENTS
-   Any public fork of this software must:
-   a) Include a clearly written changelog detailing all modifications
-      made from the original
-   b) Include a visible link back to the original repository at
-      https://github.com/ZFRFRK/Zervermanager
+
+   Any Public Fork of this Software must comply with ALL
+   of the following conditions without exception:
+
+     a) Include a clearly written changelog detailing every
+        modification made from the original, including:
+          - What was changed
+          - Why it was changed
+          - When it was changed
+     b) Include a clearly visible link back to the original
+        repository at https://github.com/ZFRFRK/Zervermanager
+        in the following locations:
+          - The README file
+          - Any user-facing documentation
+          - The fork's own LICENSE file
+     c) Comply with all attribution requirements under
+        clauses 1 and 2
+     d) Be licensed under these exact same terms with no
+        modifications to the license itself
+     e) Not be used for any Commercial Use without Written
+        Permission from the Original Author
+
+   Forking does not grant any rights not explicitly stated
+   in this license.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+9. DISCLAIMER OF WARRANTY — EXTENDED
+
+   In addition to the warranty disclaimer stated in sections
+   15 and 16 of the GNU Affero General Public License v3,
+   the following applies explicitly:
+
+   THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY
+   KIND. THE ORIGINAL AUTHOR MAKES NO WARRANTIES, EXPRESS
+   OR IMPLIED, INCLUDING BUT NOT LIMITED TO:
+
+     a) Fitness for any particular purpose, including server
+        administration, system management, or any other
+        intended use
+     b) Accuracy, reliability, or correctness of any output,
+        action, or result produced by the Software
+     c) Uninterrupted or error-free operation of the Software
+     d) Compatibility with any specific operating system,
+        hardware, software, or network environment
+     e) Security of the Software against vulnerabilities,
+        exploits, or unauthorized access
+     f) That the Software will meet the user's requirements
+        or expectations in any way
+
+   THE USER ASSUMES ALL RISK ASSOCIATED WITH THE USE OF
+   THIS SOFTWARE. THE ORIGINAL AUTHOR SHALL NOT BE HELD
+   RESPONSIBLE FOR ANY OUTCOME RESULTING FROM THE USE OR
+   INABILITY TO USE THE SOFTWARE.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+10. LIMITATION OF LIABILITY — EXTENDED
+
+    In addition to section 16 of the GNU Affero General
+    Public License v3, the following applies explicitly:
+
+    UNDER NO CIRCUMSTANCES SHALL THE ORIGINAL AUTHOR BE
+    LIABLE FOR ANY DAMAGES ARISING FROM THE USE OR MISUSE
+    OF THIS SOFTWARE, INCLUDING BUT NOT LIMITED TO:
+
+      a) Loss, corruption, or destruction of data, files,
+         databases, or backups of any kind
+      b) Damage to or failure of servers, hardware,
+         infrastructure, or network systems
+      c) Unauthorized access, security breaches, or
+         exploitation of vulnerabilities in systems where
+         this Software is deployed
+      d) Loss of revenue, business interruption, or
+         operational downtime caused directly or indirectly
+         by the Software
+      e) Costs incurred for recovery, repair, or replacement
+         of any systems, data, or services affected by the
+         Software
+      f) Any indirect, incidental, consequential, special,
+         or punitive damages of any kind, even if the
+         Original Author has been advised of the possibility
+         of such damages
+      g) Actions taken by the Software on servers or systems
+         that result in unintended or destructive outcomes
+
+    THE MAXIMUM LIABILITY OF THE ORIGINAL AUTHOR UNDER ANY
+    CIRCUMSTANCE SHALL BE ZERO (0), AS THE SOFTWARE IS
+    PROVIDED FREE OF CHARGE FOR PERSONAL USE.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+11. USER RESPONSIBILITY AND ASSUMPTION OF RISK
+
+    By using this Software, the user explicitly acknowledges
+    and agrees to the following:
+
+      a) The user is solely responsible for testing and
+         evaluating the Software before deploying it on any
+         live or production server or system
+      b) The user is solely responsible for maintaining
+         backups of all data and systems before using the
+         Software
+      c) The user is solely responsible for any actions
+         the Software performs on their systems, servers,
+         or infrastructure
+      d) The user accepts all risks associated with running
+         server management software, including but not
+         limited to data loss, misconfiguration, and system
+         instability
+      e) The user is solely responsible for ensuring the
+         Software is used in compliance with all applicable
+         local, national, and international laws
+
+    THE USER AGREES THAT THEY HAVE READ AND UNDERSTOOD
+    THESE TERMS AND ACCEPT FULL RESPONSIBILITY FOR ALL
+    OUTCOMES RESULTING FROM THEIR USE OF THE SOFTWARE.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+12. INDEMNIFICATION
+
+    The user agrees to defend, indemnify, and hold harmless
+    the Original Author from and against any and all claims,
+    damages, losses, liabilities, costs, and expenses
+    (including legal fees) arising from or related to:
+
+      a) The user's use or misuse of the Software
+      b) The user's violation of any term of this license
+      c) Any damage caused to third parties by the user's
+         deployment or use of the Software
+      d) Any claim that the user's use of the Software
+         caused harm, loss, or damage of any kind
+
+    This indemnification obligation survives the termination
+    of this license and the user's cessation of use of
+    the Software.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+GENERAL ENFORCEMENT
+
+   Violation of any clause in these additional terms:
+
+     a) Immediately and automatically terminates all rights
+        granted to the violating party under this license
+        without notice
+     b) May result in legal action for copyright infringement,
+        damages, and recovery of all profits made through
+        unauthorized use
+     c) Does not require prior notice from the Original Author
+        before legal action is taken
+     d) Applies to all parties in the chain — if a party
+        grants permissions they do not have the right to
+        grant, both that party and the recipient are in
+        violation
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SEVERABILITY
+
+   If any provision of these additional terms is found to be
+   unenforceable or invalid under applicable law, that
+   provision shall be modified to the minimum extent necessary
+   to make it enforceable. All other provisions shall remain
+   in full force and effect and shall not be affected by the
+   invalidity of any single provision.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+NO WAIVER
+
+   Failure by the Original Author to enforce any provision
+   of this license at any time does not constitute a waiver
+   of the right to enforce that provision in the future.
+   All rights not explicitly granted by this license are
+   reserved by the Original Author.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+AMENDMENTS
+
+   The Original Author reserves the right to update or
+   modify these additional terms at any time. Updated terms
+   will be published at:
+   https://github.com/ZFRFRK/Zervermanager
+
+   Continued use of the Software after updated terms are
+   published constitutes acceptance of the updated terms.
+   Users who do not accept updated terms must cease all
+   use of the Software immediately.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 For permissions beyond the scope of this license, contact:
 https://github.com/ZFRFRK
