@@ -1,11 +1,18 @@
+<div align="center">
+
 # Zervermanager
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+**A robust, interactive command-line suite for automating the complete setup, configuration, and maintenance of a Debian 12 web hosting, mail, and DNS server environment.**
+
+[![Version](https://img.shields.io/badge/Version-1.3.0-informational.svg)](#)
+[![License: AGPL v3 + Additional Terms](https://img.shields.io/badge/License-AGPLv3%20%2B%20Additional%20Terms-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform: Debian 12](https://img.shields.io/badge/Platform-Debian%2012-A81D33?logo=debian&logoColor=white)](https://www.debian.org/)
-[![Status: Stable](https://img.shields.io/badge/Status-Stable%20v1.3.0-brightgreen.svg)]()
+[![Status: Stable](https://img.shields.io/badge/Status-Stable-brightgreen.svg)](#)
 
-A robust, interactive command-line suite for automating the complete setup, configuration, and maintenance of a Debian 12 web hosting, mail, and DNS server environment. Runs on any fresh minimal Debian installation using Python 3 standard libraries only — no `pip` installs or virtual environments required.
+Runs on any fresh minimal Debian installation using Python 3 standard libraries only — no `pip` installs or virtual environments required.
+
+</div>
 
 ---
 
@@ -126,4 +133,8 @@ python3 tests/run_tests.py
 
 ## License
 
-This project is licensed under the [AGPL V3 with additional terms](LICENSE).
+This project is licensed under the **GNU Affero General Public License v3.0**, with **additional custom terms** imposed by the original author — including, but not limited to, restrictions on commercial use, mandatory attribution, and an extended disclaimer of warranty and liability. See the full text in [`LICENSE`](LICENSE) for details.
+
+**Use of this software constitutes acceptance of these terms in full.**
+
+> **⚠️ License Notice:** This project is licensed under the **GNU AGPLv3 with additional restrictive terms** (including a no-commercial-use clause without written permission — see [`LICENSE`](LICENSE)). **By downloading, installing, or running this software, you confirm that you have read, understood, and agree to be bound by all terms of the license.** If you do not agree, do not use this software.
