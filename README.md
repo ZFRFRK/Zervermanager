@@ -15,6 +15,7 @@ Runs on any fresh minimal Debian installation using Python 3 standard libraries 
 </div>
 
 ---
+# Development Status : Paused
 
 ## Table of Contents
 
