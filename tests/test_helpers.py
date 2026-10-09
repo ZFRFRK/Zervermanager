@@ -540,6 +540,63 @@ class TestBugFixes(unittest.TestCase):
             _, output = capture_stdout(sm.create_https_existing)
             self.assertIn("Key not found", output)
 
+    @patch("builtins.open")
+    @patch("os.path.exists", return_value=True)
+    def test_configure_apache_ports_regex(self, mock_exists, mock_open):
+        mock_file = MagicMock()
+        mock_file.read.return_value = "Listen 80\nListen 443\n"
+        mock_file.__enter__.return_value = mock_file
+        mock_open.return_value = mock_file
+
+        # configure_apache_ports should update ports to 8080 and 8443 without re.error
+        sm.configure_apache_ports()
+
+        # Check write calls on mock_file
+        written_content = "".join(call_args[0][0] for call_args in mock_file.write.call_args_list)
+        self.assertIn("Listen 8080", written_content)
+        self.assertIn("Listen 8443", written_content)
+
+    @patch("builtins.open")
+    @patch("os.path.exists", return_value=True)
+    def test_get_system_uptime(self, mock_exists, mock_open):
+        mock_file = MagicMock()
+        mock_file.readline.return_value = "86400.00 43200.00\n"
+        mock_file.__enter__.return_value = mock_file
+        mock_open.return_value = mock_file
+
+        uptime = sm.get_system_uptime()
+        self.assertEqual(uptime["seconds"], 86400)
+        self.assertIn("1d", uptime["formatted"])
+
+    @patch("builtins.open")
+    @patch("os.path.exists", return_value=True)
+    def test_get_ram_usage(self, mock_exists, mock_open):
+        mock_file = MagicMock()
+        mock_file.__iter__.return_value = iter([
+            "MemTotal:        16000000 kB\n",
+            "MemAvailable:     8000000 kB\n",
+        ])
+        mock_file.__enter__.return_value = mock_file
+        mock_open.return_value = mock_file
+
+        ram = sm.get_ram_usage()
+        self.assertEqual(ram["percent"], 50.0)
+        self.assertIn("GB", ram["formatted"])
+
+    @patch("builtins.open")
+    @patch("os.path.exists", return_value=True)
+    def test_get_cpu_usage(self, mock_exists, mock_open):
+        mock_file = MagicMock()
+        mock_file.readline.return_value = "cpu  1000 0 1000 8000 0 0 0\n"
+        mock_file.read.return_value = "0.25 0.35 0.45 1/200 12345\n"
+        mock_file.__enter__.return_value = mock_file
+        mock_open.return_value = mock_file
+
+        cpu = sm.get_cpu_usage()
+        self.assertIn("percent", cpu)
+        self.assertIn("cores", cpu)
+        self.assertIn("load_str", cpu)
+
 
 # ===========================================================================
 # 11. MariaDB Manager
