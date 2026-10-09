@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=10">
+    <link rel="stylesheet" href="style.css?v=18">
 </head>
 <body>
 
@@ -74,57 +74,69 @@
                         <p>v<span id="version">...</span></p>
                     </div>
                 </div>
+                <button class="sidebar-toggle-btn" id="sidebar-toggle-btn" onclick="toggleSidebar()" title="Toggle Sidebar" aria-label="Toggle navigation sidebar" aria-expanded="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                </button>
             </div>
+            <button type="button" class="sidebar-search" id="sidebar-search" title="Jump to… (Ctrl K)" aria-label="Open command palette">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <span class="sidebar-search-label">Jump to…</span>
+                <kbd>Ctrl K</kbd>
+            </button>
             <nav class="nav-menu">
                 <div class="nav-section">
                     <div class="nav-section-title">Overview</div>
-                    <button class="nav-item active" data-page="dashboard" onclick="switchPage('dashboard')">
+                    <button class="nav-item active" data-page="dashboard" data-title="Dashboard" onclick="switchPage('dashboard')">
                         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"/></svg>
-                        Dashboard
+                        <span class="nav-label">Dashboard</span>
                     </button>
                 </div>
                 <div class="nav-section">
                     <div class="nav-section-title">Sites</div>
-                    <button class="nav-item" data-page="makesite" onclick="switchPage('makesite')">
+                    <button class="nav-item" data-page="makesite" data-title="Make Site" onclick="switchPage('makesite')">
                         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/></svg>
-                        Make Site
+                        <span class="nav-label">Make Site</span>
                     </button>
-                    <button class="nav-item" data-page="managesites" onclick="switchPage('managesites')">
+                    <button class="nav-item" data-page="managesites" data-title="Manage Sites" onclick="switchPage('managesites')">
                         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4z"/></svg>
-                        Manage Sites
+                        <span class="nav-label">Manage Sites</span>
                     </button>
-                    <button class="nav-item" data-page="dns" onclick="switchPage('dns')">
+                    <button class="nav-item" data-page="dns" data-title="DNS Zones" onclick="switchPage('dns')">
                         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM4.332 8.027a6.012 6.012 0 011.912-2.706C6.512 5.73 6.974 6 7.5 6A1.5 1.5 0 019 7.5V8a2 2 0 004 0 2 2 0 011.523-1.943A5.977 5.977 0 0116 10c0 .34-.028.675-.083 1H15a2 2 0 00-2 2v2.197A5.973 5.973 0 0110 16v-2a2 2 0 00-2-2 2 2 0 01-2-2 2 2 0 00-1.668-1.973z" clip-rule="evenodd"/></svg>
-                        DNS Zones
+                        <span class="nav-label">DNS Zones</span>
                     </button>
                 </div>
                 <div class="nav-section">
                     <div class="nav-section-title">Database</div>
-                    <button class="nav-item" data-page="mariadb" onclick="switchPage('mariadb')">
+                    <button class="nav-item" data-page="mariadb" data-title="MariaDB" onclick="switchPage('mariadb')">
                         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M3 12v3c0 1.657 3.134 3 7 3s7-1.343 7-3v-3c0 1.657-3.134 3-7 3s-7-1.343-7-3z"/><path d="M3 7v3c0 1.657 3.134 3 7 3s7-1.343 7-3V7c0 1.657-3.134 3-7 3S3 8.657 3 7z"/><path d="M17 5c0 1.657-3.134 3-7 3S3 6.657 3 5s3.134-3 7-3 7 1.343 7 3z"/></svg>
-                        MariaDB
+                        <span class="nav-label">MariaDB</span>
                     </button>
                 </div>
                 <div class="nav-section">
                     <div class="nav-section-title">System</div>
-                    <button class="nav-item" data-page="services" onclick="switchPage('services')">
+                    <button class="nav-item" data-page="services" data-title="Install Services" onclick="switchPage('services')">
                         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
-                        Install Services
+                        <span class="nav-label">Install Services</span>
                     </button>
-                    <button class="nav-item" data-page="server" onclick="switchPage('server')">
+                    <button class="nav-item" data-page="server" data-title="Server" onclick="switchPage('server')">
                         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm14 1a1 1 0 11-2 0 1 1 0 012 0zM2 13a2 2 0 012-2h12a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2v-2zm14 1a1 1 0 11-2 0 1 1 0 012 0z" clip-rule="evenodd"/></svg>
-                        Server
+                        <span class="nav-label">Server</span>
                     </button>
-                    <button class="nav-item" data-page="network" onclick="switchPage('network')">
+                    <button class="nav-item" data-page="network" data-title="Network" onclick="switchPage('network')">
                         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M17.778 8.222c-4.296-4.296-11.26-4.296-15.556 0A1 1 0 01.808 6.808c5.076-5.077 13.308-5.077 18.384 0a1 1 0 01-1.414 1.414zM14.95 11.05a7 7 0 00-9.9 0 1 1 0 01-1.414-1.414 9 9 0 0112.728 0 1 1 0 01-1.414 1.414zM12.12 13.88a3 3 0 00-4.242 0 1 1 0 01-1.415-1.415 5 5 0 017.072 0 1 1 0 01-1.415 1.415zM9 16a1 1 0 112 0 1 1 0 01-2 0z" clip-rule="evenodd"/></svg>
-                        Network
+                        <span class="nav-label">Network</span>
+                    </button>
+                    <button class="nav-item" data-page="docker" data-title="Docker" onclick="switchPage('docker')">
+                        <svg class="nav-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M22.61,12.75l-1.39-1.93a1,1,0,0,0-.81-.41H17.26a1,1,0,0,0-.79.38l-1.12,1.48H4a2,2,0,0,0-2,2v.22a2,2,0,0,0,2,2h.16a2.89,2.89,0,0,0,5.68,0h4.32a2.89,2.89,0,0,0,5.68,0H21a1,1,0,0,0,1-1v-2.5A1,1,0,0,0,22.61,12.75ZM7,16.5a1,1,0,1,1,1-1A1,1,0,0,1,7,16.5Zm10,0a1,1,0,1,1,1-1A1,1,0,0,1,17,16.5Zm3.08-1.5h-1a2.88,2.88,0,0,0-2.08-1.16v-.21h.77l1.1-1.45h2.15l1,.29ZM10,8H8a1,1,0,0,0-1,1v1.5a1,1,0,0,0,1,1h2a1,1,0,0,0,1-1V9A1,1,0,0,0,10,8Zm0,2H8.5V9.5H10ZM13.5,8h-2a1,1,0,0,0-1,1v1.5a1,1,0,0,0,1,1h2a1,1,0,0,0,1-1V9A1,1,0,0,0,13.5,8Zm0,2H12V9.5h1.5ZM13.5,4h-2a1,1,0,0,0-1,1V6.5a1,1,0,0,0,1,1h2a1,1,0,0,0,1-1V5A1,1,0,0,0,13.5,4Zm0,2H12V5.5h1.5Z"/></svg>
+                        <span class="nav-label">Docker</span>
                     </button>
                 </div>
                 <div class="nav-section">
                     <div class="nav-section-title">Support</div>
-                    <button class="nav-item" data-page="help" onclick="switchPage('help')">
+                    <button class="nav-item" data-page="help" data-title="Help" onclick="switchPage('help')">
                         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
-                        Help
+                        <span class="nav-label">Help</span>
                     </button>
                 </div>
             </nav>
@@ -139,41 +151,119 @@
         <!-- Main Content -->
         <main class="main-content">
 
-            <!-- ── Persistent Top Bar ── -->
-            <div class="top-bar" id="top-bar">
-                <div class="top-bar-services">
-                    <span class="top-bar-svc" id="tb-apache2"><span class="svc-pip"></span>Apache2</span>
-                    <span class="top-bar-svc" id="tb-nginx"><span class="svc-pip"></span>Nginx</span>
-                    <span class="top-bar-svc" id="tb-bind9"><span class="svc-pip"></span>BIND9</span>
-                    <span class="top-bar-svc" id="tb-mariadb"><span class="svc-pip"></span>MariaDB</span>
-                    <span class="top-bar-svc" id="tb-postfix"><span class="svc-pip"></span>Postfix</span>
-                    <span class="top-bar-svc" id="tb-ufw"><span class="svc-pip"></span>UFW</span>
+
+            <!-- ── Persistent Waybar Top Bar ── -->
+            <div class="top-bar waybar" id="top-bar">
+                <div class="waybar-left">
+                    <!-- Collapsed sidebar expand button -->
+                    <button class="top-bar-sidebar-btn hidden" id="top-bar-expand-btn" onclick="toggleSidebar()" title="Expand sidebar" aria-label="Expand sidebar">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                    </button>
+                    <!-- Breadcrumb: the "active window" module -->
+                    <div class="breadcrumb" id="breadcrumb" aria-label="Breadcrumb">
+                        <svg class="breadcrumb-home" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+                        <svg class="breadcrumb-sep" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                        <div id="breadcrumb-trail"><span class="breadcrumb-item">Dashboard</span></div>
+                    </div>
                 </div>
-                <div class="top-bar-actions">
-                    <button class="top-bar-btn accent" id="tb-reload-btn" onclick="topBarReloadAll()">
-                        <svg width="11" height="11" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
-                        Reload All
+                <div class="top-bar-services waybar-center">
+                    <span class="top-bar-svc" id="tb-apache2"><span class="svc-pip"></span><span class="svc-txt">apache2</span></span>
+                    <span class="top-bar-svc" id="tb-nginx"><span class="svc-pip"></span><span class="svc-txt">nginx</span></span>
+                    <span class="top-bar-svc" id="tb-bind9"><span class="svc-pip"></span><span class="svc-txt">bind9</span></span>
+                    <span class="top-bar-svc" id="tb-mariadb"><span class="svc-pip"></span><span class="svc-txt">mariadb</span></span>
+                    <span class="top-bar-svc" id="tb-postfix"><span class="svc-pip"></span><span class="svc-txt">postfix</span></span>
+                    <span class="top-bar-svc" id="tb-ufw"><span class="svc-pip"></span><span class="svc-txt">ufw</span></span>
+                </div>
+                <div class="top-bar-actions waybar-right">
+                    <!-- Clock module -->
+                    <div class="waybar-clock" id="waybar-clock" aria-label="Local time"><span class="clock-date"></span><span class="clock-time"></span></div>
+                    <div class="top-bar-divider waybar-clock-div"></div>
+
+                    <!-- Goldfish Mode Toggle -->
+                    <button class="top-bar-btn" id="goldfish-btn" onclick="toggleGoldfishMode()" title="Goldfish Mode — simplify all forms">
+                        <span class="goldfish-icon" aria-hidden="true">🐟</span>
+                        <span class="goldfish-label">Simple</span>
                     </button>
                     <div class="top-bar-divider"></div>
-                    <button class="top-bar-btn" onclick="openKbdOverlay()" title="Keyboard shortcuts">
-                        <svg width="11" height="11" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h6a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd"/></svg>
-                        <span style="opacity:.5">?</span>
+                    <button class="top-bar-btn accent" id="tb-reload-btn" onclick="topBarReloadAll()" title="Reload all services [r]">
+                        <svg width="11" height="11" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
+                        <span>Reload</span>
+                        <kbd class="waybar-kbd">r</kbd>
                     </button>
                 </div>
+            </div>
+
+            <!-- ── Offline Banner ── -->
+            <div id="offline-banner" class="offline-banner hidden" role="alert">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.6 10.6a9 9 0 0 1 2.8-1.5M16.9 10.9a9 9 0 0 1 2.3 2.5M1.4 1.4l21.2 21.2M8.5 13.5a5 5 0 0 1 7 0M12 18.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"></path></svg>
+                <span class="offline-banner-text">Disconnected from server. Features are currently unavailable.</span>
+                <button type="button" class="offline-retry" id="offline-retry">
+                    <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
+                    <span>Retry</span>
+                </button>
             </div>
 
             <!-- Reload All mini-terminal (hidden by default, expands on use) -->
             <div id="reload-term" class="terminal" style="margin-bottom:16px;margin-top:-12px"></div>
 
             <section id="page-dashboard" class="page-section active">
-                <div class="page-header">
-                    <h2>System Status</h2>
-                    <p>Overview of core services on <span id="os-val">Debian GNU/Linux</span>.</p>
+                <div class="page-header dashboard-header">
+                    <div class="page-header-text">
+                        <h2>System Status</h2>
+                        <p>Overview of core services on <span id="os-val">Debian GNU/Linux</span>.</p>
+                    </div>
+                    <!-- Server Resources Usage Viewer (Pills) -->
+                    <div class="server-resources-bar" id="server-resources-bar" role="region" aria-label="Server Resources">
+                        <!-- RAM Usage -->
+                        <div class="res-pill" id="pill-ram" title="RAM Usage">
+                            <span class="res-pill-icon" aria-hidden="true">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+                            </span>
+                            <span class="res-pill-label">RAM</span>
+                            <span class="res-pill-val" id="pill-ram-val">—</span>
+                            <span class="res-pip" id="pill-ram-pip"></span>
+                        </div>
+
+                        <!-- CPU Usage -->
+                        <div class="res-pill" id="pill-cpu" title="CPU Usage">
+                            <span class="res-pill-icon" aria-hidden="true">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
+                            </span>
+                            <span class="res-pill-label">CPU</span>
+                            <span class="res-pill-val" id="pill-cpu-val">—</span>
+                            <span class="res-pip" id="pill-cpu-pip"></span>
+                        </div>
+
+                        <!-- CPU Temperature -->
+                        <div class="res-pill" id="pill-temp" title="CPU Temperature">
+                            <span class="res-pill-icon" aria-hidden="true">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"></path></svg>
+                            </span>
+                            <span class="res-pill-label">TEMP</span>
+                            <span class="res-pill-val" id="pill-temp-val">—</span>
+                            <span class="res-pip" id="pill-temp-pip"></span>
+                        </div>
+
+                        <!-- Uptime -->
+                        <div class="res-pill" id="pill-uptime" title="System Uptime">
+                            <span class="res-pill-icon" aria-hidden="true">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                            </span>
+                            <span class="res-pill-label">UPTIME</span>
+                            <span class="res-pill-val" id="pill-uptime-val">—</span>
+                            <span class="res-pip is-normal" id="pill-uptime-pip"></span>
+                        </div>
+                    </div>
                 </div>
                 
+                <div class="fx-section-head">
+                    <h3>Services</h3>
+                    <span class="fx-rule"></span>
+                    <span class="fx-updated" id="fx-updated"><i class="fx-beat"></i><span>waiting for data…</span></span>
+                </div>
                 <div class="status-grid">
                     <!-- Apache2 -->
-                    <div class="status-box">
+                    <div class="status-box status-box-clickable" onclick="switchPage('server')" title="Go to Server Management">
                         <div class="status-box-header">
                             <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg></div>
                             <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
@@ -182,7 +272,7 @@
                             <span class="status-label">Apache2</span>
                             <span id="apache2-val" class="badge badge-lg">Loading...</span>
                         </div>
-                        <div class="status-box-actions">
+                        <div class="status-box-actions" onclick="event.stopPropagation()">
                             <button class="btn-sm" onclick="quickServiceAction('apache2', 'start')">Start</button>
                             <button class="btn-sm" onclick="quickServiceAction('apache2', 'stop')">Stop</button>
                             <button class="btn-sm" onclick="quickServiceAction('apache2', 'restart')">Restart</button>
@@ -190,7 +280,7 @@
                     </div>
                     
                     <!-- Nginx -->
-                    <div class="status-box">
+                    <div class="status-box status-box-clickable" onclick="switchPage('server')" title="Go to Server Management">
                         <div class="status-box-header">
                             <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg></div>
                             <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
@@ -199,7 +289,7 @@
                             <span class="status-label">Nginx</span>
                             <span id="nginx-val" class="badge badge-lg">Loading...</span>
                         </div>
-                        <div class="status-box-actions">
+                        <div class="status-box-actions" onclick="event.stopPropagation()">
                             <button class="btn-sm" onclick="quickServiceAction('nginx', 'start')">Start</button>
                             <button class="btn-sm" onclick="quickServiceAction('nginx', 'stop')">Stop</button>
                             <button class="btn-sm" onclick="quickServiceAction('nginx', 'restart')">Restart</button>
@@ -207,7 +297,7 @@
                     </div>
                     
                     <!-- BIND9 -->
-                    <div class="status-box">
+                    <div class="status-box status-box-clickable" onclick="switchPage('dns')" title="Go to DNS Management">
                         <div class="status-box-header">
                             <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg></div>
                             <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
@@ -216,7 +306,7 @@
                             <span class="status-label">BIND9 DNS</span>
                             <span id="bind9-val" class="badge badge-lg">Loading...</span>
                         </div>
-                        <div class="status-box-actions">
+                        <div class="status-box-actions" onclick="event.stopPropagation()">
                             <button class="btn-sm" onclick="quickServiceAction('bind9', 'start')">Start</button>
                             <button class="btn-sm" onclick="quickServiceAction('bind9', 'stop')">Stop</button>
                             <button class="btn-sm" onclick="quickServiceAction('bind9', 'restart')">Restart</button>
@@ -224,7 +314,7 @@
                     </div>
                     
                     <!-- MariaDB -->
-                    <div class="status-box">
+                    <div class="status-box status-box-clickable" onclick="switchPage('mariadb')" title="Go to MariaDB Management">
                         <div class="status-box-header">
                             <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg></div>
                             <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
@@ -233,7 +323,7 @@
                             <span class="status-label">MariaDB</span>
                             <span id="mariadb-val" class="badge badge-lg">Loading...</span>
                         </div>
-                        <div class="status-box-actions">
+                        <div class="status-box-actions" onclick="event.stopPropagation()">
                             <button class="btn-sm" onclick="quickServiceAction('mariadb', 'start')">Start</button>
                             <button class="btn-sm" onclick="quickServiceAction('mariadb', 'stop')">Stop</button>
                             <button class="btn-sm" onclick="quickServiceAction('mariadb', 'restart')">Restart</button>
@@ -241,7 +331,7 @@
                     </div>
                     
                     <!-- Postfix -->
-                    <div class="status-box">
+                    <div class="status-box status-box-clickable" onclick="switchPage('services')" title="Go to Services Management">
                         <div class="status-box-header">
                             <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg></div>
                             <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
@@ -250,7 +340,7 @@
                             <span class="status-label">Postfix (Mail)</span>
                             <span id="postfix-val" class="badge badge-lg">Loading...</span>
                         </div>
-                        <div class="status-box-actions">
+                        <div class="status-box-actions" onclick="event.stopPropagation()">
                             <button class="btn-sm" onclick="quickServiceAction('postfix', 'start')">Start</button>
                             <button class="btn-sm" onclick="quickServiceAction('postfix', 'stop')">Stop</button>
                             <button class="btn-sm" onclick="quickServiceAction('postfix', 'restart')">Restart</button>
@@ -267,7 +357,7 @@
                             <span class="status-label">Dovecot (Mail)</span>
                             <span id="dovecot-val" class="badge badge-lg">Loading...</span>
                         </div>
-                        <div class="status-box-actions">
+                        <div class="status-box-actions" onclick="event.stopPropagation()">
                             <button class="btn-sm" onclick="quickServiceAction('dovecot', 'start')">Start</button>
                             <button class="btn-sm" onclick="quickServiceAction('dovecot', 'stop')">Stop</button>
                             <button class="btn-sm" onclick="quickServiceAction('dovecot', 'restart')">Restart</button>
@@ -275,7 +365,7 @@
                     </div>
                     
                     <!-- UFW -->
-                    <div class="status-box">
+                    <div class="status-box status-box-clickable" onclick="switchPage('network')" title="Go to Network Management">
                         <div class="status-box-header">
                             <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></div>
                             <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
@@ -284,10 +374,61 @@
                             <span class="status-label">UFW Firewall</span>
                             <span id="ufw-val" class="badge badge-lg">Loading...</span>
                         </div>
-                        <div class="status-box-actions" style="grid-template-columns: 1fr;">
-                            <button class="btn-sm" onclick="quickServiceAction('ufw', 'restart')" style="grid-column: 1 / -1;">Reload Rules</button>
+                        <div class="status-box-actions" onclick="event.stopPropagation()">
+                            <button class="btn-sm" onclick="quickServiceAction('ufw', 'enable')">Enable</button>
+                            <button class="btn-sm" onclick="quickServiceAction('ufw', 'disable')">Disable</button>
+                            <button class="btn-sm" onclick="quickServiceAction('ufw', 'reload')">Reload</button>
                         </div>
                     </div>
+                </div>
+
+                <div class="fx-section-head fx-section-head--system">
+                    <h3>System</h3>
+                    <span class="fx-rule"></span>
+                    <span class="fx-updated fx-updated--hint">last 6 min</span>
+                </div>
+                <div class="fx-metrics" id="fx-metrics">
+                    <article class="fx-metric" id="fx-m-cpu">
+                        <header class="fx-metric-head">
+                            <span class="fx-metric-ico" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="16" height="16"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg></span>
+                            <span class="fx-metric-name">CPU</span>
+                            <span class="metric-state-pill" id="metric-cpu-state">—</span>
+                        </header>
+                        <div class="fx-metric-main"><b id="metric-cpu-val">—</b><span class="fx-unit">%</span></div>
+                        <div class="fx-meter"><i id="metric-cpu-bar"></i></div>
+                        <svg class="fx-spark" data-spark="cpu" viewBox="0 0 120 40" preserveAspectRatio="none" aria-hidden="true"></svg>
+                        <footer class="fx-metric-foot"><span id="metric-cpu-cores">—</span><span id="metric-cpu-load">—</span></footer>
+                    </article>
+                    <article class="fx-metric" id="fx-m-ram">
+                        <header class="fx-metric-head">
+                            <span class="fx-metric-ico" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="16" height="16" rx="2" ry="2"></rect><rect x="2" y="14" width="16" height="16" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg></span>
+                            <span class="fx-metric-name">Memory</span>
+                            <span class="metric-state-pill" id="metric-ram-state">—</span>
+                        </header>
+                        <div class="fx-metric-main"><b id="metric-ram-val">—</b><span class="fx-unit">%</span></div>
+                        <div class="fx-meter"><i id="metric-ram-bar"></i></div>
+                        <svg class="fx-spark" data-spark="ram" viewBox="0 0 120 40" preserveAspectRatio="none" aria-hidden="true"></svg>
+                        <footer class="fx-metric-foot"><span id="metric-ram-extra">—</span></footer>
+                    </article>
+                    <article class="fx-metric" id="fx-m-temp">
+                        <header class="fx-metric-head">
+                            <span class="fx-metric-ico" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"></path></svg></span>
+                            <span class="fx-metric-name">Temperature</span>
+                            <span class="metric-state-pill" id="fx-temp-state">—</span>
+                        </header>
+                        <div class="fx-metric-main"><b id="fx-temp-val">—</b><span class="fx-unit" id="fx-temp-unit">°C</span></div>
+                        <div class="fx-meter"><i id="fx-temp-bar"></i></div>
+                        <footer class="fx-metric-foot"><span id="fx-temp-note">Waiting for sensor…</span></footer>
+                    </article>
+                    <article class="fx-metric" id="fx-m-uptime">
+                        <header class="fx-metric-head">
+                            <span class="fx-metric-ico" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg></span>
+                            <span class="fx-metric-name">Uptime</span>
+
+                        </header>
+                        <div class="fx-metric-main fx-metric-main--text"><b id="metric-uptime-val">—</b></div>
+                        <footer class="fx-metric-foot fx-metric-foot--stack"><span id="metric-uptime-boot">—</span><span id="metric-uptime-extra"></span></footer>
+                    </article>
                 </div>
             </section>
 
@@ -302,11 +443,18 @@
                     <div class="card-split">
                     <div class="card-split-form">
                     <div class="content-tabs">
-                        <button class="content-tab-btn active" data-tab="lamp" onclick="switchTab('makesite', 'lamp')">LAMP</button>
-                        <button class="content-tab-btn" data-tab="lemp" onclick="switchTab('makesite', 'lemp')">LEMP</button>
+                        <button class="content-tab-btn active" data-tab="lamp" onclick="switchTab('makesite', 'lamp')">Apache + PHP + DB</button>
+                        <button class="content-tab-btn" data-tab="lemp" onclick="switchTab('makesite', 'lemp')">Nginx + PHP + DB</button>
                         <button class="content-tab-btn" data-tab="wordpress" onclick="switchTab('makesite', 'wordpress')">WordPress</button>
-                        <button class="content-tab-btn" data-tab="static" onclick="switchTab('makesite', 'static')">Full Site</button>
+                        <button class="content-tab-btn" data-tab="static" onclick="switchTab('makesite', 'static')">HTML / Static</button>
                         <button class="content-tab-btn" data-tab="proxy" onclick="switchTab('makesite', 'proxy')">Reverse Proxy</button>
+                    </div>
+                    <div class="tab-desc-group">
+                        <p class="tab-desc active" data-tab="lamp">Creates an Apache virtual host with PHP support and a MariaDB database.</p>
+                        <p class="tab-desc" data-tab="lemp">Creates an Nginx server block with PHP-FPM and a MariaDB database.</p>
+                        <p class="tab-desc" data-tab="wordpress">Full WordPress installation with your choice of Apache or Nginx.</p>
+                        <p class="tab-desc" data-tab="static">Serves static HTML/CSS/JS files — no database, no PHP.</p>
+                        <p class="tab-desc" data-tab="proxy">Routes a domain to a backend application running on another port.</p>
                     </div>
 
                     <!-- LAMP -->
@@ -316,69 +464,85 @@
                                 <label>Domain Name</label>
                                 <input type="text" class="form-control" name="domain" required>
                             </div>
-                            <div class="form-group" id="lamp-ip">
-                                <label>Server IP
-                                    <span class="label-badge label-badge-auto">auto-dns</span>
-                                    <span class="label-hint">— leave blank to use current server IP</span>
-                                </label>
-                                <input type="text" class="form-control" name="ip" placeholder="e.g. 192.168.1.10">
-                            </div>
-                            <div class="form-group">
-                                <label>Database Name <span class="label-hint">— optional, defaults to domain prefix</span></label>
-                                <input type="text" class="form-control" name="db_name" placeholder="e.g. mysite_db">
-                            </div>
-                            <div class="form-group">
-                                <label>Database User <span class="label-hint">— optional, defaults to domain prefix + _user</span></label>
-                                <input type="text" class="form-control" name="db_user" placeholder="e.g. mysite_user">
-                            </div>
                             <div class="form-group">
                                 <label>Database Password</label>
                                 <input type="password" class="form-control" name="db_pass" required>
                             </div>
-                            <div class="form-group">
-                                <label>SSL Options</label>
-                                <select class="form-control" name="ssl" onchange="document.getElementById('lamp-le-email').classList.toggle('hidden', this.value !== '4')" required>
-                                    <option value="1">HTTP Only</option>
-                                    <option value="2">HTTPS (Self-Signed)</option>
-                                    <option value="4">HTTPS (Let's Encrypt Automated)</option>
-                                </select>
-                            </div>
-                            <div class="form-group hidden" id="lamp-le-email">
-                                <label>Let's Encrypt Admin Email</label>
-                                <input type="email" class="form-control" name="le_email" placeholder="admin@example.com">
-                            </div>
-                            <div class="form-group">
-                                <label>Document Root <span class="label-hint">— optional, defaults to /var/www/domain</span></label>
-                                <input type="text" class="form-control" name="docroot" placeholder="e.g. /var/www/mysite">
-                            </div>
 
-                            <div class="form-section">Advanced</div>
-
-                            <div class="form-group">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" name="use_site_files" onchange="document.getElementById('lamp-sitepath').classList.toggle('hidden', !this.checked)"> Use existing site files
-                                </label>
-                            </div>
-                            <div class="form-group hidden" id="lamp-sitepath">
-                                <label>Path to existing site files <span class="label-hint">— server-side path</span></label>
-                                <div class="drop-zone" id="lamp-dropzone">
-                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:8px;opacity:0.7;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg><br>
-                                    Drag and drop your site's .zip file here<br>
-                                    <span style="font-size:0.75rem;opacity:0.6;">(or enter the server-side path below)</span>
+                            <details class="form-details">
+                                <summary>Database Settings</summary>
+                                <div class="form-details-body">
+                                    <div class="form-group">
+                                        <label>Database Name <span class="label-hint">— optional, defaults to domain prefix</span></label>
+                                        <input type="text" class="form-control" name="db_name" placeholder="e.g. mysite_db">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Database User <span class="label-hint">— optional, defaults to domain prefix + _user</span></label>
+                                        <input type="text" class="form-control" name="db_user" placeholder="e.g. mysite_user">
+                                    </div>
                                 </div>
-                                <input type="text" class="form-control" name="site_files_path" id="lamp-sitepath-input" placeholder="e.g. /home/user/mysite">
-                            </div>
-                            <div class="form-group">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" name="import_sql" onchange="document.getElementById('lamp-sqlpath').classList.toggle('hidden', !this.checked)"> Import existing SQL database dump
-                                </label>
-                            </div>
-                            <div class="form-group hidden" id="lamp-sqlpath">
-                                <label>SQL file path <span class="label-hint">— full path or filename inside docroot</span></label>
-                                <input type="text" class="form-control" name="sql_path" placeholder="e.g. /home/user/backup.sql">
-                            </div>
+                            </details>
+
+                            <details class="form-details">
+                                <summary>SSL &amp; Server</summary>
+                                <div class="form-details-body">
+                                    <div class="form-group" id="lamp-ip">
+                                        <label>Server IP
+                                            <span class="label-badge label-badge-auto">auto-dns</span>
+                                            <span class="label-hint">— leave blank to use current server IP</span>
+                                        </label>
+                                        <input type="text" class="form-control" name="ip" placeholder="e.g. 192.168.1.10">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>SSL Options</label>
+                                        <select class="form-control" name="ssl" onchange="document.getElementById('lamp-le-email').classList.toggle('hidden', this.value !== '4')" required>
+                                            <option value="1">HTTP Only</option>
+                                            <option value="2">HTTPS (Self-Signed)</option>
+                                            <option value="4">HTTPS (Let's Encrypt Automated)</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group hidden" id="lamp-le-email">
+                                        <label>Let's Encrypt Admin Email</label>
+                                        <input type="email" class="form-control" name="le_email" placeholder="admin@example.com">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Document Root <span class="label-hint">— optional, defaults to /var/www/domain</span></label>
+                                        <input type="text" class="form-control" name="docroot" placeholder="e.g. /var/www/mysite">
+                                    </div>
+                                </div>
+                            </details>
+
+                            <details class="form-details">
+                                <summary>Advanced</summary>
+                                <div class="form-details-body">
+                                    <div class="form-group">
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" name="use_site_files" onchange="document.getElementById('lamp-sitepath').classList.toggle('hidden', !this.checked)"> Use existing site files
+                                        </label>
+                                    </div>
+                                    <div class="form-group hidden" id="lamp-sitepath">
+                                        <label>Path to existing site files <span class="label-hint">— server-side path</span></label>
+                                        <div class="drop-zone" id="lamp-dropzone">
+                                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:8px;opacity:0.7;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg><br>
+                                            Drag and drop your site's .zip file here<br>
+                                            <span style="font-size:0.75rem;opacity:0.6;">(or enter the server-side path below)</span>
+                                        </div>
+                                        <input type="text" class="form-control" name="site_files_path" id="lamp-sitepath-input" placeholder="e.g. /home/user/mysite">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" name="import_sql" onchange="document.getElementById('lamp-sqlpath').classList.toggle('hidden', !this.checked)"> Import existing SQL database dump
+                                        </label>
+                                    </div>
+                                    <div class="form-group hidden" id="lamp-sqlpath">
+                                        <label>SQL file path <span class="label-hint">— full path or filename inside docroot</span></label>
+                                        <input type="text" class="form-control" name="sql_path" placeholder="e.g. /home/user/backup.sql">
+                                    </div>
+                                </div>
+                            </details>
+
                             <div class="btn-row">
-                                <button type="submit" class="btn btn-primary">Create LAMP Site</button>
+                                <button type="submit" class="btn btn-primary">Create Site</button>
                             </div>
                         </form>
                     </div>
@@ -390,69 +554,85 @@
                                 <label>Domain Name</label>
                                 <input type="text" class="form-control" name="domain" required>
                             </div>
-                            <div class="form-group" id="lemp-ip">
-                                <label>Server IP
-                                    <span class="label-badge label-badge-auto">auto-dns</span>
-                                    <span class="label-hint">— leave blank to use current server IP</span>
-                                </label>
-                                <input type="text" class="form-control" name="ip" placeholder="e.g. 192.168.1.10">
-                            </div>
-                            <div class="form-group">
-                                <label>Database Name <span class="label-hint">— optional, defaults to domain prefix</span></label>
-                                <input type="text" class="form-control" name="db_name" placeholder="e.g. mysite_db">
-                            </div>
-                            <div class="form-group">
-                                <label>Database User <span class="label-hint">— optional, defaults to domain prefix + _user</span></label>
-                                <input type="text" class="form-control" name="db_user" placeholder="e.g. mysite_user">
-                            </div>
                             <div class="form-group">
                                 <label>Database Password</label>
                                 <input type="password" class="form-control" name="db_pass" required>
                             </div>
-                            <div class="form-group">
-                                <label>SSL Options</label>
-                                <select class="form-control" name="ssl" onchange="document.getElementById('lemp-le-email').classList.toggle('hidden', this.value !== '4')" required>
-                                    <option value="1">HTTP Only</option>
-                                    <option value="2">HTTPS (Self-Signed)</option>
-                                    <option value="4">HTTPS (Let's Encrypt Automated)</option>
-                                </select>
-                            </div>
-                            <div class="form-group hidden" id="lemp-le-email">
-                                <label>Let's Encrypt Admin Email</label>
-                                <input type="email" class="form-control" name="le_email" placeholder="admin@example.com">
-                            </div>
-                            <div class="form-group">
-                                <label>Document Root <span class="label-hint">— optional, defaults to /var/www/domain</span></label>
-                                <input type="text" class="form-control" name="docroot" placeholder="e.g. /var/www/mysite">
-                            </div>
 
-                            <div class="form-section">Advanced</div>
-
-                            <div class="form-group">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" name="use_site_files" onchange="document.getElementById('lemp-sitepath').classList.toggle('hidden', !this.checked)"> Use existing site files
-                                </label>
-                            </div>
-                            <div class="form-group hidden" id="lemp-sitepath">
-                                <label>Path to existing site files <span class="label-hint">— server-side path</span></label>
-                                <div class="drop-zone" id="lemp-dropzone">
-                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:8px;opacity:0.7;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg><br>
-                                    Drag and drop your site's .zip file here<br>
-                                    <span style="font-size:0.75rem;opacity:0.6;">(or enter the server-side path below)</span>
+                            <details class="form-details">
+                                <summary>Database Settings</summary>
+                                <div class="form-details-body">
+                                    <div class="form-group">
+                                        <label>Database Name <span class="label-hint">— optional, defaults to domain prefix</span></label>
+                                        <input type="text" class="form-control" name="db_name" placeholder="e.g. mysite_db">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Database User <span class="label-hint">— optional, defaults to domain prefix + _user</span></label>
+                                        <input type="text" class="form-control" name="db_user" placeholder="e.g. mysite_user">
+                                    </div>
                                 </div>
-                                <input type="text" class="form-control" name="site_files_path" id="lemp-sitepath-input" placeholder="e.g. /home/user/mysite">
-                            </div>
-                            <div class="form-group">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" name="import_sql" onchange="document.getElementById('lemp-sqlpath').classList.toggle('hidden', !this.checked)"> Import existing SQL database dump
-                                </label>
-                            </div>
-                            <div class="form-group hidden" id="lemp-sqlpath">
-                                <label>SQL file path <span class="label-hint">— full path or filename inside docroot</span></label>
-                                <input type="text" class="form-control" name="sql_path" placeholder="e.g. /home/user/backup.sql">
-                            </div>
+                            </details>
+
+                            <details class="form-details">
+                                <summary>SSL &amp; Server</summary>
+                                <div class="form-details-body">
+                                    <div class="form-group" id="lemp-ip">
+                                        <label>Server IP
+                                            <span class="label-badge label-badge-auto">auto-dns</span>
+                                            <span class="label-hint">— leave blank to use current server IP</span>
+                                        </label>
+                                        <input type="text" class="form-control" name="ip" placeholder="e.g. 192.168.1.10">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>SSL Options</label>
+                                        <select class="form-control" name="ssl" onchange="document.getElementById('lemp-le-email').classList.toggle('hidden', this.value !== '4')" required>
+                                            <option value="1">HTTP Only</option>
+                                            <option value="2">HTTPS (Self-Signed)</option>
+                                            <option value="4">HTTPS (Let's Encrypt Automated)</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group hidden" id="lemp-le-email">
+                                        <label>Let's Encrypt Admin Email</label>
+                                        <input type="email" class="form-control" name="le_email" placeholder="admin@example.com">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Document Root <span class="label-hint">— optional, defaults to /var/www/domain</span></label>
+                                        <input type="text" class="form-control" name="docroot" placeholder="e.g. /var/www/mysite">
+                                    </div>
+                                </div>
+                            </details>
+
+                            <details class="form-details">
+                                <summary>Advanced</summary>
+                                <div class="form-details-body">
+                                    <div class="form-group">
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" name="use_site_files" onchange="document.getElementById('lemp-sitepath').classList.toggle('hidden', !this.checked)"> Use existing site files
+                                        </label>
+                                    </div>
+                                    <div class="form-group hidden" id="lemp-sitepath">
+                                        <label>Path to existing site files <span class="label-hint">— server-side path</span></label>
+                                        <div class="drop-zone" id="lemp-dropzone">
+                                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:8px;opacity:0.7;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg><br>
+                                            Drag and drop your site's .zip file here<br>
+                                            <span style="font-size:0.75rem;opacity:0.6;">(or enter the server-side path below)</span>
+                                        </div>
+                                        <input type="text" class="form-control" name="site_files_path" id="lemp-sitepath-input" placeholder="e.g. /home/user/mysite">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" name="import_sql" onchange="document.getElementById('lemp-sqlpath').classList.toggle('hidden', !this.checked)"> Import existing SQL database dump
+                                        </label>
+                                    </div>
+                                    <div class="form-group hidden" id="lemp-sqlpath">
+                                        <label>SQL file path <span class="label-hint">— full path or filename inside docroot</span></label>
+                                        <input type="text" class="form-control" name="sql_path" placeholder="e.g. /home/user/backup.sql">
+                                    </div>
+                                </div>
+                            </details>
+
                             <div class="btn-row">
-                                <button type="submit" class="btn btn-primary">Create LEMP Site</button>
+                                <button type="submit" class="btn btn-primary">Create Site</button>
                             </div>
                         </form>
                     </div>
@@ -582,7 +762,17 @@
 
                     </div><!-- /card-split-form -->
                     <div class="card-split-terminal">
-                        <div class="terminal-label">output</div>
+                        <div class="terminal-header">
+                            <div class="terminal-label">output</div>
+                            <div class="term-toolbar">
+                                <button class="btn-sm term-toolbar-copy" data-term="makesite-term" title="Copy output">
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> Copy
+                                </button>
+                                <button class="btn-sm term-toolbar-clear" data-term="makesite-term" title="Clear output">
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg> Clear
+                                </button>
+                            </div>
+                        </div>
                         <div id="makesite-term" class="terminal visible"></div>
                     </div><!-- /card-split-terminal -->
                     </div><!-- /card-split -->
@@ -750,7 +940,17 @@
 
                     </div><!-- /card-split-form -->
                     <div class="card-split-terminal">
-                        <div class="terminal-label">output</div>
+                        <div class="terminal-header">
+                            <div class="terminal-label">output</div>
+                            <div class="term-toolbar">
+                                <button class="btn-sm term-toolbar-copy" data-term="mariadb-term" title="Copy output">
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> Copy
+                                </button>
+                                <button class="btn-sm term-toolbar-clear" data-term="mariadb-term" title="Clear output">
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg> Clear
+                                </button>
+                            </div>
+                        </div>
                         <div id="mariadb-term" class="terminal visible"></div>
                     </div><!-- /card-split-terminal -->
                     </div><!-- /card-split -->
@@ -784,29 +984,43 @@
                                 <button type="submit" class="btn btn-primary">Install Mail Server</button>
                                 <button type="button" class="btn btn-danger" onclick="submitCustomAction(this, '/api/uninstall/mail')">Uninstall Mail Server</button>
                             </div>
-
-                            <hr style="border-color: var(--border); margin: 32px 0;">
-                            
-                            <h4>Manage Mail Users</h4>
-                            <div class="sites-table-wrap mb-4">
-                                <table class="sites-table" id="mail-users-table">
-                                    <thead><tr><th>Email Address</th><th>Actions</th></tr></thead>
-                                    <tbody id="mail-users-tbody">
-                                        <tr><td colspan="2" style="text-align:center;padding:16px;color:var(--text-muted)">Load mail users via the sidebar link or API.</td></tr>
-                                    </tbody>
-                                </table>
-                            </div>
-
-                            <div class="form-group mt-4">
-                                <label>New Mail User (e.g. info@example.com)</label>
-                                <input type="email" class="form-control" name="mail_user">
-                            </div>
-                            <div class="form-group">
-                                <label>Password</label>
-                                <input type="password" class="form-control" name="mail_pass">
-                            </div>
-                            <button type="button" class="btn btn-primary" onclick="submitCustomAction(this, '/api/manage/mail?action=add_user')">Add Mail User</button>
                         </form>
+
+                        <div class="mail-tools">
+                            <span class="mail-tools-label">Webmail not sending, or showing the wrong address?</span>
+                            <div class="mail-tools-actions">
+                                <button type="button" class="btn-sm" onclick="runMailTool(this, '/api/install/mail-check')">Check mail</button>
+                                <button type="button" class="btn-sm is-accent" onclick="runMailTool(this, '/api/install/mail-repair')">Repair mail</button>
+                            </div>
+                            <form id="mail-tool-form" hidden onsubmit="return false"><button type="submit"></button></form>
+                        </div>
+
+                        <!-- Accounts live OUTSIDE the install form: they used to share it, so adding a user
+                             was blocked by the install form's "Primary Mail Domain is required" check. -->
+                        <section class="mail-accounts" id="mail-accounts">
+                            <div class="mail-accounts-head">
+                                <h4>Mail accounts</h4>
+                                <span class="mail-domain-chip" id="mail-domain-chip" hidden></span>
+                            </div>
+                            <p class="mail-accounts-note" id="mail-accounts-note" hidden></p>
+                            <ul class="mail-account-list" id="mail-users-list" aria-live="polite"></ul>
+                            <form class="mail-add" id="mail-add-form" onsubmit="addMailUser(event)" autocomplete="off">
+                                <div class="mail-add-fields">
+                                    <div class="form-group">
+                                        <label>Username</label>
+                                        <div class="input-addon">
+                                            <input type="text" class="form-control" name="mail_user" placeholder="john" autocapitalize="none" spellcheck="false" autocomplete="off">
+                                            <span class="input-addon-text" id="mail-add-suffix"></span>
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Password</label>
+                                        <input type="password" class="form-control" name="mail_pass" placeholder="at least 6 characters" autocomplete="new-password">
+                                    </div>
+                                    <button type="submit" class="btn btn-primary" id="mail-add-btn">Add account</button>
+                                </div>
+                            </form>
+                        </section>
                     </div>
 
                     <div id="tab-services-ftp" class="tab-pane">
@@ -871,7 +1085,17 @@
 
                     </div><!-- /card-split-form -->
                     <div class="card-split-terminal">
-                        <div class="terminal-label">output</div>
+                        <div class="terminal-header">
+                            <div class="terminal-label">output</div>
+                            <div class="term-toolbar">
+                                <button class="btn-sm term-toolbar-copy" data-term="services-term" title="Copy output">
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> Copy
+                                </button>
+                                <button class="btn-sm term-toolbar-clear" data-term="services-term" title="Clear output">
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg> Clear
+                                </button>
+                            </div>
+                        </div>
                         <div id="services-term" class="terminal visible"></div>
                     </div><!-- /card-split-terminal -->
                     </div><!-- /card-split -->
@@ -963,7 +1187,17 @@
 
                     </div><!-- /card-split-form -->
                     <div class="card-split-terminal">
-                        <div class="terminal-label">output</div>
+                        <div class="terminal-header">
+                            <div class="terminal-label">output</div>
+                            <div class="term-toolbar">
+                                <button class="btn-sm term-toolbar-copy" data-term="server-term" title="Copy output">
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> Copy
+                                </button>
+                                <button class="btn-sm term-toolbar-clear" data-term="server-term" title="Clear output">
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg> Clear
+                                </button>
+                            </div>
+                        </div>
                         <div id="server-term" class="terminal visible"></div>
                     </div><!-- /card-split-terminal -->
                     </div><!-- /card-split -->
@@ -1064,6 +1298,17 @@
                         </form>
                     </div>
 
+                    <div class="terminal-header" style="margin-top:20px">
+                        <div class="terminal-label">output</div>
+                        <div class="term-toolbar">
+                            <button class="btn-sm term-toolbar-copy" data-term="dns-term" title="Copy output">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> Copy
+                            </button>
+                            <button class="btn-sm term-toolbar-clear" data-term="dns-term" title="Clear output">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg> Clear
+                            </button>
+                        </div>
+                    </div>
                     <div id="dns-term" class="terminal"></div>
                 </div>
             </section>
@@ -1115,10 +1360,174 @@
 
                         <button type="submit" class="btn btn-primary mt-4">Apply Network Changes</button>
                     </form>
+                    <div class="terminal-header" style="margin-top:20px">
+                        <div class="terminal-label">output</div>
+                        <div class="term-toolbar">
+                            <button class="btn-sm term-toolbar-copy" data-term="network-term" title="Copy output">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> Copy
+                            </button>
+                            <button class="btn-sm term-toolbar-clear" data-term="network-term" title="Clear output">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg> Clear
+                            </button>
+                        </div>
+                    </div>
                     <div id="network-term" class="terminal"></div>
                 </div>
             </section>
             <!-- Help Page -->
+
+            <!-- ──────────────────────────────────────────
+                 PAGE: DOCKER
+            ────────────────────────────────────────── -->
+            <section id="page-docker" class="page-section">
+                <div class="page-header">
+                    <h2>Docker</h2>
+                    <p>Manage containers, deploy one-click services, and create proxied container sites.</p>
+                </div>
+
+                <!-- Not installed state -->
+                <div class="card" id="docker-install-card" style="display:none; text-align:center; padding: 48px 32px;">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5" style="margin-bottom:20px; display:block; margin-left:auto; margin-right:auto;"><rect x="1" y="14" width="4" height="5" rx="1"/><rect x="7" y="9" width="4" height="10" rx="1"/><rect x="13" y="12" width="4" height="7" rx="1"/><rect x="19" y="7" width="4" height="12" rx="1"/></svg>
+                    <h3 style="margin-bottom:8px; border:none; padding:0;">Docker is not installed</h3>
+                    <p style="color:var(--text-muted); margin-bottom:28px; font-family:var(--font-ui);">Install Docker CE from the official repository to enable container support.</p>
+                    <form onsubmit="submitApiForm(event, '/api/manage/docker', 'term-docker-install')" style="display:inline-block">
+                        <input type="hidden" name="action" value="install">
+                        <button type="submit" class="btn primary">Install Docker CE</button>
+                    </form>
+                    <div id="term-docker-install" class="terminal" style="margin-top:24px; text-align:left;"></div>
+                </div>
+
+                <!-- Installed state -->
+                <div id="docker-main-content" style="display:none;">
+                    <div class="content-tabs">
+                        <button class="content-tab-btn active" data-tab="containers" onclick="switchTab('docker', 'containers')">Containers</button>
+                        <button class="content-tab-btn" data-tab="create" onclick="switchTab('docker', 'create')">Create Site</button>
+                        <button class="content-tab-btn" data-tab="oneclick" onclick="switchTab('docker', 'oneclick')">One-Click Services</button>
+                    </div>
+
+                    <div id="term-docker-main" class="terminal" style="margin-bottom:20px;"></div>
+
+                    <!-- Containers Tab -->
+                    <div id="tab-docker-containers" class="tab-pane active">
+                        <div class="card" style="padding:0; overflow:visible;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; padding:20px 24px; border-bottom:1px solid var(--border);">
+                                <h3 style="margin:0; padding:0; border:none; font-size:0.95rem;">Running Containers</h3>
+                                <div style="display:flex; gap:8px; align-items:center;">
+                                    <button class="btn-sm" onclick="loadDocker()">
+                                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                                        Refresh
+                                    </button>
+                                    <form onsubmit="submitApiForm(event, '/api/manage/docker', 'term-docker-main')" style="display:inline-block;">
+                                        <input type="hidden" name="action" value="prune">
+                                        <button type="submit" class="btn-sm" style="color:var(--danger); border-color:rgba(244,63,94,0.3);">
+                                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                                            System Prune
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                            <div class="sites-table-wrap">
+                                <table class="sites-table" id="docker-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>Image</th>
+                                            <th>Status</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="docker-tbody">
+                                        <tr><td colspan="4" style="text-align:center; padding:32px; color:var(--text-muted)">Loading...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Create Site Tab -->
+                    <div id="tab-docker-create" class="tab-pane">
+                        <div class="card">
+                            <form onsubmit="submitApiForm(event, '/api/makesite_docker', 'term-docker-main')">
+                                <input type="hidden" name="action" value="docker">
+                                <div class="form-group">
+                                    <label>Domain Name <span class="label-hint">— Nginx will act as a reverse proxy for this domain.</span></label>
+                                    <input type="text" class="form-control" name="domain" required placeholder="e.g. app.example.com">
+                                </div>
+                                <div class="form-group">
+                                    <label>Container Image</label>
+                                    <input type="text" class="form-control" name="image" required placeholder="e.g. nginx:alpine or ghost:latest">
+                                </div>
+                                <div class="form-group">
+                                    <label>Internal Container Port</label>
+                                    <input type="number" class="form-control" name="port" value="80" required>
+                                </div>
+                                <div class="form-group">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="docker-dns" name="dns" onchange="document.getElementById('docker-dns-ip-group').classList.toggle('hidden', !this.checked)"> Create DNS zone automatically
+                                    </label>
+                                </div>
+                                <div class="form-group hidden" id="docker-dns-ip-group">
+                                    <label>Server IP for DNS <span class="label-hint">— optional</span></label>
+                                    <input type="text" class="form-control" id="docker-ip" name="ip" placeholder="e.g. 192.168.1.100">
+                                </div>
+                                <div class="btn-row">
+                                    <button type="submit" class="btn btn-primary">Deploy Container Site</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- One-Click Services Tab -->
+                    <div id="tab-docker-oneclick" class="tab-pane">
+                        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px,1fr)); gap:20px;">
+                            <!-- Portainer -->
+                            <div class="card" style="margin-bottom:0; display:flex; flex-direction:column;">
+                                <h3>Portainer</h3>
+                                <p style="color:var(--text-muted); font-size:0.88rem; margin-bottom:20px; font-family:var(--font-ui); line-height:1.6;">Docker Web UI. Runs on port 9443. Optionally proxy it through a domain.</p>
+                                <form onsubmit="submitApiForm(event, '/api/manage/docker', 'term-docker-main')" style="margin-top:auto;">
+                                    <input type="hidden" name="action" value="oneclick">
+                                    <input type="hidden" name="service" value="1">
+                                    <div class="form-group">
+                                        <label>Proxy Domain <span class="label-hint">— optional</span></label>
+                                        <input type="text" class="form-control" name="domain" placeholder="portainer.example.com">
+                                    </div>
+                                    <div class="btn-row">
+                                        <button type="submit" class="btn btn-primary" style="width:100%">Deploy Portainer</button>
+                                    </div>
+                                </form>
+                            </div>
+                            <!-- Redis -->
+                            <div class="card" style="margin-bottom:0; display:flex; flex-direction:column;">
+                                <h3>Redis</h3>
+                                <p style="color:var(--text-muted); font-size:0.88rem; margin-bottom:20px; font-family:var(--font-ui); line-height:1.6;">In-memory data store. Reachable by other containers at <code>redis:6379</code>.</p>
+                                <form onsubmit="submitApiForm(event, '/api/manage/docker', 'term-docker-main')" style="margin-top:auto;">
+                                    <input type="hidden" name="action" value="oneclick">
+                                    <input type="hidden" name="service" value="2">
+                                    <div class="btn-row">
+                                        <button type="submit" class="btn btn-primary" style="width:100%">Deploy Redis</button>
+                                    </div>
+                                </form>
+                            </div>
+                            <!-- PostgreSQL -->
+                            <div class="card" style="margin-bottom:0; display:flex; flex-direction:column;">
+                                <h3>PostgreSQL</h3>
+                                <p style="color:var(--text-muted); font-size:0.88rem; margin-bottom:20px; font-family:var(--font-ui); line-height:1.6;">Relational database. Reachable by other containers at <code>postgres:5432</code>.</p>
+                                <form onsubmit="submitApiForm(event, '/api/manage/docker', 'term-docker-main')" style="margin-top:auto;">
+                                    <input type="hidden" name="action" value="oneclick">
+                                    <input type="hidden" name="service" value="3">
+                                    <div class="form-group">
+                                        <label>POSTGRES_PASSWORD</label>
+                                        <input type="password" class="form-control" name="password" required>
+                                    </div>
+                                    <div class="btn-row">
+                                        <button type="submit" class="btn btn-primary" style="width:100%">Deploy PostgreSQL</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
             <section id="page-help" class="page-section">
                 <div class="page-header">
                     <h2>Help & Documentation</h2>
@@ -1151,7 +1560,8 @@
 
         </main>
     </div>
-    <script src="app.js?v=8"></script>
+    <script src="app.js?v=12"></script>
+    <script src="fx.js?v=3"></script>
 
     <!-- ── Keyboard Shortcuts Overlay ── -->
     <div class="kbd-overlay" id="kbd-overlay" onclick="closeKbdOverlay()">
@@ -1170,6 +1580,7 @@
                 <div class="kbd-row"><span class="kbd-desc">Install Services</span><span class="kbd-keys"><kbd>g</kbd><kbd>i</kbd></span></div>
                 <div class="kbd-row"><span class="kbd-desc">Server Management</span><span class="kbd-keys"><kbd>g</kbd><kbd>v</kbd></span></div>
                 <div class="kbd-row"><span class="kbd-desc">Network</span><span class="kbd-keys"><kbd>g</kbd><kbd>n</kbd></span></div>
+                <div class="kbd-row"><span class="kbd-desc">Docker</span><span class="kbd-keys"><kbd>g</kbd><kbd>k</kbd></span></div>
                 <div class="kbd-row"><span class="kbd-desc">Help</span><span class="kbd-keys"><kbd>g</kbd><kbd>h</kbd></span></div>
                 <div class="kbd-section-title">Actions</div>
                 <div class="kbd-row"><span class="kbd-desc">Reload All Services</span><span class="kbd-keys"><kbd>r</kbd></span></div>
@@ -1220,20 +1631,12 @@
         </div>
     </div>
 
-    <script>
-        function openVideo() {
-            const overlay = document.getElementById('video-overlay');
-            const video = document.getElementById('tutorial-video');
-            overlay.classList.add('open');
-            video.play().catch(e => console.log('Autoplay prevented'));
-        }
-        function closeVideo() {
-            const overlay = document.getElementById('video-overlay');
-            const video = document.getElementById('tutorial-video');
-            overlay.classList.remove('open');
-            video.pause();
-            video.currentTime = 0;
-        }
-    </script>
+    </div>
+    <!-- Goldfish Mode Toast -->
+    <div id="goldfish-toast" role="status" aria-live="polite">
+        <span class="gt-icon">🐟</span>
+        <span id="goldfish-toast-msg">Simple Mode ON — advanced options hidden</span>
+    </div>
+
 </body>
 </html>

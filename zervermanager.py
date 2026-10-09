@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-SCRIPT_VERSION = "1.3.24"
+SCRIPT_VERSION = "1.3.27"
 
 import os
 import re
@@ -10,6 +10,7 @@ from pathlib import Path
 from datetime import datetime
 import shutil
 import socket
+import io
 import sys
 import time
 import glob
@@ -126,6 +127,12 @@ NGINX_SITES_ENABLED   = "/etc/nginx/sites-enabled"
 
 # Set to True via --dry-run CLI flag; makes run()/run_live() print-and-no-op.
 DRY_RUN = False
+
+# configure_apache_ports() moves Apache to 8080 (HTTP) / 8443 (HTTPS) and puts nginx
+# in front of it, and every nginx proxy template points at 127.0.0.1:8080.
+# Nothing else may ever claim these ports: not this web UI, not Docker sites.
+APACHE_BACKEND_PORTS = (8080, 8443)
+WEB_UI_DEFAULT_PORT = 8090
 SHOW_SPLASH = True        # set to False to disable the splash screen
 EASTER_EGG_ENABLED = True # set to False to disable the easter egg entirely
 MAI_PERSONAL_MESSAGE = "[ I love you, Mai ]"   # ← replace this with your own words
@@ -405,7 +412,7 @@ def service_status(name):
 #  Site metadata (type tracking)
 # ─────────────────────────────────────────
 
-def save_site_meta(domain, site_type, docroot, db_name=None, db_user=None, web_server="apache", dns=False):
+def save_site_meta(domain, site_type, docroot, db_name=None, db_user=None, web_server="apache", dns=False, container_name=None, host_port=None):
     os.makedirs(META_DIR, exist_ok=True)
 
     meta = {
@@ -421,6 +428,10 @@ def save_site_meta(domain, site_type, docroot, db_name=None, db_user=None, web_s
         meta["db_name"] = db_name
     if db_user:
         meta["db_user"] = db_user
+    if container_name:
+        meta["container_name"] = container_name
+    if host_port:
+        meta["host_port"] = host_port
 
     safe_write(f"{META_DIR}/{domain}.json", json.dumps(meta, indent=2))
 
@@ -457,6 +468,8 @@ def site_type_label(domain):
         return f"{C.BLUE}[LAMP]{C.RESET}"
     elif t == "static":
         return f"{C.DIM}[static]{C.RESET}"
+    elif t == "docker":
+        return f"{C.BLUE}[docker]{C.RESET}"
 
     return f"{C.DIM}[{t}]{C.RESET}"
 
@@ -464,6 +477,49 @@ def site_type_label(domain):
 # ─────────────────────────────────────────
 #  Apache helpers
 # ─────────────────────────────────────────
+
+def configure_apache_ports():
+    ports_conf = "/etc/apache2/ports.conf"
+    if os.path.exists(ports_conf):
+        with open(ports_conf, "r") as f:
+            content = f.read()
+        if "Listen 8080" not in content:
+            content = re.sub(r"^(Listen\s+)80$", r"\g<1>8080", content, flags=re.MULTILINE)
+            content = re.sub(r"^(Listen\s+)443$", r"\g<1>8443", content, flags=re.MULTILINE)
+            if not DRY_RUN:
+                with open(ports_conf, "w") as f:
+                    f.write(content)
+            else:
+                step(f"[dry-run] Would update ports in {ports_conf}")
+    
+    default_conf = "/etc/apache2/sites-available/000-default.conf"
+    if os.path.exists(default_conf):
+        with open(default_conf, "r") as f:
+            content = f.read()
+        if "<VirtualHost *:8080>" not in content:
+            content = re.sub(r"<VirtualHost \*:80>", "<VirtualHost *:8080>", content)
+            if not DRY_RUN:
+                with open(default_conf, "w") as f:
+                    f.write(content)
+
+    # Silence AH00558 ("Could not reliably determine the server's fully qualified
+    # domain name") by giving Apache a global ServerName — unless one already exists.
+    servername_conf = "/etc/apache2/conf-available/servername.conf"
+    if not DRY_RUN and os.path.isdir("/etc/apache2/conf-available") and not os.path.exists(servername_conf):
+        try:
+            existing = ""
+            for pth in ["/etc/apache2/apache2.conf"] + glob.glob("/etc/apache2/conf-enabled/*.conf"):
+                try:
+                    with open(pth, "r") as f:
+                        existing += f.read()
+                except OSError:
+                    pass
+            if not re.search(r"^\s*ServerName\s", existing, re.MULTILINE):
+                with open(servername_conf, "w") as f:
+                    f.write("ServerName localhost\n")
+                subprocess.run(["a2enconf", "servername"], capture_output=True)
+        except Exception:
+            pass
 
 def apache_test():
     return run(["/usr/sbin/apache2ctl", "configtest"])
@@ -516,7 +572,7 @@ def create_docroot(docroot, domain):
 
 def http_vhost(domain, docroot):
     return f"""
-<VirtualHost *:80>
+<VirtualHost *:8080>
     ServerName {domain}
     ServerAlias www.{domain}
 
@@ -533,7 +589,7 @@ def http_vhost(domain, docroot):
 
 def https_vhost(domain, docroot, cert, key):
     return f"""
-<VirtualHost *:80>
+<VirtualHost *:8080>
     ServerName {domain}
     ServerAlias www.{domain}
 
@@ -541,7 +597,7 @@ def https_vhost(domain, docroot, cert, key):
     RewriteRule ^ https://%{{HTTP_HOST}}%{{REQUEST_URI}} [R=301,L]
 </VirtualHost>
 
-<VirtualHost *:443>
+<VirtualHost *:8443>
     ServerName {domain}
     ServerAlias www.{domain}
 
@@ -1780,6 +1836,9 @@ def prompt_db_import(db_name, db_user, db_pass, docroot):
 def create_full_site():
     menu_header("Create Full Site (Apache + optional DNS)")
 
+    if not ensure_nginx():
+        return
+
     domain = ask_domain()
     if not domain:
         return
@@ -1865,8 +1924,27 @@ def create_full_site():
 
     enable_site(domain)
     save_site_meta(domain, "static", docroot, dns=create_dns)
+    configure_apache_ports()
     ok("Apache vhost created.")
     reload_apache()
+
+    # ── Nginx proxy ──
+    step("Configuring Nginx front-door proxy...")
+    nginx_vhost = f"""server {{
+    listen 80;
+    server_name {domain} www.{domain};
+    location / {{
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }}
+}}"""
+    write_nginx_vhost(domain, nginx_vhost)
+    nginx_enable_site(domain)
+    reload_nginx()
+    ok("Nginx proxy configured.")
 
     # ── BIND9 zones (only if requested) ──
     if create_dns:
@@ -2197,6 +2275,14 @@ def delete_apache_site():
         if remove_files == "yes" and os.path.exists(docroot):
             shutil.rmtree(docroot)
 
+        # ── Remove Nginx proxy if it exists ──
+        nginx_conf = f"{NGINX_SITES_AVAILABLE}/{domain}.conf"
+        nginx_enabled = f"{NGINX_SITES_ENABLED}/{domain}.conf"
+        if os.path.islink(nginx_enabled):
+            os.unlink(nginx_enabled)
+        if os.path.isfile(nginx_conf):
+            os.remove(nginx_conf)
+
         # ── Remove metadata ──
         delete_site_meta(domain)
 
@@ -2209,6 +2295,8 @@ def delete_apache_site():
         return
 
     reload_apache()
+    if os.path.exists("/usr/sbin/nginx"):
+        reload_nginx()
     apply_reloads()
 
 
@@ -2520,6 +2608,9 @@ def create_lamp_site():
     if not ensure_mariadb():
         return
 
+    if not ensure_nginx():
+        return
+
     domain = ask_domain()
     if not domain:
         return
@@ -2576,6 +2667,7 @@ def create_lamp_site():
         return
 
     ok("All packages installed.")
+    configure_apache_ports()
 
     # ── Start MariaDB ──
     step("Starting MariaDB...")
@@ -2801,6 +2893,24 @@ mysql {db_name} -e "DELETE FROM test_entries;"</pre>
     save_site_meta(domain, "lamp", docroot, db_name=db_name, db_user=db_user, dns=create_dns)
     reload_apache()
     ok("Apache vhost created.")
+
+    # ── Nginx proxy ──
+    step("Configuring Nginx front-door proxy...")
+    vhost = f"""server {{
+    listen 80;
+    server_name {domain} www.{domain};
+    location / {{
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }}
+}}"""
+    write_nginx_vhost(domain, vhost)
+    nginx_enable_site(domain)
+    reload_nginx()
+    ok("Nginx proxy configured.")
 
     # ── BIND9 zones (only if requested) ──
     if create_dns:
@@ -4645,6 +4755,479 @@ def reverse_proxy_nginx_menu():
 
 
 # ─────────────────────────────────────────
+#  Docker Sites & Services
+# ─────────────────────────────────────────
+
+def is_docker_installed():
+    return shutil.which("docker") is not None
+
+def is_compose_available():
+    r = run(["docker", "compose", "version"])
+    return r.returncode == 0
+
+def install_docker():
+    menu_header("Install Docker")
+    if is_docker_installed():
+        ok("Docker is already installed.")
+        input("\n  Press Enter to continue...")
+        return True
+
+    step("Checking dependencies...")
+    r, err_msg = run_live(["apt-get", "install", "-y", "ca-certificates", "curl", "gnupg"])
+    if r != 0:
+        err(f"Dependency install failed:\n{err_msg}")
+        return False
+
+    step("Adding Docker's official GPG key...")
+    run(["install", "-m", "0755", "-d", "/etc/apt/keyrings"])
+    
+    dl = run(["curl", "-fsSL", "https://download.docker.com/linux/debian/gpg"])
+    if dl.returncode != 0:
+        err(f"Failed to download Docker GPG key:\n{dl.stderr}")
+        return False
+        
+    run(["rm", "-f", "/etc/apt/keyrings/docker.gpg"])
+    if not DRY_RUN:
+        subprocess.run(["gpg", "--dearmor", "-o", "/etc/apt/keyrings/docker.gpg"], input=dl.stdout, text=True, capture_output=True)
+    run(["chmod", "a+r", "/etc/apt/keyrings/docker.gpg"])
+
+    step("Setting up Docker apt repository...")
+    codename_proc = run(["lsb_release", "-cs"])
+    c_name = codename_proc.stdout.strip() if codename_proc.returncode == 0 else "bookworm"
+    
+    repo_line = f"deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian {c_name} stable"
+    safe_write("/etc/apt/sources.list.d/docker.list", repo_line + "\n")
+
+    step("Updating apt package index...")
+    run_live(["apt-get", "update"])
+
+    step("Installing Docker CE...")
+    r, err_msg = run_live(["apt-get", "install", "-y", "docker-ce", "docker-ce-cli", "containerd.io", "docker-compose-plugin"])
+    if r != 0:
+        err(f"Docker installation failed:\n{err_msg}")
+        return False
+        
+    step("Enabling Docker service...")
+    run(["systemctl", "enable", "--now", "docker"])
+    
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        run(["usermod", "-aG", "docker", sudo_user])
+        info(f"Added user {sudo_user} to docker group. Please log out and log back in for this to take effect.")
+        
+    ok("Docker installed successfully.")
+    input("\n  Press Enter to continue...")
+    return True
+
+def _find_free_docker_port(start=8080, max_tries=200):
+    for port in range(start, start + max_tries):
+        if port in APACHE_BACKEND_PORTS:
+            continue          # Apache lives here; a container on 8080 would stop it from ever starting
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", port))
+                return port
+        except OSError:
+            continue
+    return None
+
+def create_container_site():
+    menu_header("Create Container Site (Nginx Proxy)")
+    
+    if not is_docker_installed():
+        err("Docker is not installed. Please install it first.")
+        input("\n  Press Enter to continue...")
+        return
+        
+    if not ensure_nginx():
+        return
+        
+    domain = ask_domain()
+    if not domain: return
+    
+    image = input("  Container image [e.g. nginx:alpine]: ").strip()
+    if not image: return
+    
+    int_port_str = input("  Internal port [80]: ").strip() or "80"
+    if not int_port_str.isdigit():
+        err("Port must be a number.")
+        return
+    internal_port = int(int_port_str)
+    
+    host_port = _find_free_docker_port()
+    if not host_port:
+        err("Could not find a free host port.")
+        return
+        
+    net_chk = run(["docker", "network", "inspect", "zervermanager_net"])
+    if net_chk.returncode != 0:
+        step("Creating Docker network 'zervermanager_net'...")
+        run(["docker", "network", "create", "zervermanager_net"])
+        
+    container_name = "site-" + domain.replace(".", "-")
+    
+    step(f"Starting container {container_name} on port {host_port}...")
+    cmd = [
+        "docker", "run", "-d", "--name", container_name,
+        "--network", "zervermanager_net",
+        "-p", f"127.0.0.1:{host_port}:{internal_port}",
+        "--restart", "unless-stopped",
+        image
+    ]
+    r, e = run_live(cmd)
+    if r != 0:
+        err(f"Container failed to start:\n{e}")
+        return
+        
+    target = f"http://127.0.0.1:{host_port}"
+    
+    dns_choice = input("  Create DNS zones for this site? (y/N): ").strip().lower()
+    create_dns = (dns_choice == "y")
+    ip = None
+    if create_dns:
+        ip = prompt_for_ip("Server IP")
+        if not ip:
+            create_dns = False
+
+    vhost = f"""server {{
+    listen 80;
+    server_name {domain} www.{domain};
+
+    location / {{
+        proxy_pass {target};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }}
+
+    access_log /var/log/nginx/{domain}-access.log;
+    error_log  /var/log/nginx/{domain}-error.log;
+}}
+"""
+    step("Writing Nginx vhost config...")
+    write_nginx_vhost(domain, vhost)
+    nginx_enable_site(domain)
+    
+    ok_n, msg_n = validate_nginx()
+    if not ok_n:
+        err(f"Nginx config error: {msg_n}")
+        nginx_disable_site(domain)
+        run(["docker", "stop", container_name])
+        run(["docker", "rm", container_name])
+        return
+        
+    reload_nginx()
+    save_site_meta(domain, "docker", f"container:{image}", web_server="nginx", dns=create_dns, container_name=container_name, host_port=host_port)
+    
+    if create_dns:
+        rev_zone = reverse_zone_name(ip)
+        fwd_file = f"{BIND_DIR}/db.{domain}"
+        rev_file = reverse_zone_file(ip)
+
+        if not zone_exists(domain):
+            step("Writing forward zone...")
+            write_forward_zone(domain, ip, fwd_file)
+            ok_z, msg_z = validate_zone(domain, fwd_file)
+            if ok_z:
+                add_zone_to_conf(domain, fwd_file)
+                ok("Forward zone created.")
+            else:
+                os.remove(fwd_file)
+                err(msg_z)
+
+        if not zone_exists(rev_zone):
+            step("Writing reverse zone...")
+            write_reverse_zone(domain, ip, rev_file)
+            ok_r, msg_r = validate_zone(rev_zone, rev_file)
+            if ok_r:
+                add_zone_to_conf(rev_zone, rev_file)
+                ok("Reverse zone created.")
+            else:
+                os.remove(rev_file)
+                remove_zone_from_conf(domain)
+                err(msg_r)
+        
+        ok_b, msg_b = validate_bind9()
+        if not ok_b:
+            err(msg_b)
+        else:
+            reload_bind9()
+            
+    apply_reloads()
+    ok(f"Container site created: http://{domain} -> {image}")
+    input("\n  Press Enter to continue...")
+
+def delete_container_site():
+    menu_header("Delete Container Site")
+    domains = [d for d in pick_nginx_sites(show_enabled=True, show_disabled=True) if get_site_meta(d) and get_site_meta(d).get("type") == "docker"]
+    if not domains:
+        warn("No docker sites selected.")
+        return
+        
+    print(f"\n{C.YELLOW}  WARNING — will delete container and Nginx vhost for:{C.RESET}")
+    for d in domains:
+        print(f"    - {d}")
+
+    if not prompt_confirm(f"{C.YELLOW}Delete these sites?{C.RESET}"):
+        warn("Cancelled.")
+        return
+
+    for domain in domains:
+        meta = get_site_meta(domain)
+        container_name = meta.get("container_name") if meta else None
+        if container_name:
+            step(f"Stopping and removing container {container_name}...")
+            run(["docker", "stop", container_name])
+            run(["docker", "rm", container_name])
+            
+        nginx_disable_site(domain)
+        conf = f"{NGINX_SITES_AVAILABLE}/{domain}.conf"
+        if os.path.isfile(conf):
+            if DRY_RUN:
+                step(f"[dry-run] Would remove {conf}")
+            else:
+                os.remove(conf)
+        delete_site_meta(domain)
+        ok(f"{domain} deleted.")
+        
+    ok_n, msg_n = validate_nginx()
+    if not ok_n:
+        err(msg_n)
+        return
+    reload_nginx()
+    apply_reloads()
+    input("\n  Press Enter to continue...")
+
+def list_container_sites():
+    menu_header("Container Sites")
+    if not os.path.exists(NGINX_SITES_AVAILABLE):
+        warn("Nginx sites-available not found.")
+        return
+
+    found = False
+    for file in sorted(os.listdir(NGINX_SITES_AVAILABLE)):
+        if not file.endswith(".conf"):
+            continue
+        domain = file[:-5]
+        meta = get_site_meta(domain)
+        if not meta or meta.get("type") != "docker":
+            continue
+            
+        found = True
+        enabled = nginx_site_enabled(domain)
+        status = f"{C.GREEN}enabled{C.RESET}" if enabled else f"{C.DIM}disabled{C.RESET}"
+        
+        c_name = meta.get("container_name", "unknown")
+        port = meta.get("host_port", "unknown")
+        
+        c_status_res = run(["docker", "ps", "--filter", f"name={c_name}", "--format", "{{.Status}}"])
+        c_status = c_status_res.stdout.strip() if c_status_res.returncode == 0 and c_status_res.stdout.strip() else "stopped/missing"
+        
+        print(f"  {C.BOLD}{domain}{C.RESET} [{status}] {site_type_label(domain)}")
+        print(f"    {C.DIM}Container: {c_name} | Port: {port} | Status: {c_status}{C.RESET}")
+        print()
+        
+    if not found:
+        warn("No container sites found.")
+    input("\n  Press Enter to continue...")
+
+def parse_multi_select(raw, count):
+    if not raw: return []
+    if raw == "all": return list(range(count))
+    selected = []
+    for part in raw.split(","):
+        try:
+            if "-" in part:
+                s, e = part.split("-")
+                for idx in range(int(s.strip()) - 1, int(e.strip())):
+                    if 0 <= idx < count: selected.append(idx)
+            else:
+                idx = int(part.strip()) - 1
+                if 0 <= idx < count: selected.append(idx)
+        except ValueError:
+            pass
+    return list(set(selected))
+
+def manage_containers_menu():
+    while True:
+        menu_header("Manage Containers")
+        print("1. List all containers")
+        print("2. Start container(s)")
+        print("3. Stop container(s)")
+        print("4. Restart container(s)")
+        print("5. Remove container(s)")
+        print("6. View container logs")
+        print("0. Back")
+        choice = input("  \nChoice: ").strip()
+        
+        if choice == "0": break
+        if choice not in ("1", "2", "3", "4", "5", "6"):
+            warn("Invalid choice.")
+            continue
+            
+        res = run(["docker", "ps", "-a", "--format", "{{.Names}}|{{.Image}}|{{.Status}}"])
+        if res.returncode != 0:
+            err("Failed to list containers.")
+            continue
+            
+        containers = [line.split("|") for line in res.stdout.strip().split("\n") if line]
+        if not containers:
+            warn("No containers found.")
+            continue
+            
+        if choice == "1":
+            print()
+            for c in containers:
+                print(f"  {C.BOLD}{c[0]}{C.RESET} | {c[1]} | {c[2]}")
+            input("\n  Press Enter to continue...")
+            continue
+            
+        print()
+        for i, c in enumerate(containers, 1):
+            print(f"  {C.BOLD}{i}.{C.RESET} {c[0]} ({c[2]})")
+            
+        raw = input("  \nSelect (e.g. 1, 1-3, 1,2,3 or all): ").strip().lower()
+        indices = parse_multi_select(raw, len(containers))
+        if not indices: continue
+        
+        selected_names = [containers[idx][0] for idx in indices]
+        
+        if choice == "2":
+            for name in selected_names:
+                run(["docker", "start", name])
+                ok(f"Started {name}")
+        elif choice == "3":
+            for name in selected_names:
+                run(["docker", "stop", name])
+                ok(f"Stopped {name}")
+        elif choice == "4":
+            for name in selected_names:
+                run(["docker", "restart", name])
+                ok(f"Restarted {name}")
+        elif choice == "5":
+            if prompt_confirm(f"{C.YELLOW}Remove selected containers?{C.RESET}"):
+                for name in selected_names:
+                    run(["docker", "rm", "-f", name])
+                    ok(f"Removed {name}")
+        elif choice == "6":
+            for name in selected_names:
+                follow = prompt_confirm(f"Follow logs for {name}?", default="no")
+                cmd = ["docker", "logs", "--tail", "100"]
+                if follow: cmd.append("-f")
+                cmd.append(name)
+                print(f"\n{C.CYAN}--- Logs for {name} ---{C.RESET}")
+                run_live(cmd)
+                print(f"{C.CYAN}-----------------------{C.RESET}\n")
+
+def docker_oneclick_menu():
+    while True:
+        menu_header("Docker One-Click Services")
+        print("1. Portainer (Docker Web UI)")
+        print("2. Redis")
+        print("3. PostgreSQL")
+        print("0. Back")
+        choice = input("  \nChoice: ").strip()
+        
+        if choice == "0": break
+        
+        if choice == "1":
+            step("Starting Portainer...")
+            r = run(["docker", "run", "-d", "-p", "127.0.0.1:9443:9443", "--name", "portainer", "--restart", "always", "-v", "/var/run/docker.sock:/var/run/docker.sock", "-v", "portainer_data:/data", "portainer/portainer-ce:latest"])
+            if r.returncode == 0:
+                ok("Portainer started. Available locally on port 9443 (https://127.0.0.1:9443)")
+                if prompt_confirm("Create Nginx reverse proxy for Portainer?"):
+                    if not ensure_nginx():
+                        return
+                    domain = ask_domain()
+                    if domain:
+                        vhost = f"""server {{
+    listen 80;
+    server_name {domain} www.{domain};
+    location / {{
+        proxy_pass https://127.0.0.1:9443;
+        proxy_set_header Host $host;
+    }}
+}}"""
+                        write_nginx_vhost(domain, vhost)
+                        nginx_enable_site(domain)
+                        reload_nginx()
+                        apply_reloads()
+                        save_site_meta(domain, "docker", "container:portainer", web_server="nginx", container_name="portainer", host_port=9443)
+                        ok(f"Portainer accessible at http://{domain}")
+            else:
+                err(f"Failed to start Portainer: {r.stderr}")
+                
+        elif choice == "2":
+            step("Starting Redis...")
+            run(["docker", "network", "create", "zervermanager_net"])
+            r = run(["docker", "run", "-d", "--name", "redis", "--network", "zervermanager_net", "-v", "redis_data:/data", "--restart", "unless-stopped", "redis:alpine"])
+            if r.returncode == 0:
+                ok("Redis started. Reachable by other containers at 'redis:6379'.")
+            else:
+                err(f"Failed to start Redis: {r.stderr}")
+                
+        elif choice == "3":
+            pw = input("  Set PostgreSQL POSTGRES_PASSWORD: ").strip()
+            if not pw:
+                warn("Password required.")
+                continue
+            step("Starting PostgreSQL...")
+            run(["docker", "network", "create", "zervermanager_net"])
+            r = run(["docker", "run", "-d", "--name", "postgres", "--network", "zervermanager_net", "-e", f"POSTGRES_PASSWORD={pw}", "-v", "postgres_data:/var/lib/postgresql/data", "--restart", "unless-stopped", "postgres:alpine"])
+            if r.returncode == 0:
+                ok("PostgreSQL started. Reachable by other containers at 'postgres:5432'.")
+            else:
+                err(f"Failed to start PostgreSQL: {r.stderr}")
+                
+        input("\n  Press Enter to continue...")
+
+def docker_system_cleanup():
+    menu_header("Docker System Cleanup")
+    res = run(["docker", "system", "df"])
+    if res.returncode == 0:
+        print(res.stdout)
+        
+    if prompt_confirm(f"{C.YELLOW}Run docker system prune (removes unused images, build cache, stopped containers)?{C.RESET}"):
+        run_live(["docker", "system", "prune", "-f"])
+        ok("Cleanup complete.")
+    input("\n  Press Enter to continue...")
+
+def docker_menu():
+    while True:
+        installed = f"{C.GREEN}Installed{C.RESET}" if is_docker_installed() else f"{C.RED}Not Installed{C.RESET}"
+        containers_count = "0"
+        if is_docker_installed():
+            res = run(["docker", "ps", "-q"])
+            if res.returncode == 0:
+                containers_count = str(len([l for l in res.stdout.strip().split("\\n") if l]))
+        
+        menu_header(f"Docker [{installed}] (Running: {containers_count})")
+        print("1. Install/Update Docker")
+        print("2. Manage Containers")
+        print("3. Create Container Site (proxied through Nginx)")
+        print("4. One-Click Services (Portainer, Redis, PostgreSQL)")
+        print("5. Docker System Cleanup (prune)")
+        print("0. Back")
+        
+        choice = input("  \nChoice: ").strip()
+        if choice == "0": break
+        
+        if choice == "1": install_docker()
+        elif choice == "2": 
+            if is_docker_installed(): manage_containers_menu()
+            else: err("Docker not installed.")
+        elif choice == "3": create_container_site()
+        elif choice == "4": 
+            if is_docker_installed(): docker_oneclick_menu()
+            else: err("Docker not installed.")
+        elif choice == "5":
+            if is_docker_installed(): docker_system_cleanup()
+            else: err("Docker not installed.")
+        else: warn("Invalid choice.")
+
+
+# ─────────────────────────────────────────
 #  WordPress Site
 # ─────────────────────────────────────────
 
@@ -4704,6 +5287,8 @@ def create_apache_wordpress_site():
     menu_header("Create WordPress Site (Apache)")
     if not ensure_mariadb():
         return
+    if not ensure_nginx():
+        return
     domain = ask_domain()
     if not domain: return
     docroot = f"/var/www/{domain}"
@@ -4746,13 +5331,14 @@ def create_apache_wordpress_site():
     if r.returncode != 0:
         err(f"Failed to install PHP packages:\n{r.stderr}")
         return
+    configure_apache_ports()
 
     # Download WordPress
     if not _install_wordpress(domain, docroot, db_name, db_user, db_pass, "apache"):
         return
 
     # VHost
-    vhost = f"""<VirtualHost *:80>
+    vhost = f"""<VirtualHost *:8080>
     ServerName {domain}
     ServerAlias www.{domain}
     DocumentRoot {docroot}
@@ -4791,6 +5377,24 @@ def create_apache_wordpress_site():
         reload_bind9()
 
     save_site_meta(domain, "wordpress", docroot, db_name=db_name, db_user=db_user, web_server="apache", dns=create_dns)
+
+    # ── Nginx proxy ──
+    step("Configuring Nginx front-door proxy...")
+    nginx_vhost = f"""server {{
+    listen 80;
+    server_name {domain} www.{domain};
+    location / {{
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }}
+}}"""
+    write_nginx_vhost(domain, nginx_vhost)
+    nginx_enable_site(domain)
+    reload_nginx()
+    ok("Nginx proxy configured.")
 
     # Restart related services
     step("Restarting related services...")
@@ -6474,8 +7078,310 @@ def mariadb_menu():
         else:
             warn("Invalid choice.")
 
+# ─────────────────────────────────────────
+#  Front door: nginx (:80) → Apache (:8080)   — used by webmail and phpMyAdmin
+# ─────────────────────────────────────────
+# configure_apache_ports() moves Apache to 8080 and nginx owns port 80. Anything Apache
+# serves therefore needs (a) an Apache vhost on *:8080 and (b) an nginx server block that
+# proxies to it. Installers that skip either one are unreachable on port 80.
+
+FRONT_DOOR_MARK = "# zervermanager: front-door proxy"
+PMA_SNIPPET     = "/etc/nginx/snippets/zm-phpmyadmin.conf"
+PMA_INCLUDE     = "include snippets/zm-phpmyadmin.conf;  # zervermanager"
+
+
+def apache_on_backend_port():
+    """True once Apache has been moved to 8080 (so nginx owns port 80)."""
+    try:
+        with open("/etc/apache2/ports.conf", "r") as f:
+            return bool(re.search(r"^\s*Listen\s+(?:\S+:)?8080\b", f.read(), re.MULTILINE))
+    except OSError:
+        return False
+
+
+def nginx_front_door_vhost(domain, tag=""):
+    label = f" ({tag})" if tag else ""
+    return f"""{FRONT_DOOR_MARK}{label}
+server {{
+    listen 80;
+    server_name {domain};
+    client_max_body_size 64m;
+
+    location / {{
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }}
+}}
+"""
+
+
+def _nginx_default_server_file():
+    """Config file holding nginx's catch-all (default_server) block, or None."""
+    listen_re = re.compile(r"^\s*listen\s+[^;\n]*\bdefault_server\b", re.MULTILINE)
+    candidates = [os.path.realpath(f"{NGINX_SITES_ENABLED}/default")]
+    r = run(["/usr/sbin/nginx", "-T"])                      # where else is default_server declared?
+    if r.returncode == 0:
+        current = None
+        for line in r.stdout.splitlines():
+            m = re.match(r"# configuration file (.+):$", line)
+            if m:
+                current = m.group(1)
+            elif current and re.match(r"^\s*listen\s+[^;\n]*\bdefault_server\b", line):
+                candidates.append(os.path.realpath(current))
+    for path in candidates:
+        if path.startswith("/etc/nginx/") and os.path.isfile(path):
+            try:
+                with open(path, "r") as f:
+                    if listen_re.search(f.read()):
+                        return path
+            except OSError:
+                pass
+    return None
+
+
+def expose_phpmyadmin_via_nginx():
+    """Make http://<ip>/phpmyadmin work when nginx owns :80 and Apache sits on :8080.
+    Returns True if phpMyAdmin is reachable on port 80."""
+    if not apache_on_backend_port():
+        return True                         # Apache itself serves :80 — its own phpmyadmin.conf is enough
+    if not os.path.isfile("/usr/sbin/nginx"):
+        return False
+    target = _nginx_default_server_file()
+    if not target:
+        warn("Could not find nginx's default server block, so /phpmyadmin is not routed on port 80.")
+        return False
+    if DRY_RUN:
+        step(f"[dry-run] Would route /phpmyadmin through nginx ({target})")
+        return True
+
+    snippet = """# zervermanager: phpMyAdmin is served by Apache (127.0.0.1:8080); nginx hands /phpmyadmin over to it
+location ^~ /phpmyadmin {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    client_max_body_size 128m;
+    proxy_read_timeout 300s;
+}
+"""
+    os.makedirs(os.path.dirname(PMA_SNIPPET), exist_ok=True)
+    with open(PMA_SNIPPET, "w") as f:
+        f.write(snippet)
+
+    with open(target, "r") as f:
+        original = f.read()
+    if "zm-phpmyadmin.conf" not in original:
+        updated, n = re.subn(
+            r"^([ \t]*)server_name[ \t]+_[ \t]*;[^\n]*$",
+            lambda m: m.group(0) + "\n" + m.group(1) + PMA_INCLUDE,
+            original, count=1, flags=re.MULTILINE)
+        if n == 0:
+            updated, n = re.subn(
+                r"^([ \t]*)(listen[ \t]+[^;\n]*\bdefault_server\b[^;\n]*;[^\n]*)$",
+                lambda m: m.group(0) + "\n" + m.group(1) + PMA_INCLUDE,
+                original, count=1, flags=re.MULTILINE)
+        if n == 0:
+            os.remove(PMA_SNIPPET)
+            warn(f"Could not find where to add /phpmyadmin in {target}.")
+            return False
+        backup_config(target)
+        with open(target, "w") as f:
+            f.write(updated)
+
+    ok_n, msg_n = validate_nginx()
+    if not ok_n:                            # never leave nginx broken: roll back
+        with open(target, "w") as f:
+            f.write(original)
+        try:
+            os.remove(PMA_SNIPPET)
+        except OSError:
+            pass
+        err(f"nginx rejected the phpMyAdmin route, change rolled back:\n{msg_n.strip()}")
+        return False
+    mark_reload("nginx")
+    ok("nginx now routes /phpmyadmin to Apache.")
+    return True
+
+
+def unexpose_phpmyadmin_nginx():
+    """Undo expose_phpmyadmin_via_nginx() (include line first, then the snippet)."""
+    changed = False
+    paths = (glob.glob(f"{NGINX_SITES_AVAILABLE}/*") + glob.glob("/etc/nginx/conf.d/*.conf")
+             + ["/etc/nginx/nginx.conf"])
+    for p in paths:
+        try:
+            if not os.path.isfile(p):
+                continue
+            with open(p, "r") as f:
+                txt = f.read()
+        except OSError:
+            continue
+        if "zm-phpmyadmin.conf" not in txt:
+            continue
+        with open(p, "w") as f:
+            f.write("".join(l for l in txt.splitlines(True) if "zm-phpmyadmin.conf" not in l))
+        changed = True
+    if os.path.exists(PMA_SNIPPET):
+        os.remove(PMA_SNIPPET)
+        changed = True
+    if changed:
+        ok_n, msg_n = validate_nginx()
+        if ok_n:
+            mark_reload("nginx")
+            ok("Removed the phpMyAdmin route from nginx.")
+        else:
+            err(f"nginx config problem after removing the phpMyAdmin route:\n{msg_n.strip()}")
+
+
+def _remove_webmail_vhosts():
+    """Remove the nginx front door + Apache vhost that setup_mail_server() created."""
+    removed = False
+    for path in glob.glob(f"{NGINX_SITES_AVAILABLE}/*.conf"):
+        try:
+            with open(path, "r") as f:
+                first = (f.readline() or "")
+        except OSError:
+            continue
+        if FRONT_DOOR_MARK in first and "(webmail)" in first:
+            nginx_disable_site(os.path.basename(path)[:-5])
+            os.remove(path)
+            mark_reload("nginx")
+            removed = True
+    for path in glob.glob(f"{APACHE_SITES_AVAILABLE}/mail.*.conf"):
+        try:
+            with open(path, "r") as f:
+                first = (f.readline() or "")
+        except OSError:
+            continue
+        if "zervermanager: webmail" in first:
+            run(["/usr/sbin/a2dissite", os.path.basename(path)])
+            os.remove(path)
+            mark_reload("apache2")
+            removed = True
+    if removed:
+        ok("Removed the webmail virtual hosts (nginx + Apache).")
+
+
+def ensure_mail_dns(domain, ip, webmail_domain):
+    """Make sure `domain` can receive mail: an A record for the mail host and an MX record
+    pointing at it. Creates the forward/reverse zones when missing; if the zone already
+    exists, edits the file named.conf.local actually points to and never duplicates a
+    record. Returns (forward_zone_file, reverse_zone_file)."""
+    mail_host = webmail_domain.rstrip(".") + "."
+    rev_zone  = reverse_zone_name(ip)
+    rev_file  = reverse_zone_file(ip)
+    a_line    = f"mail    IN  A       {ip}\n"
+    mx_line   = f"@       IN  MX  10  {mail_host}\n"
+
+    fwd_file = None
+    if zone_exists(domain):
+        # use the file the zone is really registered with (not a guessed name)
+        for cand in (get_zone_file(domain), f"{BIND_DIR}/db.{domain}"):
+            if cand and os.path.isfile(cand):
+                fwd_file = cand
+                break
+        if not fwd_file:
+            err(f"Zone {domain} is registered but its zone file was not found. "
+                f"Add the MX record manually (DNS Zones → MX Records).")
+        else:
+            with open(fwd_file, "r") as f:
+                original = f.read()
+            mx_targets = re.findall(
+                r"^[ \t]*(?!;)\S+[ \t]+(?:\d+[ \t]+)?IN[ \t]+MX[ \t]+\d+[ \t]+(\S+)",
+                original, re.MULTILINE | re.IGNORECASE)
+
+            def _abs(t):
+                t = t.lower()
+                return t if t.endswith(".") else f"{t}.{domain.lower()}."
+
+            has_mx_to_us = any(_abs(t) == mail_host.lower() for t in mx_targets)
+            has_mail_a = re.search(
+                rf"^[ \t]*mail(?:\.{re.escape(domain)}\.)?[ \t]+(?:\d+[ \t]+)?IN[ \t]+A\b",
+                original, re.MULTILINE | re.IGNORECASE)
+            additions = ""
+            if not has_mail_a:
+                additions += a_line
+            if not mx_targets:
+                additions += mx_line
+            elif not has_mx_to_us:
+                warn(f"{domain} already has an MX record pointing at {', '.join(mx_targets)} — "
+                     f"left unchanged. Edit it under DNS Zones → MX Records if mail should come here.")
+            if not additions:
+                ok(f"{domain} already has an MX record for {mail_host.rstrip('.')}.")
+            elif DRY_RUN:
+                step(f"[dry-run] Would add to {fwd_file}:\n{additions}")
+            else:
+                updated = update_serial(original)
+                if not updated.endswith("\n"):
+                    updated += "\n"
+                updated += "\n; Mail server records (zervermanager)\n" + additions
+                backup_config(fwd_file)
+                with open(fwd_file, "w") as f:
+                    f.write(updated)
+                ok_z, msg_z = validate_zone(domain, fwd_file)
+                if not ok_z:
+                    with open(fwd_file, "w") as f:      # never leave a broken zone behind
+                        f.write(original)
+                    err(f"Zone error, change rolled back:\n{msg_z}")
+                else:
+                    ok(f"MX record added: {domain} → {mail_host.rstrip('.')} (priority 10)")
+                    mark_reload("bind9")
+    else:
+        fwd_file = f"{BIND_DIR}/db.{domain}"
+        step("Writing forward zone...")
+        write_forward_zone(domain, ip, fwd_file)
+        if DRY_RUN:
+            step(f"[dry-run] Would append mail records to {fwd_file}")
+        else:
+            with open(fwd_file, "a") as f:
+                f.write("\n; Mail server records\n" + a_line + mx_line)
+            ok_z, msg_z = validate_zone(domain, fwd_file)
+            if not ok_z:
+                os.remove(fwd_file)
+                err(f"Zone error:\n{msg_z}")
+                fwd_file = None
+            else:
+                add_zone_to_conf(domain, fwd_file)
+                ok(f"Forward zone created with MX record ({domain} → {mail_host.rstrip('.')}).")
+
+    # Reverse zone
+    if zone_exists(rev_zone):
+        warn(f"Reverse zone {rev_zone} already exists, skipping.")
+    else:
+        step("Writing reverse zone...")
+        write_reverse_zone(domain, ip, rev_file)
+        ok_r, msg_r = validate_zone(rev_zone, rev_file)
+        if not ok_r:
+            os.remove(rev_file)
+            err(f"Reverse zone error:\n{msg_r}")
+        else:
+            add_zone_to_conf(rev_zone, rev_file)
+            ok("Reverse zone created.")
+
+    ok_b, msg_b = validate_bind9()
+    if ok_b:
+        reload_bind9()
+    else:
+        err(f"BIND9 error:\n{msg_b}")
+    return fwd_file, rev_file
+
+
 def setup_mail_server():
-    """Installs and configures Postfix, Dovecot, Roundcube."""
+    """Installs and configures Postfix, Dovecot, Roundcube (+ nginx front door and DNS/MX).
+
+    Deferred service reloads are applied no matter how the install ends: it used to
+    `return` early (e.g. when Dovecot failed to restart) and silently skip them."""
+    try:
+        _setup_mail_server_impl()
+    finally:
+        apply_reloads()
+
+
+def _setup_mail_server_impl():
     print("-" * 35)
 
     domain = ask_domain("  Mail Domain (e.g., example.com): ")
@@ -6585,9 +7491,14 @@ roundcube-core roundcube/database-type select sqlite3
     # Debian's roundcube package automatically sets correct ownership for temp/logs directories.
     # Do NOT run chown -R on public_html, as it will break symlinks to /usr/share and cause 403 Forbidden errors!
     
-    # Create Apache VirtualHost for Roundcube
+    # Create Apache VirtualHost for Roundcube.
+    # Apache lives on 8080 behind nginx (see configure_apache_ports): a *:80 vhost would never match.
+    if not ensure_nginx():
+        return
+    configure_apache_ports()
     docroot = "/var/lib/roundcube/public_html"
-    vhost_content = f"""<VirtualHost *:80>
+    vhost_content = f"""# zervermanager: webmail
+<VirtualHost *:8080>
     ServerName {webmail_domain}
     DocumentRoot "{docroot}"
 
@@ -6625,160 +7536,78 @@ roundcube-core roundcube/database-type select sqlite3
             f.write(vhost_content)
         
     run(["/usr/sbin/a2ensite", f"{webmail_domain}.conf"])
-    mark_reload("apache2")  # deferred — apply_reloads() at end of function
+    if not DRY_RUN:
+        ok_a, msg_a = validate_apache()
+        if not ok_a:
+            run(["/usr/sbin/a2dissite", f"{webmail_domain}.conf"])
+            try:
+                os.remove(vhost_path)
+            except OSError:
+                pass
+            err(f"Apache config error:\n{msg_a}")
+            return
+    mark_reload("apache2")  # deferred — applied by setup_mail_server()
     ok(f"Apache VirtualHost created for {webmail_domain}")
+
+    # nginx front door: owns port 80 and hands webmail over to Apache (Host header preserved)
+    step("Configuring Nginx front-door proxy for webmail...")
+    nginx_path = write_nginx_vhost(webmail_domain, nginx_front_door_vhost(webmail_domain, tag="webmail"))
+    nginx_enable_site(webmail_domain)
+    if not DRY_RUN:
+        ok_n, msg_n = validate_nginx()
+        if not ok_n:
+            nginx_disable_site(webmail_domain)
+            try:
+                os.remove(nginx_path)
+            except OSError:
+                pass
+            err(f"Nginx config error:\n{msg_n}")
+            return
+    reload_nginx()
+    ok(f"Nginx proxy configured for {webmail_domain}")
+
+    # DNS first (A + MX): it must not depend on the Postfix/Dovecot steps below succeeding
+    fwd_file = rev_file = None
+    if create_dns:
+        step("Setting up DNS (A + MX records)...")
+        fwd_file, rev_file = ensure_mail_dns(domain, ip, webmail_domain)
 
     # Configure Postfix and Dovecot for Maildir format
     step("Configuring Postfix and Dovecot for Maildir...")
     run(["/usr/sbin/postconf", "-e", "home_mailbox = Maildir/"])
-    backup_config("/etc/dovecot/conf.d/99-local-mail.conf")
-    
+    configure_postfix_domain(domain)
     os_status, _ = check_os_compatibility()
-    
-    if DRY_RUN:
-        step(f"[dry-run] Would write to /etc/dovecot/conf.d/99-local-mail.conf")
-    else:
-        with open("/etc/dovecot/conf.d/99-local-mail.conf", "w") as f:
-            if os_status == "ubuntu":
-                # Dovecot 2.4 syntax
-                f.write("mail_driver = maildir\n")
-                f.write("mail_path = ~/Maildir\n")
-                f.write("mailbox_list_layout = fs\n")
-            else:
-                # Dovecot 2.3 syntax (Debian)
-                f.write("mail_location = maildir:~/Maildir\n")
-            
-            # Dovecot 2.3 (Debian 12) and 2.4 (Ubuntu) both accept these global overrides.
-            # auth_username_format is intentionally omitted: it is invalid at global scope
-            # in Dovecot 2.4 and causes a startup crash. Users log in with their plain
-            # system username (e.g. 'john'); no domain stripping is needed.
-            f.write("disable_plaintext_auth = no\n")
-            f.write("ssl = no\n")
+    write_dovecot_local_conf(os_status)
 
-    run(["systemctl", "restart", "postfix"])
-    res_dov = run(["systemctl", "restart", "dovecot"])
-    if res_dov.returncode != 0:
-        # Capture actual Dovecot error from journal for in-terminal diagnosis
-        journal = run(["journalctl", "-xeu", "dovecot.service", "--no-pager", "-n", "40"])
-        err(f"Dovecot failed to restart. Journal output:\n{journal.stdout.strip()}")
-        return
-    # Verify Dovecot is actually listening on IMAP port 143
-    port_check = run(["ss", "-tlnp"])
-    if ":143" not in port_check.stdout:
-        warn("Dovecot does not appear to be listening on port 143. "
-             "Check 'systemctl status dovecot' and /var/log/mail.log for errors.")
-    else:
-        ok("Postfix and Dovecot services restarted and verified (port 143 active).")
-
-    # Configure Roundcube SMTP and Domain settings
+    # Roundcube is plain config text, so write it BEFORE restarting any service. It used to come
+    # after the Dovecot restart, and a failed restart did a bare `return` that skipped it: webmail
+    # kept the old SMTP port and the "tohi@127.0.0.1" sender, whatever else had been fixed.
     step("Configuring Roundcube specific settings...")
-    rc_conf = "/etc/roundcube/config.inc.php"
-    rc_marker = "// Custom settings added by zervermanager"
-    if os.path.isfile(rc_conf):
-        backup_config(rc_conf)
-        if DRY_RUN:
-            step(f"[dry-run] Would write custom block to {rc_conf}")
-        else:
-            with open(rc_conf, "r") as f:
-                existing = f.read()
-            # Idempotent: strip any previously written custom block before rewriting
-            if rc_marker in existing:
-                existing = existing[:existing.index(rc_marker)]
-            with open(rc_conf, "w") as f:
-                f.write(existing.rstrip() + "\n\n")
-                f.write(f"{rc_marker}\n")
-                # imap_host without port suffix = plain IMAP on 143 (Roundcube 1.6+ standard).
-                # Do NOT set default_host alongside imap_host — they conflict in RC 1.6+.
-                # No username_domain: users log in with plain system username (e.g. 'john').
-                # This avoids the need for auth_username_format in Dovecot (incompatible with 2.4).
-                f.write(f"$config['imap_host'] = '127.0.0.1';\n")
-                f.write(f"$config['smtp_host'] = '127.0.0.1';\n")
-                f.write(f"$config['smtp_port'] = 25;\n")
-                f.write(f"$config['smtp_user'] = '';\n")
-                f.write(f"$config['smtp_pass'] = '';\n")
-        ok("Roundcube configured for local SMTP and IMAP.")
+    write_roundcube_settings(domain)
+
+    dovecot_ok = restart_mail_services(os_status)
+    check_mail_services(domain)
     print()
-    
-    # ── BIND9 zones ──
-    fwd_file = None
-    rev_file = None
-    if create_dns:
-        rev_zone = reverse_zone_name(ip)
-        fwd_file = f"{BIND_DIR}/db.{domain}"
-        rev_file = reverse_zone_file(ip)
+    if not dovecot_ok:
+        warn("Mail setup finished with errors. Fix the Dovecot problem above, then click \"Repair mail\".")
+        return
 
-        # Forward zone
-        if zone_exists(domain):
-            warn(f"Forward zone {domain} already exists. Appending mail records...")
-            with open(fwd_file, "r") as f:
-                zcontent = f.read()
-            zcontent = update_serial(zcontent)
-            zcontent += f"\n; Mail server records\n"
-            zcontent += f"mail    IN  A       {ip}\n"
-            zcontent += f"@       IN  MX  10  {webmail_domain}.\n"
-            backup_config(fwd_file)
-            if DRY_RUN:
-                step(f"[dry-run] Would write to { fwd_file }")
-            else:
-                with open(fwd_file, "w") as f:
-                    f.write(zcontent)
-            ok("Mail records appended to forward zone.")
-        else:
-            step("Writing forward zone...")
-            write_forward_zone(domain, ip, fwd_file)
-            if DRY_RUN:
-                step(f"[dry-run] Would append to { fwd_file }")
-            else:
-                with open(fwd_file, "a") as f:
-                    f.write(f"\n; Mail server records\n")
-                    f.write(f"mail    IN  A       {ip}\n")
-                    f.write(f"@       IN  MX  10  {webmail_domain}.\n")
-                
-            ok_z, msg_z = validate_zone(domain, fwd_file)
-            if not ok_z:
-                os.remove(fwd_file)
-                err(f"Zone error:\n{msg_z}")
-            else:
-                add_zone_to_conf(domain, fwd_file)
-                ok("Forward zone created.")
-
-        # Reverse zone
-        if zone_exists(rev_zone):
-            warn(f"Reverse zone {rev_zone} already exists, skipping.")
-        else:
-            step("Writing reverse zone...")
-            write_reverse_zone(domain, ip, rev_file)
-            ok_r, msg_r = validate_zone(rev_zone, rev_file)
-            if not ok_r:
-                os.remove(rev_file)
-                remove_zone_from_conf(domain)
-                err(f"Reverse zone error:\n{msg_r}")
-            else:
-                add_zone_to_conf(rev_zone, rev_file)
-                ok("Reverse zone created.")
-
-        ok_b, msg_b = validate_bind9()
-        if ok_b:
-            reload_bind9()
-        else:
-            err(f"BIND9 error:\n{msg_b}")
-            
     # Summary block similar to Apache site creation
     menu_separator()
     print(f"  {C.BOLD}Mail Domain:{C.RESET}  {domain}")
     print(f"  {C.BOLD}Webmail URL:{C.RESET}  http://{webmail_domain}")
     print(f"  {C.BOLD}Docroot:{C.RESET}      {docroot}")
     print(f"  {C.BOLD}Apache conf:{C.RESET}  {vhost_path}")
+    print(f"  {C.BOLD}Nginx conf:{C.RESET}   {nginx_path}")
     if create_dns:
         print(f"  {C.BOLD}Forward zone:{C.RESET} {fwd_file}")
         print(f"  {C.BOLD}Reverse zone:{C.RESET} {rev_file}")
+        print(f"  {C.BOLD}MX record:{C.RESET}    {domain} → {webmail_domain} (priority 10)")
     else:
         print(f"  {C.BOLD}DNS:{C.RESET}          {C.DIM}not created{C.RESET}")
         print(f"  {C.YELLOW}Note: Don't forget to create DNS A/CNAME records for {webmail_domain} and MX records for {domain}!{C.RESET}")
     menu_separator()
     print()
-    
-    apply_reloads()
 
 def add_mail_user():
     menu_header("Add Mail User")
@@ -6810,24 +7639,503 @@ def add_mail_user():
     except Exception as e:
         err(f"Error setting password: {e}")
 
+# ─────────────────────────────────────────
+#  Mail: domain handling, diagnostics, accounts
+# ─────────────────────────────────────────
+MAIL_GROUP   = "mailuser"
+MAIL_USER_RE = re.compile(r"^[a-z_](?:[a-z0-9_.-]{0,30}[a-z0-9_])?$")
+ROUNDCUBE_DB = "/var/lib/dbconfig-common/sqlite3/roundcube/roundcube"
+
+
+def configure_postfix_domain(domain):
+    """Tell Postfix that `domain` is a LOCAL domain.
+
+    If it isn't in mydestination, mail to user@domain is treated as remote: Postfix looks the
+    domain up in DNS (using the system resolver, which usually isn't this server's BIND) or
+    bounces it with "mail for <domain> loops back to myself". That is exactly what happens when
+    Postfix was installed earlier under a different name — debconf preseeding is then ignored."""
+    if DRY_RUN:
+        step(f"[dry-run] Would add {domain} to Postfix mydestination")
+        return
+    try:
+        with open("/etc/mailname", "w") as f:
+            f.write(domain + "\n")
+    except OSError:
+        pass
+    current = run(["/usr/sbin/postconf", "-h", "mydestination"]).stdout.strip()
+    items = [x for x in re.split(r"[,\s]+", current) if x]
+    if not items:
+        items = ["$myhostname", "localhost.localdomain", "localhost"]
+    if domain.lower() not in (i.lower() for i in items):
+        items.insert(1, domain)
+        run(["/usr/sbin/postconf", "-e", "mydestination = " + ", ".join(items)])
+        ok(f"Postfix now accepts mail for @{domain}.")
+    run(["/usr/sbin/postconf", "-e", "inet_interfaces = all"])
+
+
+def _roundcube_db():
+    """Which database Roundcube uses, from Debian's dbconfig file (default: the sqlite file)."""
+    info = {"type": "sqlite3", "path": ROUNDCUBE_DB}
+    try:
+        with open("/etc/roundcube/debian-db.php", "r") as f:
+            txt = f.read()
+        def grab(name):
+            m = re.search(r"\$" + name + r"\s*=\s*['\"]([^'\"]*)['\"]", txt)
+            return m.group(1) if m else ""
+        dbtype = grab("dbtype")
+        if dbtype in ("mysql", "pgsql"):
+            info = {"type": dbtype, "name": grab("dbname"), "user": grab("dbuser"),
+                    "pass": grab("dbpass"), "server": grab("dbserver") or "localhost"}
+        elif grab("basepath") and grab("dbname"):
+            info["path"] = os.path.join(grab("basepath"), grab("dbname"))
+    except OSError:
+        pass
+    return info
+
+
+def _rc_identities(domain, fix=False):
+    """Count (fix=False) or repair (fix=True) Roundcube identities that carry the IMAP host
+    (127.0.0.1 / localhost) instead of the mail domain. Returns the number of rows."""
+    if not re.fullmatch(r"[a-z0-9.-]+", domain or ""):
+        raise RuntimeError("unexpected characters in the mail domain")
+    db, total = _roundcube_db(), 0
+    for bad in ("127.0.0.1", "localhost"):
+        if db["type"] in ("sqlite3", "sqlite"):
+            import sqlite3
+            if not os.path.isfile(db["path"]):
+                raise RuntimeError("Roundcube database not found")
+            con = sqlite3.connect(db["path"], timeout=10)
+            try:
+                if fix:
+                    cur = con.execute(
+                        "UPDATE identities SET email = substr(email, 1, length(email) - ?) || ? WHERE email LIKE ?",
+                        (len(bad) + 1, "@" + domain, "%@" + bad))
+                    con.commit()
+                    total += cur.rowcount
+                else:
+                    total += con.execute("SELECT COUNT(*) FROM identities WHERE email LIKE ?", ("%@" + bad,)).fetchone()[0]
+            finally:
+                con.close()
+        elif db["type"] == "mysql":
+            binary = shutil.which("mysql") or shutil.which("mariadb")
+            if not binary:
+                raise RuntimeError("the mysql client is not installed")
+            like = f"%@{bad}"
+            sql = (f"UPDATE identities SET email = CONCAT(SUBSTRING(email, 1, CHAR_LENGTH(email) - {len(bad) + 1}), '@{domain}') "
+                   f"WHERE email LIKE '{like}'; SELECT ROW_COUNT();") if fix else \
+                  f"SELECT COUNT(*) FROM identities WHERE email LIKE '{like}';"
+            r = subprocess.run([binary, "-h", db["server"], "-u", db["user"], "-N", db["name"], "-e", sql],
+                               capture_output=True, text=True, timeout=20,
+                               env={**os.environ, "MYSQL_PWD": db["pass"]})
+            if r.returncode != 0:
+                raise RuntimeError((r.stderr or "mysql failed").strip())
+            nums = re.findall(r"^\d+$", r.stdout, re.MULTILINE)
+            total += int(nums[-1]) if nums else 0
+        else:
+            raise RuntimeError(f"unsupported Roundcube database type '{db['type']}'")
+    return total
+
+
+def fix_roundcube_identities(domain):
+    """Roundcube stores each user's From address the first time they log in. Anything created
+    while mail_domain was unset is stored as user@127.0.0.1 — repair those."""
+    if DRY_RUN:
+        return 0
+    try:
+        changed = _rc_identities(domain, fix=True)
+        if changed:
+            ok(f"Fixed {changed} Roundcube sender address(es) → @{domain}.")
+        return changed
+    except Exception as e:
+        warn(f"Could not update existing Roundcube sender addresses ({e}). "
+             f"Fix them under Roundcube → Settings → Identities.")
+        return 0
+
+
+def check_mail_services(domain):
+    """Quick sanity checks so a broken mail setup is reported at install time, not at first send."""
+    if DRY_RUN:
+        return
+    dest = run(["/usr/sbin/postconf", "-h", "mydestination"]).stdout
+    if domain.lower() in dest.lower():
+        ok(f"Postfix delivers @{domain} locally.")
+    else:
+        warn(f"@{domain} is not in Postfix mydestination — mail to it will not be delivered locally.")
+    try:
+        import smtplib
+        with smtplib.SMTP("127.0.0.1", 25, timeout=5) as smtp:
+            smtp.ehlo()
+        ok("SMTP is accepting connections on 127.0.0.1:25 (what webmail uses to send).")
+    except Exception as e:
+        warn(f"Could not connect to SMTP on 127.0.0.1:25: {e}")
+
+
+ROUNDCUBE_CONF = "/etc/roundcube/config.inc.php"
+RC_MARKER      = "// Custom settings added by zervermanager"
+DOVECOT_LOCAL  = "/etc/dovecot/conf.d/99-local-mail.conf"
+
+
+def write_dovecot_local_conf(os_status, full_address_login=True):
+    backup_config(DOVECOT_LOCAL)
+    if DRY_RUN:
+        step(f"[dry-run] Would write to {DOVECOT_LOCAL}")
+        return
+    with open(DOVECOT_LOCAL, "w") as f:
+        if os_status == "ubuntu":
+            # Dovecot 2.4 syntax
+            f.write("mail_driver = maildir\n")
+            f.write("mail_path = ~/Maildir\n")
+            f.write("mailbox_list_layout = fs\n")
+        else:
+            # Dovecot 2.3 syntax (Debian)
+            f.write("mail_location = maildir:~/Maildir\n")
+            if full_address_login:
+                # sign in with tohi@example.com as well as plain "tohi"
+                f.write("auth_username_format = %Ln\n")
+        # auth_username_format is invalid at global scope in Dovecot 2.4 (Ubuntu) and crashes it,
+        # so it is only ever written for the 2.3 branch above.
+        f.write("disable_plaintext_auth = no\n")
+        f.write("ssl = no\n")
+
+
+def write_roundcube_settings(domain):
+    """Point Roundcube at the local Postfix/Dovecot and give it the mail domain."""
+    if not os.path.isfile(ROUNDCUBE_CONF):
+        warn(f"{ROUNDCUBE_CONF} not found — Roundcube settings were not written.")
+        return False
+    backup_config(ROUNDCUBE_CONF)
+    if DRY_RUN:
+        step(f"[dry-run] Would write custom block to {ROUNDCUBE_CONF}")
+        return True
+    with open(ROUNDCUBE_CONF, "r") as f:
+        existing = f.read()
+    if RC_MARKER in existing:                       # idempotent: replace our previous block
+        existing = existing[:existing.index(RC_MARKER)]
+    with open(ROUNDCUBE_CONF, "w") as f:
+        f.write(existing.rstrip() + "\n\n")
+        f.write(f"{RC_MARKER}\n")
+        # imap_host without a port = plain IMAP on 143. Do NOT also set default_host (conflicts in RC 1.6).
+        f.write("$config['imap_host'] = '127.0.0.1';\n")
+        # Roundcube 1.6 IGNORES smtp_port: the port must be part of smtp_host, and a bare host
+        # defaults to 587 (which Postfix doesn't serve → "SMTP Error: Connection to server failed").
+        # smtp_server is the legacy name of the same option; Debian's stock config may still define
+        # it, and Roundcube lets the legacy name win — so set both.
+        f.write("$config['smtp_host'] = '127.0.0.1:25';\n")
+        f.write("$config['smtp_server'] = '127.0.0.1:25';\n")
+        f.write("$config['smtp_user'] = '';\n")
+        f.write("$config['smtp_pass'] = '';\n")
+        # Without mail_domain Roundcube builds addresses from the IMAP host: "tohi@127.0.0.1"
+        f.write(f"$config['mail_domain'] = '{domain}';\n")
+        f.write("$config['create_default_folders'] = true;\n")
+    ok("Roundcube configured for local SMTP and IMAP.")
+    fix_roundcube_identities(domain)
+    return True
+
+
+def restart_mail_services(os_status):
+    """Restart Postfix + Dovecot. If Dovecot rejects the optional full-address-login line,
+    retry without it, so that line can never leave Dovecot (and therefore webmail) down."""
+    run(["systemctl", "restart", "postfix"])
+    res = run(["systemctl", "restart", "dovecot"])
+    if res.returncode != 0 and os_status != "ubuntu" and not DRY_RUN:
+        warn("Dovecot rejected the new configuration — retrying without full-address login...")
+        write_dovecot_local_conf(os_status, full_address_login=False)
+        res = run(["systemctl", "restart", "dovecot"])
+        if res.returncode == 0:
+            warn("Dovecot is running, but webmail login needs the plain username (e.g. 'tohi').")
+    if res.returncode != 0:
+        journal = run(["journalctl", "-xeu", "dovecot.service", "--no-pager", "-n", "40"])
+        err(f"Dovecot failed to restart. Journal output:\n{journal.stdout.strip()}")
+        return False
+    if ":143" not in run(["ss", "-tlnp"]).stdout:
+        warn("Dovecot does not appear to be listening on port 143. "
+             "Check 'systemctl status dovecot' and /var/log/mail.log for errors.")
+    else:
+        ok("Postfix and Dovecot services restarted and verified (port 143 active).")
+    return True
+
+
+def _rc_last(txt, key):
+    vals = re.findall(r"\$config\[\s*['\"]" + key + r"['\"]\s*\]\s*=\s*['\"]([^'\"]*)['\"]", txt)
+    return vals[-1] if vals else None
+
+
+def diagnose_mail():
+    """Check every link of the chain  webmail → SMTP → Postfix → mailbox  and say what is wrong.
+    Read-only: it opens an SMTP conversation but never sends a message. Returns #problems."""
+    problems = 0
+
+    def bad(msg, fix=""):
+        nonlocal problems
+        problems += 1
+        err(msg)
+        if fix:
+            print(f"      → {fix}")
+
+    print(f"\n  {C.BOLD}Mail check{C.RESET}\n")
+    if not mail_server_installed():
+        bad("The mail server is not installed.", "Install it first (Install Mail Server).")
+        return problems
+    domain = get_mail_domain()
+    webmail = f"mail.{domain}"
+    if domain and "." in domain:
+        ok(f"Mail domain: {domain}")
+    else:
+        bad(f"No usable mail domain (/etc/mailname says '{domain}').", "Run Install Mail Server once with your domain.")
+
+    # Postfix: running? listening? (Debian's postfix.service can say "active" while the real instance is down)
+    if run(["/usr/sbin/postfix", "status"]).returncode == 0:
+        ok("Postfix is running.")
+    else:
+        bad("Postfix is NOT running.", "Run 'postfix check' and 'systemctl status postfix@-' on the server to see why.")
+    listen = run(["ss", "-H", "-ltn", "sport = :25"]).stdout
+    addrs = re.findall(r"(\S+):25\b", listen)
+    if addrs:
+        ok(f"Something is listening on port 25 ({', '.join(sorted(set(addrs)))}).")
+    else:
+        bad("Nothing is listening on port 25 — webmail shows \"SMTP Error: Connection to server failed\".",
+            "Click Repair mail, or check 'postfix check' for configuration errors.")
+
+    # A real SMTP conversation up to RCPT TO — exactly what webmail does, minus the message
+    try:
+        import smtplib
+        users = get_mail_users()
+        rcpt = f"{users[0]}@{domain}" if users else f"postmaster@{domain}"
+        with smtplib.SMTP("127.0.0.1", 25, timeout=8) as smtp:
+            smtp.ehlo()
+            smtp.mail(f"check@{domain}")
+            code, msg = smtp.rcpt(rcpt)
+            smtp.rset()
+        if code in (250, 251):
+            ok(f"Postfix accepts mail for {rcpt}.")
+        else:
+            text = msg.decode("utf-8", "replace") if isinstance(msg, bytes) else str(msg)
+            hint = ("The domain is not in Postfix's local domains — click Repair mail." if code == 554
+                    else "That mailbox does not exist." if code == 550 else "")
+            bad(f"Postfix refused {rcpt}: {code} {text}", hint)
+    except Exception as e:
+        bad(f"Cannot talk to SMTP on 127.0.0.1:25 ({e}).", "This is what webmail hits when sending fails.")
+
+    dest = run(["/usr/sbin/postconf", "-h", "mydestination"]).stdout
+    if domain and domain.lower() in dest.lower():
+        ok(f"Postfix treats @{domain} as a local domain.")
+    else:
+        bad(f"@{domain} is not in Postfix's local domains (mydestination: {dest.strip() or 'empty'}).", "Click Repair mail.")
+
+    # Dovecot
+    if run(["systemctl", "is-active", "dovecot"]).returncode == 0 and ":143" in run(["ss", "-tlnp"]).stdout:
+        ok("Dovecot is running (IMAP port 143).")
+    else:
+        bad("Dovecot is not running or not listening on IMAP port 143.", "Check 'systemctl status dovecot'.")
+
+    # Roundcube settings as Roundcube will actually read them (last assignment wins; legacy name wins)
+    try:
+        with open(ROUNDCUBE_CONF, "r") as f:
+            rc = f.read()
+        legacy, new = _rc_last(rc, "smtp_server"), _rc_last(rc, "smtp_host")
+        eff = legacy if legacy is not None else new
+        m = re.search(r":(\d+)$", eff or "")
+        if eff and m and m.group(1) == "25":
+            ok(f"Roundcube sends through {eff}.")
+        elif eff and not m:
+            bad(f"Roundcube's SMTP host is '{eff}' with no port, so it tries port 587 (nothing listens there).", "Click Repair mail.")
+        else:
+            bad(f"Roundcube's SMTP host is '{eff or 'empty'}', expected 127.0.0.1:25.", "Click Repair mail.")
+        md = _rc_last(rc, "mail_domain")
+        if md and md.lower() == (domain or "").lower():
+            ok(f"Roundcube builds addresses as user@{md}.")
+        else:
+            bad(f"Roundcube mail_domain is '{md or 'not set'}' — addresses come out as user@127.0.0.1.", "Click Repair mail.")
+    except OSError:
+        bad(f"Cannot read {ROUNDCUBE_CONF}.", "Is Roundcube installed?")
+    try:
+        n = _rc_identities(domain, fix=False)
+        if n:
+            bad(f"{n} Roundcube sender address(es) still show 127.0.0.1/localhost.", "Click Repair mail.")
+        else:
+            ok("No Roundcube sender addresses show the loopback address.")
+    except Exception as e:
+        warn(f"Could not inspect Roundcube sender addresses: {e}")
+
+    # Is webmail reachable the way a browser reaches it (nginx on :80 → Apache)?
+    try:
+        import urllib.request
+        req = urllib.request.Request("http://127.0.0.1/", headers={"Host": webmail})
+        body = urllib.request.urlopen(req, timeout=6).read(4000).decode("utf-8", "replace")
+        if "Apache2 Debian Default Page" in body:
+            bad(f"http://{webmail} answers with Apache's default page — the webmail virtual host isn't matched.",
+                "Run Install Mail Server again.")
+        elif "roundcube" in body.lower():
+            ok(f"Webmail answers at http://{webmail}.")
+        else:
+            warn(f"http://{webmail} answered, but it doesn't look like Roundcube.")
+    except Exception as e:
+        bad(f"Webmail did not answer at http://{webmail} ({e}).", "Run Install Mail Server again.")
+
+    # recent evidence
+    log = run(["journalctl", "-u", "postfix*", "-n", "60", "--no-pager"]).stdout
+    lines = [l for l in log.splitlines() if re.search(r"error|warning|fatal|reject|refused|deferred|bounced", l, re.I)][-5:]
+    if lines:
+        print(f"\n  {C.DIM}Recent Postfix problems:{C.RESET}")
+        for l in lines:
+            print(f"    {l.strip()[:200]}")
+    try:
+        with open("/var/log/roundcube/errors.log", "r", errors="replace") as f:
+            tail = [l.strip() for l in f.readlines()[-4:] if l.strip()]
+        if tail:
+            print(f"\n  {C.DIM}Recent Roundcube errors:{C.RESET}")
+            for l in tail:
+                print(f"    {l[:200]}")
+    except OSError:
+        pass
+
+    print()
+    if problems:
+        warn(f"{problems} problem(s) found. Click \"Repair mail\" to fix the settings automatically.")
+    else:
+        ok("Everything checks out. If sending still fails, the lines above show what to look at.")
+    return problems
+
+
+def repair_mail():
+    """Re-apply every mail setting WITHOUT reinstalling packages: Postfix local domain, Dovecot,
+    Roundcube SMTP/mail_domain and stored sender addresses — then run the check."""
+    if not mail_server_installed():
+        err("The mail server is not installed. Install it first.")
+        return False
+    domain = get_mail_domain()
+    if not domain or "." not in domain:
+        err(f"Cannot tell which domain to use (/etc/mailname says '{domain}'). Run Install Mail Server once.")
+        return False
+    step(f"Repairing mail settings for {domain}...")
+    configure_postfix_domain(domain)
+    os_status, _ = check_os_compatibility()
+    write_dovecot_local_conf(os_status)
+    write_roundcube_settings(domain)
+    services_ok = restart_mail_services(os_status)
+    problems = diagnose_mail()
+    return services_ok and problems == 0
+
+
+def get_mail_domain():
+    """The primary mail domain written by the installer (/etc/mailname), or '' if none."""
+    try:
+        with open("/etc/mailname", "r") as f:
+            return f.readline().strip().lower()
+    except OSError:
+        return ""
+
+
+def mail_server_installed():
+    return os.path.exists("/usr/sbin/postfix") and os.path.exists("/usr/sbin/dovecot")
+
+
+def get_mail_users():
+    res = run(["/usr/bin/getent", "group", MAIL_GROUP])
+    if res.returncode == 0 and res.stdout.strip():
+        parts = res.stdout.strip().split(":")
+        if len(parts) >= 4 and parts[3]:
+            return sorted(u for u in parts[3].split(",") if u)
+    return []
+
+
+def _ensure_maildir(username):
+    try:
+        import pwd
+        pw = pwd.getpwnam(username)
+        base = os.path.join(pw.pw_dir, "Maildir")
+        for sub in ("", "cur", "new", "tmp"):
+            d = os.path.join(base, sub)
+            os.makedirs(d, exist_ok=True)
+            os.chmod(d, 0o700)
+            os.chown(d, pw.pw_uid, pw.pw_gid)
+    except Exception:
+        pass            # Postfix / Dovecot create it on first delivery / login anyway
+
+
+def create_mail_user(username, password):
+    """Create a mail account: a system user in the 'mailuser' group, with a Maildir.
+
+    Non-interactive on purpose. add_mail_user() runs the interactive `passwd`, which needs a
+    terminal and so silently never set the password when called from the web UI."""
+    domain = get_mail_domain()
+    username = (username or "").strip().lower()
+    password = password or ""
+    if "@" in username:
+        local, _, dom = username.partition("@")
+        if domain and dom != domain:
+            err(f"This server's mail domain is {domain} — enter just the part before the @.")
+            return False
+        username = local
+    if not mail_server_installed():
+        err("The mail server is not installed yet. Install it first (Install Services → Mail Server).")
+        return False
+    if not username:
+        err("Enter a username.")
+        return False
+    if not MAIL_USER_RE.match(username):
+        err("Usernames can use lowercase letters, digits, '.', '-' and '_', and must start with a letter.")
+        return False
+    if len(password) < 6:
+        err("Password must be at least 6 characters.")
+        return False
+    if "\n" in password or "\r" in password:
+        err("Password cannot contain line breaks.")
+        return False
+
+    run(["/usr/sbin/groupadd", "-f", MAIL_GROUP])
+    if run(["/usr/bin/id", username]).returncode == 0:
+        if username in get_mail_users():
+            err(f"The mail account {username}@{domain or 'this-server'} already exists.")
+        else:
+            err(f"'{username}' is already used by a system account — pick another name.")
+        return False
+
+    step(f"Creating mail account {username}...")
+    res = run(["/usr/sbin/useradd", "-m", "-s", "/usr/sbin/nologin", "-G", MAIL_GROUP, username])
+    if res.returncode != 0:
+        err(f"Failed to create the account:\n{(res.stderr or res.stdout).strip()}")
+        return False
+    pw = subprocess.run(["/usr/sbin/chpasswd"], input=f"{username}:{password}\n",
+                        text=True, capture_output=True)
+    if pw.returncode != 0:
+        run(["/usr/sbin/userdel", "-r", username])          # don't leave an account without a password
+        err(f"Could not set the password:\n{(pw.stderr or pw.stdout).strip()}")
+        return False
+    _ensure_maildir(username)
+    ok(f"Mail account {username}@{domain} created." if domain else f"Mail account {username} created.")
+    print(f"  Webmail login: {username}" + (f"  (or {username}@{domain})" if domain else ""))
+    return True
+
+
+def delete_mail_user_account(username):
+    """Delete a mail account. Only members of the 'mailuser' group can be removed this way, so the
+    web API can never be used to delete a real system account (root, your admin user, ...)."""
+    username = (username or "").strip().lower().split("@")[0]
+    if not username:
+        err("No account given.")
+        return False
+    if username not in get_mail_users():
+        err(f"'{username}' is not a mail account — refusing to delete it.")
+        return False
+    step(f"Deleting mail account {username} and its mailbox...")
+    res = run(["/usr/sbin/userdel", "-r", username])
+    if res.returncode == 8:                                  # an IMAP session is still open
+        res = run(["/usr/sbin/userdel", "-r", "-f", username])
+    if res.returncode in (0, 6):                             # 6 = mail spool already gone
+        ok(f"Mail account {username} deleted.")
+        return True
+    err(f"Failed to delete the account:\n{(res.stderr or res.stdout).strip()}")
+    return False
+
+
 def delete_mail_user():
     menu_header("Delete Mail User")
 
     username = input("  Enter mail username to delete: ").strip()
     if not username:
         return
-
-    # Basic safety check
-    if username in ["root", "admin", "a2"]:
-        if not prompt_confirm(f"Are you sure you want to delete {username}?"):
-            return
-
-    step(f"Deleting user {username} and their mailbox...")
-    res = run(["/usr/sbin/userdel", "-r", username])
-    if res.returncode == 0:
-        ok(f"User {username} deleted.")
-    else:
-        err(f"Failed to delete user:\n{res.stderr.strip()}")
+    delete_mail_user_account(username)
 
 def list_mail_users():
     menu_header("List Mail Users")
@@ -6893,6 +8201,8 @@ def delete_mail_services():
     if os.path.isfile("/etc/apache2/conf-available/roundcube.conf"):
         run(["/usr/sbin/a2disconf", "roundcube"])
         run(["systemctl", "reload", "apache2"])
+    _remove_webmail_vhosts()
+    apply_reloads()
     
     # Optional manual cleanup
     for d in ["/etc/postfix", "/etc/dovecot"]:
@@ -7052,11 +8362,25 @@ def setup_phpmyadmin():
     # Enable mbstring for apache if present
     run(["/usr/sbin/phpenmod", "mbstring"])
     run(["/usr/sbin/a2enconf", "phpmyadmin"])
-    run(["systemctl", "reload", "apache2"])
+    if os.path.isfile("/usr/sbin/nginx"):
+        configure_apache_ports()            # nginx owns :80 — keep Apache off it
+    mark_reload("apache2")
 
     ok("phpMyAdmin installed successfully.")
+
+    # Apache serves phpMyAdmin on :8080; without a route, nginx on :80 answers /phpmyadmin with 404
+    on_port_80 = expose_phpmyadmin_via_nginx()
+    apply_reloads()
+
+    ip = detect_server_ip() or "<your-server-ip>"
     print()
-    print(f"  {C.BOLD}Access via:{C.RESET}  http://<your-server-ip>/phpmyadmin")
+    if on_port_80:
+        print(f"  {C.BOLD}Access via:{C.RESET}  http://{ip}/phpmyadmin")
+        if apache_on_backend_port():
+            print(f"  {C.DIM}Direct (Apache): http://{ip}:8080/phpmyadmin{C.RESET}")
+    else:
+        port = 8080 if apache_on_backend_port() else 80
+        print(f"  {C.BOLD}Access via:{C.RESET}  http://{ip}:{port}/phpmyadmin")
     print(f"  Login with your MariaDB root or site database credentials.")
     input("\n  Press Enter to continue...")
 
@@ -7067,7 +8391,9 @@ def delete_phpmyadmin():
         return
     rc, _ = run_live(["apt-get", "purge", "-y", "phpmyadmin"])
     ok("phpMyAdmin removed.") if rc == 0 else err("Failed to remove phpMyAdmin.")
-    run(["systemctl", "reload", "apache2"])
+    unexpose_phpmyadmin_nginx()
+    mark_reload("apache2")
+    apply_reloads()
     input("\n  Press Enter to continue...")
 
 
@@ -7388,6 +8714,7 @@ def display_main_menu() -> str:
     print("4. Manage Server")
     print("5. Reload All Related Services")
     print("6. Help")
+    print("7. Docker")
     print("0. Exit")
     menu_separator()
     print(f"  {C.CYAN}OS Detected: {get_os_version()}{C.RESET}")
@@ -7408,8 +8735,236 @@ def _shutdown():
 
 
 # ─────────────────────────────────────────
+#  Server Telemetry Helpers
+# ─────────────────────────────────────────
+
+_last_cpu_sample = None
+
+def get_system_uptime():
+    """Return system uptime in seconds, formatted duration string, and boot timestamp."""
+    seconds = None
+    if os.path.exists("/proc/uptime"):
+        try:
+            with open("/proc/uptime", "r") as f:
+                seconds = float(f.readline().split()[0])
+        except Exception:
+            pass
+
+    if seconds is None and sys.platform == "win32":
+        try:
+            import ctypes
+            ms = ctypes.windll.kernel32.GetTickCount64()
+            seconds = ms / 1000.0
+        except Exception:
+            pass
+
+    if seconds is None:
+        return {"seconds": 0, "formatted": "N/A", "boot_time": "N/A"}
+
+    total_secs = int(seconds)
+    days = total_secs // 86400
+    hours = (total_secs % 86400) // 3600
+    minutes = (total_secs % 3600) // 60
+    secs = total_secs % 60
+
+    parts = []
+    if days > 0:
+        parts.append(f"{days}d")
+    if hours > 0 or days > 0:
+        parts.append(f"{hours}h")
+    parts.append(f"{minutes}m")
+    formatted = " ".join(parts) if parts else f"{secs}s"
+
+    try:
+        boot_dt = datetime.fromtimestamp(time.time() - seconds).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        boot_dt = "N/A"
+
+    return {
+        "seconds": total_secs,
+        "formatted": formatted,
+        "boot_time": boot_dt
+    }
+
+
+def get_ram_usage():
+    """Return RAM usage: percent, used_gb, total_gb, free_gb, formatted string."""
+    if os.path.exists("/proc/meminfo"):
+        try:
+            mem = {}
+            with open("/proc/meminfo", "r") as f:
+                for line in f:
+                    parts = line.split(":")
+                    if len(parts) == 2:
+                        mem[parts[0].strip()] = int(parts[1].strip().split()[0])
+            total_kb = mem.get("MemTotal", 0)
+            avail_kb = mem.get("MemAvailable", mem.get("MemFree", 0) + mem.get("Buffers", 0) + mem.get("Cached", 0))
+            used_kb = max(0, total_kb - avail_kb)
+            if total_kb > 0:
+                percent = round((used_kb / total_kb) * 100, 1)
+                total_gb = round(total_kb / (1024 * 1024), 2)
+                used_gb = round(used_kb / (1024 * 1024), 2)
+                free_gb = round(avail_kb / (1024 * 1024), 2)
+                return {
+                    "percent": percent,
+                    "used_gb": used_gb,
+                    "total_gb": total_gb,
+                    "free_gb": free_gb,
+                    "formatted": f"{used_gb} GB / {total_gb} GB"
+                }
+        except Exception:
+            pass
+
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ('dwLength', ctypes.c_ulong),
+                    ('dwMemoryLoad', ctypes.c_ulong),
+                    ('ullTotalPhys', ctypes.c_ulonglong),
+                    ('ullAvailPhys', ctypes.c_ulonglong),
+                    ('ullTotalPageFile', ctypes.c_ulonglong),
+                    ('ullAvailPageFile', ctypes.c_ulonglong),
+                    ('ullTotalVirtual', ctypes.c_ulonglong),
+                    ('ullAvailVirtual', ctypes.c_ulonglong),
+                    ('ullAvailExtendedVirtual', ctypes.c_ulonglong),
+                ]
+            stat = MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+            total_gb = round(stat.ullTotalPhys / (1024**3), 2)
+            avail_gb = round(stat.ullAvailPhys / (1024**3), 2)
+            used_gb = round(max(0.0, total_gb - avail_gb), 2)
+            percent = float(stat.dwMemoryLoad)
+            return {
+                "percent": percent,
+                "used_gb": used_gb,
+                "total_gb": total_gb,
+                "free_gb": avail_gb,
+                "formatted": f"{used_gb} GB / {total_gb} GB"
+            }
+        except Exception:
+            pass
+
+    return {
+        "percent": 0.0,
+        "used_gb": 0.0,
+        "total_gb": 0.0,
+        "free_gb": 0.0,
+        "formatted": "N/A"
+    }
+
+
+def get_cpu_usage():
+    """Return CPU usage: percent, cores count, load average, and load string."""
+    global _last_cpu_sample
+    cores = os.cpu_count() or 1
+    percent = 0.0
+    load_avg = [0.0, 0.0, 0.0]
+
+    if os.path.exists("/proc/loadavg"):
+        try:
+            with open("/proc/loadavg", "r") as f:
+                load_parts = f.read().split()[:3]
+                load_avg = [round(float(x), 2) for x in load_parts]
+        except Exception:
+            pass
+
+    if os.path.exists("/proc/stat"):
+        try:
+            with open("/proc/stat", "r") as f:
+                first_line = f.readline()
+            if first_line.startswith("cpu "):
+                fields = [float(x) for x in first_line.split()[1:8]]
+                idle = fields[3] + fields[4]
+                total = sum(fields)
+                if _last_cpu_sample is not None:
+                    prev_idle, prev_total = _last_cpu_sample
+                    idle_delta = idle - prev_idle
+                    total_delta = total - prev_total
+                    if total_delta > 0:
+                        percent = round(100.0 * (1.0 - (idle_delta / total_delta)), 1)
+                        percent = max(0.0, min(100.0, percent))
+                else:
+                    time.sleep(0.05)
+                    with open("/proc/stat", "r") as f2:
+                        second_line = f2.readline()
+                    fields2 = [float(x) for x in second_line.split()[1:8]]
+                    idle2 = fields2[3] + fields2[4]
+                    total2 = sum(fields2)
+                    total_delta = total2 - total
+                    idle_delta = idle2 - idle
+                    if total_delta > 0:
+                        percent = round(100.0 * (1.0 - (idle_delta / total_delta)), 1)
+                        percent = max(0.0, min(100.0, percent))
+                    idle, total = idle2, total2
+                _last_cpu_sample = (idle, total)
+        except Exception:
+            pass
+    elif sys.platform == "win32":
+        try:
+            import ctypes
+            class FILETIME(ctypes.Structure):
+                _fields_ = [("dwLowDateTime", ctypes.c_uint), ("dwHighDateTime", ctypes.c_uint)]
+            def to_int(ft):
+                return (ft.dwHighDateTime << 32) + ft.dwLowDateTime
+            idle_ft, kernel_ft, user_ft = FILETIME(), FILETIME(), FILETIME()
+            if ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(idle_ft), ctypes.byref(kernel_ft), ctypes.byref(user_ft)):
+                idle = to_int(idle_ft)
+                kernel = to_int(kernel_ft)
+                user = to_int(user_ft)
+                total = kernel + user
+                if _last_cpu_sample is not None:
+                    prev_idle, prev_total = _last_cpu_sample
+                    idle_delta = idle - prev_idle
+                    total_delta = total - prev_total
+                    if total_delta > 0:
+                        percent = round(100.0 * (1.0 - (idle_delta / total_delta)), 1)
+                        percent = max(0.0, min(100.0, percent))
+                _last_cpu_sample = (idle, total)
+        except Exception:
+            pass
+
+    load_str = f"{load_avg[0]:.2f}, {load_avg[1]:.2f}, {load_avg[2]:.2f}"
+    return {
+        "percent": percent,
+        "cores": cores,
+        "load_avg": load_avg,
+        "load_str": load_str,
+        "formatted": f"{percent}%"
+    }
+
+
+# ─────────────────────────────────────────
 #  Web Configuration Server
 # ─────────────────────────────────────────
+
+class MockStdin:
+    """Stdin replacement that feeds pre-defined answers to input() calls.
+
+    The web handlers drive the interactive CLI menus by swapping sys.stdin for
+    one of these. After all answers are consumed it returns empty lines, which
+    accepts defaults / skips optional prompts.
+
+    Lives at module level on purpose: it used to be defined *inside*
+    handle_makesite_post(), so every other handler (install, uninstall, docker,
+    database, DNS, network, ...) crashed with ``NameError: name 'MockStdin' is not defined``.
+    """
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self._buffer = ""
+    def readline(self):
+        if self.responses:
+            return str(self.responses.pop(0)) + "\n"
+        return "\n"
+    def read(self, n=-1):
+        return self.readline()
+    def isatty(self):
+        return False
+    def fileno(self):
+        raise io.UnsupportedOperation("MockStdin has no fileno")
+
 
 class WebUIHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -7434,6 +8989,10 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
             def strip_ansi(text):
                 return re.sub(r'\x1b\[[0-9;]*m', '', text)
             
+            uptime_info = get_system_uptime()
+            ram_info = get_ram_usage()
+            cpu_info = get_cpu_usage()
+
             data = {
                 "os": get_os_version(),
                 "apache2": strip_ansi(service_status("apache2")),
@@ -7443,7 +9002,18 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
                 "postfix": strip_ansi(service_status("postfix")),
                 "dovecot": strip_ansi(service_status("dovecot")),
                 "ufw": strip_ansi(service_status("ufw")),
-                "version": SCRIPT_VERSION
+                "docker_installed": is_docker_installed(),
+                "version": SCRIPT_VERSION,
+                "uptime": uptime_info["formatted"],
+                "uptime_seconds": uptime_info["seconds"],
+                "boot_time": uptime_info.get("boot_time", ""),
+                "cpu": cpu_info["percent"],
+                "cpu_cores": cpu_info["cores"],
+                "cpu_load": cpu_info["load_str"],
+                "ram": ram_info["percent"],
+                "ram_used_gb": ram_info["used_gb"],
+                "ram_total_gb": ram_info["total_gb"],
+                "ram_formatted": ram_info["formatted"]
             }
             self.wfile.write(json.dumps(data).encode("utf-8"))
         elif parsed.path == "/api/sites":
@@ -7459,6 +9029,8 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
                             "server": "apache",
                             "type": meta.get("type", "unknown"),
                             "docroot": meta.get("docroot", f"/var/www/{domain}"),
+                            "container_name": meta.get("container_name"),
+                            "host_port": meta.get("host_port"),
                             "enabled": enabled
                         })
             if os.path.exists(NGINX_SITES_AVAILABLE):
@@ -7472,9 +9044,21 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
                             "server": "nginx",
                             "type": meta.get("type", "unknown"),
                             "docroot": meta.get("docroot", f"/var/www/{domain}"),
+                            "container_name": meta.get("container_name"),
+                            "host_port": meta.get("host_port"),
                             "enabled": enabled
                         })
             self.wfile.write(json.dumps(sites).encode("utf-8"))
+        elif parsed.path == "/api/docker_containers":
+            containers = []
+            if is_docker_installed():
+                res = run(["docker", "ps", "-a", "--format", "{{.Names}}|{{.Image}}|{{.Status}}"])
+                if res.returncode == 0 and res.stdout.strip():
+                    for line in res.stdout.strip().split("\n"):
+                        parts = line.split("|")
+                        if len(parts) >= 3:
+                            containers.append({"name": parts[0], "image": parts[1], "status": parts[2]})
+            self.wfile.write(json.dumps(containers).encode("utf-8"))
         elif parsed.path == "/api/manage/dns":
             query = urllib.parse.parse_qs(parsed.query)
             if query.get('action', [''])[0] == 'list':
@@ -7491,14 +9075,15 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(b"[]")
         elif parsed.path == "/api/manage/mail":
             query = urllib.parse.parse_qs(parsed.query)
-            if query.get('action', [''])[0] == 'list':
-                users = []
-                res = run(["/usr/bin/getent", "group", "mailuser"])
-                if res.returncode == 0 and res.stdout.strip():
-                    parts = res.stdout.strip().split(":")
-                    if len(parts) >= 4 and parts[3]:
-                        users = parts[3].split(",")
-                self.wfile.write(json.dumps(users).encode("utf-8"))
+            action_q = query.get('action', [''])[0]
+            if action_q == 'info':
+                self.wfile.write(json.dumps({
+                    "installed": mail_server_installed(),
+                    "domain": get_mail_domain(),
+                    "users": get_mail_users(),
+                }).encode("utf-8"))
+            elif action_q == 'list':
+                self.wfile.write(json.dumps(get_mail_users()).encode("utf-8"))
             else:
                 self.wfile.write(b"[]")
         else:
@@ -7508,6 +9093,10 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path.startswith("/api/makesite/"):
             self.handle_makesite_post(parsed.path)
+        elif parsed.path.startswith("/api/manage/docker"):
+            self.handle_manage_docker_post(parsed.path)
+        elif parsed.path == "/api/makesite_docker":
+            self.handle_makesite_post("/api/makesite/docker")
         elif parsed.path.startswith("/api/manage/site_action"):
             self.handle_site_action_post()
         elif parsed.path.startswith("/api/manage/"):
@@ -7787,6 +9376,60 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
         except Exception:
             pass
 
+    def handle_manage_docker_post(self, path):
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length) if content_length > 0 else b'{}'
+        data = json.loads(post_data.decode('utf-8'))
+        
+        old_stdout, old_stdin = self._setup_stream()
+        import sys
+        
+        success = False
+        try:
+            action = data.get("action")
+            if action == "install":
+                install_docker()
+            elif action == "prune":
+                sys.stdin = MockStdin(["y"])
+                docker_system_cleanup()
+            elif action == "list":
+                res = run(["docker", "ps", "-a", "--format", "{{.Names}}|{{.Image}}|{{.Status}}"])
+                if res.returncode == 0:
+                    print(res.stdout)
+            elif action in ["start", "stop", "restart", "rm"]:
+                target = data.get("target")
+                if target:
+                    if action == "rm":
+                        run(["docker", "rm", "-f", target])
+                        ok(f"Removed {target}")
+                    else:
+                        run(["docker", action, target])
+                        ok(f"Successfully executed {action} on {target}")
+            elif action == "oneclick":
+                service = data.get("service")
+                if service == "1":
+                    domain = data.get("domain", "")
+                    dns_choice = "y" if domain else "n"
+                    inputs = ["1", dns_choice]
+                    if domain: inputs.append(domain)
+                    inputs.append("0")
+                    sys.stdin = MockStdin(inputs)
+                    docker_oneclick_menu()
+                elif service == "2":
+                    sys.stdin = MockStdin(["2", "0"])
+                    docker_oneclick_menu()
+                elif service == "3":
+                    pw = data.get("password", "")
+                    sys.stdin = MockStdin(["3", pw, "0"])
+                    docker_oneclick_menu()
+            success = True
+        except Exception as e:
+            import traceback
+            print(f"Error: {e}")
+            traceback.print_exc()
+        finally:
+            self._teardown_stream(old_stdout, old_stdin, success)
+
     def handle_manage_post(self, path):
         content_length = int(self.headers.get('Content-Length', 0))
         post_data = self.rfile.read(content_length) if content_length > 0 else b'{}'
@@ -7944,15 +9587,9 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
             elif path == "/api/manage/mail":
                 action = data.get("action")
                 if action == "add_user":
-                    m_user = data.get("mail_user", "")
-                    m_pass = data.get("mail_pass", "")
-                    sys.stdin = MockStdin([m_user, m_pass])
-                    add_mail_user()
+                    success = create_mail_user(data.get("mail_user", ""), data.get("mail_pass", ""))
                 elif action == "delete_user":
-                    m_user = data.get("mail_user", "")
-                    sys.stdin = MockStdin([m_user, "yes"])
-                    delete_mail_user()
-                success = True
+                    success = delete_mail_user_account(data.get("mail_user", ""))
         except Exception as e:
             print(f"\n[!] Server Error: {e}")
             import traceback
@@ -7977,6 +9614,11 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
                 sys.stdin = MockStdin([domain, ip])
                 setup_mail_server()
                 success = True
+            elif path == "/api/install/mail-check":
+                diagnose_mail()
+                success = True
+            elif path == "/api/install/mail-repair":
+                success = repair_mail()
             elif path == "/api/install/ftp":
                 setup_ftp_server()
                 success = True
@@ -8039,24 +9681,8 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
         old_stdout, old_stdin = self._setup_stream()
         import sys, io
         
-        class MockStdin:
-            """Mock stdin that feeds pre-defined responses to input() calls.
-            After all responses are consumed, returns empty strings (accepts defaults / skips prompts).
-            """
-            def __init__(self, responses):
-                self.responses = list(responses)
-                self._buffer = ""
-            def readline(self):
-                if self.responses:
-                    return self.responses.pop(0) + "\n"
-                return "\n"
-            def read(self, n=-1):
-                return self.readline()
-            def isatty(self):
-                return False
-            def fileno(self):
-                raise io.UnsupportedOperation("MockStdin has no fileno")
-                
+        # MockStdin is defined at module level (shared by every handler)
+        
         site_type = path.split("/")[-1]
         success = False
         
@@ -8256,7 +9882,26 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
                 else:
                     create_nginx_reverse_proxy()
                 success = True
-                
+
+            elif site_type == "docker":
+                # create_container_site() input sequence:
+                #  1. ask_domain()           -> domain
+                #  2. image                  -> image
+                #  3. internal port          -> port
+                #  4. "Create DNS zones?"    -> "y"/"n"
+                #  5. prompt_for_ip()        -> ip  (ONLY if dns="y")
+                image = data.get("image", "")
+                port = data.get("port", "80")
+                dns = "y" if data.get("dns") else "n"
+                ip = data.get("ip", "")
+                responses = [domain, image, str(port), dns]
+                if dns == "y":
+                    responses.append(ip)
+                responses.append("")  # press enter
+                sys.stdin = MockStdin(responses)
+                create_container_site()
+                success = True
+
         except Exception as e:
             print(f"\n[!] Server Error: {e}")
             import traceback
@@ -8281,8 +9926,11 @@ class _WebServer(socketserver.ThreadingTCPServer):
         super().server_bind()
 
 def _find_free_port(preferred, max_tries=10):
-    """Return *preferred* if available, else the next free port up to preferred+max_tries."""
+    """Return *preferred* if available, else the next free port up to preferred+max_tries.
+    Ports reserved for Apache are never returned."""
     for port in range(preferred, preferred + max_tries):
+        if port in APACHE_BACKEND_PORTS:
+            continue
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -8292,8 +9940,37 @@ def _find_free_port(preferred, max_tries=10):
             continue
     return None
 
+def _warn_if_apache_port_blocked(ports_conf="/etc/apache2/ports.conf"):
+    """Apache is configured to Listen on 8080. If some other process already owns that
+    port, Apache fails with "(98)Address already in use" — say so, and say who it is."""
+    try:
+        if not os.path.exists(ports_conf):
+            return
+        with open(ports_conf, "r") as f:
+            if not re.search(r"^\s*Listen\s+(?:\S+:)?8080\b", f.read(), re.MULTILINE):
+                return
+        out = subprocess.run(["ss", "-H", "-ltnp", "sport = :8080"],
+                             capture_output=True, text=True, timeout=5).stdout
+        owners = re.findall(r'users:\(\("([^"]+)",pid=(\d+)', out)
+        others = [(n, p) for n, p in owners if n not in ("apache2", "httpd")]
+        if others:
+            who = ", ".join(f"{n} (pid {p})" for n, p in others)
+            warn(f"Port 8080 is in use by {who}.")
+            warn("Apache is configured to listen on 8080, so it will not start until that process is stopped.")
+            warn("Find it with:  ss -ltnp 'sport = :8080'    stop it with:  kill <pid>")
+    except Exception:
+        pass            # purely advisory — never block startup
+
 def start_web_ui():
-    PREFERRED_PORT = 8080
+    # 8080/8443 belong to Apache (see APACHE_BACKEND_PORTS). Override with ZM_PORT=<port>.
+    PREFERRED_PORT = WEB_UI_DEFAULT_PORT
+    _env_port = os.environ.get("ZM_PORT", "").strip()
+    if _env_port.isdigit():
+        if int(_env_port) in APACHE_BACKEND_PORTS:
+            warn(f"ZM_PORT={_env_port} is reserved for Apache — using {WEB_UI_DEFAULT_PORT} instead.")
+        else:
+            PREFERRED_PORT = int(_env_port)
+    _warn_if_apache_port_blocked()
     web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web_config')
     os.makedirs(web_dir, exist_ok=True)
 
@@ -8391,6 +10068,8 @@ def main():
             reload_all_services()
         elif choice == "6":
             show_help()
+        elif choice == "7":
+            docker_menu()
         elif choice == "0":
             _shutdown()
         else:
