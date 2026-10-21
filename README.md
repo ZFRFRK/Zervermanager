@@ -43,6 +43,22 @@ chmod +x zervermanager.py
 sudo python3 zervermanager.py
 ```
 
+### Go Port (experimental, `zervermanager-go/`)
+
+A Go rewrite of the web manager is being built alongside the Python
+version in [`zervermanager-go/`](zervermanager-go/). Same UI, same API
+security contract, no Python runtime needed on the server — prebuilt
+Linux binaries are committed, so it installs the same way:
+
+```bash
+git clone -b dev https://github.com/ZFRFRK/Zervermanager.git
+cd Zervermanager/zervermanager-go
+sudo ./install.sh
+```
+
+See [zervermanager-go/README.md](zervermanager-go/README.md) for the
+current milestone status and scope.
+
 ### Dry-Run Mode — Strongly Recommended
 
 Simulate all actions without touching any system file:

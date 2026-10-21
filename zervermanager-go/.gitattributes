@@ -1,0 +1,5 @@
+# Shell scripts must be LF or bash chokes on line endings
+*.sh text eol=lf
+Makefile text eol=lf
+# Prebuilt Go binaries are never diffable text
+bin/* binary
