@@ -183,7 +183,13 @@ func (s *Server) postAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Routes land here from M2 on. Until then the python contract for
+	// ── M2: Make Site (python handle_makesite_post, streamed) ────────
+	if handleMakesiteRoute(path) {
+		s.handleMakesite(w, r, path)
+		return
+	}
+
+	// Routes land here from M3 on. Until then the python contract for
 	// unknown POST paths applies: 404.
 	http.Error(w, "Not Found", http.StatusNotFound)
 }
