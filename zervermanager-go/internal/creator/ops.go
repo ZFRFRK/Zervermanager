@@ -161,16 +161,9 @@ func (f *Flow) run(timeout time.Duration, name string, args ...string) run.Resul
 	return run.Run(timeout, name, args...)
 }
 
-// runLive — python run_live(): stream Selected stdout lines live (the
-// apt/dpkg SHOW_PREFIXES filter), return (rc, stderr).
-func (f *Flow) runLive(name string, args ...string) (int, string) {
-	if len(args) > 0 && args[0] == "-c" {
-		// unreachable by construction; kept for clarity
-	}
-	return f.runLiveTimeout(0, name, args...)
-}
-
-// runLiveTimeout — run_live with a deadline (apt installs, certbot).
+// runLiveTimeout — python run_live() with a deadline (apt installs,
+// docker pull, certbot). Streams the selected stdout lines live (the
+// apt/dpkg SHOW_PREFIXES filter), returns (rc, stderr).
 func (f *Flow) runLiveTimeout(timeout time.Duration, name string, args ...string) (int, string) {
 	cmd := exec.Command(name, args...)
 	var stderrBuf strings.Builder

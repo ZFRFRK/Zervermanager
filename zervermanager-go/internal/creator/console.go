@@ -171,7 +171,7 @@ func askDomain(s *Stream, a Answers) (string, error) {
 
 // bridgeValid — python _bridge_valid(): refuse re-prompting on a
 // bridged-but-invalid value.
-func bridgeValid(s *Stream, val, pattern, what string, re *regexp.Regexp) string {
+func bridgeValid(s *Stream, val, what string, re *regexp.Regexp) string {
 	val = strings.TrimSpace(val)
 	if val == "" {
 		return ""
@@ -194,7 +194,7 @@ func askDBName(s *Stream, a Answers, def string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	val = bridgeValid(s, val, "", "database name", dbIdentRE)
+	val = bridgeValid(s, val, "database name", dbIdentRE)
 	if val == "" {
 		return def, nil
 	}
@@ -211,7 +211,7 @@ func askDBUser(s *Stream, a Answers, def string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	val = bridgeValid(s, val, "", "database user", dbIdentRE)
+	val = bridgeValid(s, val, "database user", dbIdentRE)
 	if val == "" {
 		return def, nil
 	}
