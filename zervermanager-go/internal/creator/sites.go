@@ -48,6 +48,11 @@ func (f *Flow) reloadNginx() { f.markReload("nginx") }
 // bare message). Returning errAbort mirrors the python early-return.
 func (f *Flow) dnsZones(domain, ip, fwdErr, revErr, bindErr string) (string, string, error) {
 	s := f.stream
+
+	if err := f.ensureBind9(); err != nil {
+		return "", "", err
+	}
+
 	revZone := reverseZoneName(ip)
 	fwdFile := bindDir + "/db." + domain
 	revFile := reverseZoneFile(ip)
@@ -857,6 +862,11 @@ func (f *Flow) createNginxFullSite() error {
 // wpDNSSimple — the WordPress creators' DNS block: no zone validation,
 // direct write + conf append + ok lines + reload_bind9.
 func (f *Flow) wpDNSSimple(domain, ip string) (string, string) {
+	if err := f.ensureBind9(); err != nil {
+		f.stream.err("BIND9 unavailable — skipping DNS zones.")
+		return "", ""
+	}
+
 	fwdFile := "/etc/bind/db." + domain
 	revFile := reverseZoneFile(ip)
 	if !zoneExists(domain) {
@@ -1570,38 +1580,42 @@ func (f *Flow) createContainerSite() error {
 		fwdFile := fwdZoneFile(domain)
 		revFile := reverseZoneFile(ip)
 
-		if !zoneExists(domain) {
-			s.step("Writing forward zone...")
-			f.writeForwardZone(domain, ip, fwdFile)
-			okZ, msgZ := f.validateZone(domain, fwdFile)
-			if okZ {
-				f.addZoneToConf(domain, fwdFile)
-				s.ok("Forward zone created.")
-			} else {
-				_ = os.Remove(fwdFile)
-				s.err(msgZ)
-			}
-		}
-
-		if !zoneExists(revZone) {
-			s.step("Writing reverse zone...")
-			f.writeReverseZone(domain, ip, revFile)
-			okR, msgR := f.validateZone(revZone, revFile)
-			if okR {
-				f.addZoneToConf(revZone, revFile)
-				s.ok("Reverse zone created.")
-			} else {
-				_ = os.Remove(revFile)
-				f.removeZoneFromConf(domain)
-				s.err(msgR)
-			}
-		}
-
-		okB, msgB := f.validateBind9()
-		if !okB {
-			s.err(msgB)
+		if err := f.ensureBind9(); err != nil {
+			s.err("BIND9 unavailable — skipping DNS zones.")
 		} else {
-			f.reloadBind9()
+			if !zoneExists(domain) {
+				s.step("Writing forward zone...")
+				f.writeForwardZone(domain, ip, fwdFile)
+				okZ, msgZ := f.validateZone(domain, fwdFile)
+				if okZ {
+					f.addZoneToConf(domain, fwdFile)
+					s.ok("Forward zone created.")
+				} else {
+					_ = os.Remove(fwdFile)
+					s.err(msgZ)
+				}
+			}
+
+			if !zoneExists(revZone) {
+				s.step("Writing reverse zone...")
+				f.writeReverseZone(domain, ip, revFile)
+				okR, msgR := f.validateZone(revZone, revFile)
+				if okR {
+					f.addZoneToConf(revZone, revFile)
+					s.ok("Reverse zone created.")
+				} else {
+					_ = os.Remove(revFile)
+					f.removeZoneFromConf(domain)
+					s.err(msgR)
+				}
+			}
+
+			okB, msgB := f.validateBind9()
+			if !okB {
+				s.err(msgB)
+			} else {
+				f.reloadBind9()
+			}
 		}
 	}
 

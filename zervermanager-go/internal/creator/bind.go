@@ -21,6 +21,46 @@ func (f *Flow) validateZone(domain, zonefile string) (bool, string) {
 	return true, "Zone OK"
 }
 
+// ensureBind9 — the bind9 branch of python ensure_dependencies(), run
+// before any Make-Site DNS write so zone creation works on a box that
+// never installed BIND (previously it died on the missing
+// named-checkzone binary). Messages are python parity.
+func (f *Flow) ensureBind9() error {
+	s := f.stream
+	if dpkgInstalled("bind9") {
+		return nil
+	}
+
+	s.WriteRaw("\n" + cYELLOW + "  Missing packages: bind9" + cRESET + "\n")
+	s.WriteRaw("  " + cCYAN + "Auto-installing..." + cRESET + "\n\n")
+
+	f.runLiveTimeout(30*time.Minute, "apt-get", "update")
+	rc, stderr := f.runLiveTimeout(30*time.Minute, "apt-get",
+		"install", "-y", "--no-install-recommends", "bind9")
+	if rc != 0 {
+		s.err("Install failed:\n" + strings.TrimSpace(stderr))
+		return errAbort
+	}
+	s.ok("Installed: bind9")
+
+	r := f.run(120*time.Second, "systemctl", "enable", "--now", "bind9")
+	if r.Exit == 0 {
+		s.ok("BIND9 enabled.")
+	} else {
+		s.err(strings.TrimSpace(r.Stderr))
+	}
+
+	if _, err := os.Stat(namedConfLocal); os.IsNotExist(err) {
+		f.backupConfig(namedConfLocal)
+		if err := os.WriteFile(namedConfLocal, []byte("// Local zones\n"), 0o644); err != nil {
+			s.err(fmt.Sprintf("Could not create %s: %v", namedConfLocal, err))
+			return errAbort
+		}
+		s.ok("Created empty named.conf.local.")
+	}
+	return nil
+}
+
 // reloadBind9 — mark_reload("bind9").
 func (f *Flow) reloadBind9() { f.markReload("bind9") }
 

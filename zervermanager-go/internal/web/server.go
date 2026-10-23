@@ -189,6 +189,12 @@ func (s *Server) postAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ── M3: Manage Sites (python handle_site_action_post) ────────────
+	if path == "/api/manage/site_action" {
+		s.handleSiteAction(w, r)
+		return
+	}
+
 	// Routes land here from M3 on. Until then the python contract for
 	// unknown POST paths applies: 404. The body is JSON (not python's
 	// send_error HTML/text) so the web UI's res.json() renders a clean
