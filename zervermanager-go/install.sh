@@ -63,6 +63,21 @@ fi
 
 STATEDIR=/var/lib/zervermanager
 mkdir -p "$APPDIR"
+
+# Stop the old service before copying: replacing a running binary fails
+# with "Text file busy" (Linux refuses to modify an executable that is
+# currently mapped). The shadow install shares the same APPDIR binary,
+# so the main unit must be stopped for it too. Fresh installs have no
+# unit yet.
+WAS_RUNNING=0
+if systemctl is-active --quiet zervermanager.service 2>/dev/null; then
+    WAS_RUNNING=1
+    systemctl stop zervermanager.service
+fi
+if systemctl is-active --quiet zervermanager-go-shadow.service 2>/dev/null; then
+    systemctl stop zervermanager-go-shadow.service
+fi
+
 cp "$BIN" "$APPDIR/zervermanager"
 chmod 755 "$APPDIR/zervermanager"
 
@@ -115,6 +130,12 @@ EOF
 systemctl daemon-reload
 systemctl enable "$UNITNAME" 2>/dev/null || true
 systemctl restart "$UNITNAME"
+
+# A shadow install briefly stopped the main manager for the binary copy —
+# bring it back if it was running.
+if [ "$UNITNAME" = "zervermanager-go-shadow.service" ] && [ "$WAS_RUNNING" = "1" ]; then
+    systemctl start zervermanager.service
+fi
 
 PORT="${ADDR#*:}"
 echo
