@@ -56,4 +56,19 @@ func TestUpdateDbPassRegexes(t *testing.T) {
 	if idx2 != `$password = 'p$1';` {
 		t.Fatalf("index.php single-quote rewrite failed: %q", idx2)
 	}
+
+	// Regression: generated LAMP index.php uses $pass, which python's
+	// update_db_pass never touched (upstream bug) — the port must.
+	gen := `$pass = 'test1234';`
+	gen = reIdxPassVarSingle.ReplaceAllLiteralString(gen, `$pass = 'np$1';`)
+	if gen != `$pass = 'np$1';` {
+		t.Fatalf("$pass single-quote rewrite failed: %q", gen)
+	}
+
+	// $password must NOT be swallowed by the $pass patterns.
+	notTouched := `$password = 'aaa';`
+	notTouched = reIdxPassVarSingle.ReplaceAllLiteralString(notTouched, `$pass = 'np';`)
+	if notTouched != `$password = 'aaa';` {
+		t.Fatalf("$pass pattern wrongly matched $password: %q", notTouched)
+	}
 }

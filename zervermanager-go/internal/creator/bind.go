@@ -44,6 +44,13 @@ func (f *Flow) ensureBind9() error {
 	s.ok("Installed: bind9")
 
 	r := f.run(120*time.Second, "systemctl", "enable", "--now", "bind9")
+	if r.Exit != 0 {
+		// Found live on Debian 12: bind9.service is an alias of
+		// named.service and `systemctl enable` refuses aliases
+		// ("Refusing to operate on alias name or linked unit file").
+		// Retry against the real unit so the flow ends green.
+		r = f.run(120*time.Second, "systemctl", "enable", "--now", "named")
+	}
 	if r.Exit == 0 {
 		s.ok("BIND9 enabled.")
 	} else {

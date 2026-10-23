@@ -269,6 +269,17 @@ func (s *Server) siteAction(b *siteActionBody) (bool, string, error) {
 				fmt.Sprintf("$password = %q;", b.DBPass))
 			updated = reIdxPassSingle.ReplaceAllLiteralString(updated,
 				fmt.Sprintf("$password = '%s';", b.DBPass))
+			// Bug fix (upstream python + port): the LAMP creator
+			// generates `$pass = '<pass>';` but python's
+			// handle_site_action_post only rewrote `$password`, so a
+			// password change broke every generated site's DB link.
+			// Its console flow (zervermanager.py:6459) handles $pass —
+			// the same rewrite is applied here. No ordering hazard:
+			// \$pass…= can never match $password.
+			updated = reIdxPassVarSingle.ReplaceAllLiteralString(updated,
+				fmt.Sprintf("$pass = '%s';", b.DBPass))
+			updated = reIdxPassVarDouble.ReplaceAllLiteralString(updated,
+				fmt.Sprintf("$pass = %q;", b.DBPass))
 			if err := os.WriteFile(idxPHP, []byte(updated), 0o644); err != nil {
 				return false, "", pyOSError(err, idxPHP)
 			}
@@ -382,10 +393,12 @@ func siteActionJSON(success bool, message string) []byte {
 // patterns from handle_site_action_post. Replacements are literal so
 // docroot/pass values containing $ signs pass through untouched.
 var (
-	reDocumentRoot  = regexp.MustCompile(`DocumentRoot\s+.*`)
-	reDirectoryTag  = regexp.MustCompile(`<Directory\s+[^>]+>`)
-	reNginxRoot     = regexp.MustCompile(`root\s+[^;]+;`)
-	reWpDbPass      = regexp.MustCompile(`define\(\s*'DB_PASSWORD'\s*,\s*'.*?'\s*\);`)
-	reIdxPassDouble = regexp.MustCompile(`\$password\s*=\s*".*?";`)
-	reIdxPassSingle = regexp.MustCompile(`\$password\s*=\s*'.*?';`)
+	reDocumentRoot     = regexp.MustCompile(`DocumentRoot\s+.*`)
+	reDirectoryTag     = regexp.MustCompile(`<Directory\s+[^>]+>`)
+	reNginxRoot        = regexp.MustCompile(`root\s+[^;]+;`)
+	reWpDbPass         = regexp.MustCompile(`define\(\s*'DB_PASSWORD'\s*,\s*'.*?'\s*\);`)
+	reIdxPassDouble    = regexp.MustCompile(`\$password\s*=\s*".*?";`)
+	reIdxPassSingle    = regexp.MustCompile(`\$password\s*=\s*'.*?';`)
+	reIdxPassVarSingle = regexp.MustCompile(`\$pass\s*=\s*'[^']*'`)
+	reIdxPassVarDouble = regexp.MustCompile(`\$pass\s*=\s*"[^"]*"`)
 )
