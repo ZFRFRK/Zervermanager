@@ -190,8 +190,11 @@ func (s *Server) postAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Routes land here from M3 on. Until then the python contract for
-	// unknown POST paths applies: 404.
-	http.Error(w, "Not Found", http.StatusNotFound)
+	// unknown POST paths applies: 404. The body is JSON (not python's
+	// send_error HTML/text) so the web UI's res.json() renders a clean
+	// toast instead of "unexpected character at line 1 column 1".
+	writeJSON(w, http.StatusNotFound,
+		[]byte(`{"success": false, "message": "Not implemented yet on the Go port (M3)."}`))
 }
 
 // sessionOf extracts and validates the session for the request.
