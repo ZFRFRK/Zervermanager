@@ -116,6 +116,7 @@ systemctl daemon-reload
 systemctl enable "$UNITNAME" 2>/dev/null || true
 systemctl restart "$UNITNAME"
 
+PORT="${ADDR#*:}"
 echo
-echo "installed. UI:  http://$(hostname -I | awk '{print $1}')${ADDR#*:}  (${UNITNAME}${FLAGS:+, shadow: read-only})"
+echo "installed. UI:  http://$(hostname -I | awk '{print $1}'):${PORT}  (${UNITNAME}${FLAGS:+, shadow: read-only})"
 echo "logs:  journalctl -u ${UNITNAME%.service} -f"
