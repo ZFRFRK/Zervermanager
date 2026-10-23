@@ -274,7 +274,8 @@ func (s *Server) siteAction(b *siteActionBody) (bool, string, error) {
 			// handle_site_action_post only rewrote `$password`, so a
 			// password change broke every generated site's DB link.
 			// Its console flow (zervermanager.py:6459) handles $pass —
-			// the same rewrite is applied here. No ordering hazard:
+			// applied here with the trailing `;` consumed too (python's
+			// ';-less pattern leaves a stray `;;`). No ordering hazard:
 			// \$pass…= can never match $password.
 			updated = reIdxPassVarSingle.ReplaceAllLiteralString(updated,
 				fmt.Sprintf("$pass = '%s';", b.DBPass))
@@ -399,6 +400,6 @@ var (
 	reWpDbPass         = regexp.MustCompile(`define\(\s*'DB_PASSWORD'\s*,\s*'.*?'\s*\);`)
 	reIdxPassDouble    = regexp.MustCompile(`\$password\s*=\s*".*?";`)
 	reIdxPassSingle    = regexp.MustCompile(`\$password\s*=\s*'.*?';`)
-	reIdxPassVarSingle = regexp.MustCompile(`\$pass\s*=\s*'[^']*'`)
-	reIdxPassVarDouble = regexp.MustCompile(`\$pass\s*=\s*"[^"]*"`)
+	reIdxPassVarSingle = regexp.MustCompile(`\$pass\s*=\s*'[^']*';`)
+	reIdxPassVarDouble = regexp.MustCompile(`\$pass\s*=\s*"[^"]*";`)
 )
