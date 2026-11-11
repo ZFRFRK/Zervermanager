@@ -14,7 +14,6 @@ import socket
 import io
 import sys
 import time
-import gzip
 import glob
 import http.server
 import socketserver
@@ -32,10 +31,13 @@ import hmac
 import fcntl
 import threading
 import tempfile
+import tarfile
 import traceback
 import uuid
 import ipaddress
 import contextlib
+import queue
+import signal
 import enum
 from functools import wraps
 
@@ -1059,11 +1061,12 @@ def _snapshot_create(
         with open(sha_path, "w") as f:
             f.write(r.stdout)
 
-    # Service state (one batched query instead of one spawn per unit)
+    # Service state
     services_state = {}
-    wanted = ("nginx", "apache2", "bind9", "postfix", "dovecot")
-    for svc, state in service_statuses(wanted).items():
-        services_state[svc] = {"active": state == "active"}
+    for svc in ("nginx", "apache2", "bind9", "postfix", "dovecot"):
+        r = subprocess.run(["systemctl", "is-active", svc],
+                           capture_output=True, text=True)
+        services_state[svc] = {"active": r.stdout.strip() == "active"}
 
     manifest = {
         "id": sid,
@@ -1102,9 +1105,7 @@ def snapshot_list() -> list[dict]:
 
 
 def snapshot_diff(snap_id: str) -> str:
-    """Diff a snapshot against the live system — scoped to the snapshot's own
-    paths. Never walks `/' (the fallback used to diff the whole filesystem,
-    which is both slow and useless)."""
+    """Return a unified diff of snapshot vs live configs."""
     snap_dir = os.path.join(ZM_SNAPSHOT_DIR, snap_id)
     tar_path = None
     for ext in (".tar.zst", ".tar.gz"):
@@ -1115,31 +1116,14 @@ def snapshot_diff(snap_id: str) -> str:
     if not tar_path:
         return "Snapshot archive not found."
 
-    # Scope from the manifest (written at snapshot time); fall back to the
-    # default config scope if the manifest is missing/corrupt.
-    scope = _CONFIG_SCOPE_PATHS
-    try:
-        with open(os.path.join(snap_dir, "manifest.json"), "r") as _mf:
-            scope = json.load(_mf).get("scope") or scope
-    except (OSError, ValueError):
-        pass
-
     with tempfile.TemporaryDirectory() as tmp:
         subprocess.run(["tar", "-xpf", tar_path, "-C", tmp],
                        capture_output=True, timeout=60)
-        existing = [p for p in scope if os.path.exists(p)]
-        diffs = []
-        for live_path in existing:
-            member = os.path.join(tmp, live_path.lstrip("/"))
-            if not os.path.exists(member):
-                continue
-            d = subprocess.run(
-                ["diff", "-ru", "--new-file", member, live_path],
-                capture_output=True, text=True, timeout=30
-            )
-            if d.stdout:
-                diffs.append(d.stdout)
-    return "\n".join(diffs) or "(no differences)"
+        diff = subprocess.run(
+            ["diff", "-ru", "--new-file", tmp, "/"],
+            capture_output=True, text=True, timeout=30
+        )
+    return diff.stdout or "(no differences)"
 
 
 def snapshot_restore(snap_id: str, only: list[str] | None = None, dry_run: bool = False) -> bool:
@@ -1234,32 +1218,10 @@ def trash_archive(kind: str, name: str, paths: list[str], extra_fn: callable | N
 
 
 def trash_mysqldump(db_name: str, dest_dir: str):
-    """Dump a MySQL/MariaDB database into dest_dir (used as trash extra_fn).
-
-    No shell round-trip: mysqldump is Popen'd directly and its stdout is
-    gzipped in-process, so DB names with quotes/metachars stay safe.
-    """
+    """Dump a MySQL/MariaDB database into dest_dir (used as trash extra_fn)."""
     dump_path = os.path.join(dest_dir, f"{db_name}.sql.gz")
-    try:
-        proc = subprocess.Popen(["mysqldump", "--databases", db_name],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    except FileNotFoundError:
-        return
-    try:
-        with gzip.open(dump_path, "wb") as gz, proc.stdout:
-            while True:
-                chunk = proc.stdout.read(65536)
-                if not chunk:
-                    break
-                gz.write(chunk)
-        proc.wait(timeout=300)
-        if proc.returncode != 0:
-            print(f"  ! mysqldump failed for {db_name}: "
-                  f"{proc.stderr.read(errors='replace')}")
-    except Exception as e:
-        print(f"  ! mysqldump pipeline failed for {db_name}: {e}")
-        try: proc.kill()
-        except Exception: pass
+    subprocess.run(["sh", "-c", f"mysqldump {db_name} | gzip > {dump_path}"],
+                   capture_output=True, timeout=300)
 
 
 def trash_list() -> list[dict]:
@@ -1454,18 +1416,13 @@ class _Watchdog(threading.Thread):
 
     def _check_service_health(self):
         state = _load_state()
-        wanted = [svc for svc, meta in state.get("services", {}).items()
-                  if meta.get("active")]
-        if not wanted:
-            return
-        # One batched, cached query for every registered unit (also shared
-        # with the /api/status poll) instead of a spawn per service.
-        states = service_statuses(wanted, ttl=5.0)
-        for svc in wanted:
-            actual = states.get(svc, "inactive")
-            if actual != "active":
+        for svc, meta in state.get("services", {}).items():
+            if not meta.get("active"):
+                continue
+            r = subprocess.run(["systemctl", "is-active", svc], capture_output=True, text=True)
+            if r.stdout.strip() != "active":
                 _raise_incident(f"service_down:{svc}", severity="high",
-                                evidence=f"{svc} is {actual}",
+                                evidence=f"{svc} is {r.stdout.strip()}",
                                 suggested_action=f"Run: systemctl restart {svc}")
                 self._autoheal_service(svc)
 
@@ -1584,7 +1541,7 @@ class _Watchdog(threading.Thread):
     def _check_front_door(self):
         state = _load_state()
         for domain in list(state.get("vhosts", {}))[:5]:  # cap at 5
-            result = probe_http("http://127.0.0.1/", host=domain)
+            result = probe_http(f"http://127.0.0.1/", host=domain)
             if not result.ok:
                 _raise_incident(f"front_door:{domain}", severity="medium",
                                 evidence=result.msg,
@@ -1722,9 +1679,9 @@ def job_submit(fn: callable, description: str, actor: str = "web") -> str:
                         self.log.write(t)
                     def flush(self):
                         try: self.orig.flush()
-                        except OSError: pass
+                        except: pass
                         try: self.log.flush()
-                        except OSError: pass
+                        except: pass
                     def isatty(self): return False
                     def fileno(self): raise io.UnsupportedOperation()
 
@@ -1733,7 +1690,7 @@ def job_submit(fn: callable, description: str, actor: str = "web") -> str:
                 try:
                     fn()
                     _JOBS[job_id]["success"] = True
-                except Exception:
+                except Exception as e:
                     traceback.print_exc()
                     _JOBS[job_id]["success"] = False
                 finally:
@@ -1781,7 +1738,7 @@ def _startup_journal_recovery():
         except Exception:
             continue
         if m.get("state") not in terminal:
-            _raise_incident(
+            iid = _raise_incident(
                 f"interrupted_tx:{m['id']}",
                 severity="critical",
                 evidence=f"Transaction '{m.get('description', m['id'])}' was "
@@ -1924,57 +1881,18 @@ def _web_read_json(handler) -> dict:
 
 
 def web_handle_auth(handler, path: str) -> bool:
-    """Handle /api/login, /api/logout, /api/session.  Returns True if handled."""
+    """Legacy auth endpoints. Login is disabled: every request is a guest admin."""
     if path == "/api/login":
-        data = _web_read_json(handler)
-        ok_flag, result = auth_login(
-            data.get("username", ""),
-            data.get("password", ""),
-            handler.client_address[0],
-        )
-        if ok_flag:
-            sid = result
-            sess = _SESSION_STORE[sid]
-            body = json.dumps({"ok": True, "csrf": sess["csrf"],
-                               "actor": sess["actor"], "role": sess["role"]}).encode()
-            handler.send_response(200)
-            handler.send_header("Content-Type", "application/json")
-            handler.send_header(
-                "Set-Cookie",
-                f"zm_session={sid}; HttpOnly; SameSite=Strict; Path=/"
-            )
-            handler.end_headers()
-            handler.wfile.write(body)
-        else:
-            _web_json(handler, {"ok": False, "error": result}, 401)
+        _web_read_json(handler)          # drain the body
+        _web_json(handler, {"ok": True, "actor": "web", "role": "admin", "csrf": ""})
         return True
 
     if path == "/api/logout":
-        cookie = handler.headers.get("Cookie", "")
-        sid = ""
-        for part in cookie.split(";"):
-            part = part.strip()
-            if part.startswith("zm_session="):
-                sid = part[len("zm_session="):]
-        auth_logout(sid)
-        handler.send_response(200)
-        handler.send_header("Set-Cookie", "zm_session=; Max-Age=0; Path=/")
-        handler.end_headers()
+        _web_json(handler, {"ok": True})
         return True
 
     if path == "/api/session":
-        cookie = handler.headers.get("Cookie", "")
-        sid = ""
-        for part in cookie.split(";"):
-            part = part.strip()
-            if part.startswith("zm_session="):
-                sid = part[len("zm_session="):]
-        sess = auth_session(sid)
-        if sess:
-            _web_json(handler, {"ok": True, "actor": sess["actor"],
-                                "role": sess["role"], "csrf": sess["csrf"]})
-        else:
-            _web_json(handler, {"ok": False}, 401)
+        _web_json(handler, {"ok": True, "actor": "web", "role": "admin", "csrf": ""})
         return True
 
     return False
@@ -2151,87 +2069,24 @@ def detect_server_ip():
     except Exception:
         return None
 
-# ─────────────────────────────────────────
-#  Web→CLI parameter bridge
-# ─────────────────────────────────────────
-# The web UI used to drive interactive CLI creators by faking `input()`
-# answers in strict hand-counted sequence (MockStdin): adding one prompt
-# anywhere silently re-routed every later web answer. The bridge instead
-# consumes answers BY KEY: every prompt point declares a semantic key and
-# the web handler registers its form values under the same keys. The CLI
-# path behaves exactly as before.
-
-_WEB_ANSWERS = None  # dict | None
-
-def _ask(prompt, key=None):
-    """input() that first consumes a keyed answer from the web bridge."""
-    if _WEB_ANSWERS is not None and key is not None and key in _WEB_ANSWERS:
-        val = _WEB_ANSWERS.pop(key)
-        # Narrate the prompt+answer so streamed web output stays readable.
-        print(prompt, end="")
-        if val:
-            print(val)
-        return val
-    return input(prompt)
-
-def input_pause(prompt="\n  Press Enter to continue..."):
-    """Press-enter pause that is a no-op read when the web bridge drives us."""
-    if _WEB_ANSWERS is not None:
-        print(prompt)
-        return ""
-    return input(prompt)
-
-@contextlib.contextmanager
-def _web_prompt_driver(answers):
-    """Install the web answers bridge for one request."""
-    global _WEB_ANSWERS
-    old, _WEB_ANSWERS = _WEB_ANSWERS, answers
-    try:
-        yield
-    finally:
-        _WEB_ANSWERS = old
-
 def prompt_for_ip(msg="Server IP"):
     auto_ip = detect_server_ip()
     prompt_str = f"{msg} [{auto_ip}]: " if auto_ip else f"{msg}: "
-    val = _ask(prompt_str, key="ip").strip()
-    if _WEB_ANSWERS is not None and val == "":
-        return val
+    val = input(prompt_str).strip()
     return val if val else auto_ip
 
 
 def ask_domain(prompt="  Domain: "):
-    val = _ask(prompt, key="domain").strip()
-    if _WEB_ANSWERS is not None:
-        if not val or not re.match(r"^[a-zA-Z0-9.-]+$", val):
-            if val:
-                err("Invalid domain. Only letters, numbers, dots, and hyphens are allowed.")
-            return ""
-        return val
     while True:
+        val = input(prompt).strip()
         if not val:
             return ""
         if re.match(r"^[a-zA-Z0-9.-]+$", val):
             return val
         err("Invalid domain. Only letters, numbers, dots, and hyphens are allowed.")
-        val = input(prompt).strip()
-
-def _bridge_valid(val, pattern, what):
-    """Validate a bridged (non-interactive) answer once; refuse re-prompting."""
-    val = val.strip()
-    if not val:
-        return ""
-    if not re.match(pattern, val):
-        err(f"Invalid {what}. Using empty value.")
-        return ""
-    return val
 
 def ask_db_name(prompt="Database name", default=""):
     prompt_str = f"  {prompt} [{default}]: " if default else f"  {prompt}: "
-    if _WEB_ANSWERS is not None:
-        val = _bridge_valid(_ask(prompt_str, key="db_name"),
-                            r"^[a-zA-Z0-9_]+$", "database name")
-        return val or default
     while True:
         val = input(prompt_str).strip()
         val = val or default
@@ -2243,10 +2098,6 @@ def ask_db_name(prompt="Database name", default=""):
 
 def ask_db_user(prompt="Database user", default=""):
     prompt_str = f"  {prompt} [{default}]: " if default else f"  {prompt}: "
-    if _WEB_ANSWERS is not None:
-        val = _bridge_valid(_ask(prompt_str, key="db_user"),
-                            r"^[a-zA-Z0-9_]+$", "database user")
-        return val or default
     while True:
         val = input(prompt_str).strip()
         val = val or default
@@ -2277,13 +2128,6 @@ def ask_docroot(prompt, default=""):
     # Ensure no leading/trailing spaces in the prefix, we format it consistently
     clean_prompt = prompt.strip()
     prompt_str = f"  {clean_prompt} [{default}]: " if default else f"  {clean_prompt}: "
-    if _WEB_ANSWERS is not None:
-        val = _ask(prompt_str, key="docroot").strip() or default
-        valid, msg = validate_docroot(val)
-        if valid:
-            return val
-        print(f"  \033[91m✗ {msg}\033[0m")
-        return ""
     while True:
         val = input(prompt_str).strip()
         val = val or default
@@ -2385,11 +2229,11 @@ def show_splash():
 
     print()
     print(f"{C.BOLD}  Zervermanager{C.RESET}")
-    print("  An automated Debian 11/12/13 server setup & management tool")
+    print(f"  An automated Debian 11/12/13 server setup & management tool")
     print(f"{C.CYAN}  {DIVIDER}{C.RESET}")
     print(f"  Version     : v{SCRIPT_VERSION}")
-    print("  Created by  : ZFRFRK")
-    print("  GitHub      : github.com/ZFRFRK/Zervermanager")
+    print(f"  Created by  : ZFRFRK")
+    print(f"  GitHub      : github.com/ZFRFRK/Zervermanager")
     print(f"{C.CYAN}  {DIVIDER}{C.RESET}")
     print(f"{C.DIM}{couple_line.center(52)}{C.RESET}")
     print()
@@ -2448,10 +2292,10 @@ def show_mai_easter_egg():
 
 _pending = set()
 
-def prompt_confirm(msg, default="no", key=None):
+def prompt_confirm(msg, default="no"):
     """Ask a yes/no question via input() and return True/False."""
     prompt = f"  {msg} (Y/n): " if default == "yes" else f"  {msg} (y/N): "
-    val = _ask(prompt, key=key).strip().lower()
+    val = input(prompt).strip().lower()
     if not val:
         return default == "yes"
     return val in ("y", "yes")
@@ -2540,7 +2384,7 @@ class _MockProcessResult:
         self.stdout = stdout
         self.stderr = stderr
 
-def run(cmd, timeout=None):
+def run(cmd):
     """Silent subprocess wrapper.  In --dry-run mode prints the command instead."""
     if DRY_RUN:
         print(f"  {C.DIM}[dry-run] Would run: {' '.join(str(c) for c in cmd)}{C.RESET}")
@@ -2549,37 +2393,10 @@ def run(cmd, timeout=None):
         return subprocess.run(
             cmd,
             capture_output=True,
-            text=True,
-            timeout=timeout,
+            text=True
         )
     except FileNotFoundError:
         return _MockProcessResult(127, "", f"Command not found: {cmd[0]}")
-    except subprocess.TimeoutExpired:
-        return _MockProcessResult(
-            124, "", f"Timed out after {timeout}s: {' '.join(str(c) for c in cmd)}")
-
-
-# Short-TTL cache of systemd unit states, shared by the web status API and the
-# watchdog so both ask systemd once per TTL instead of per unit per call.
-_SVC_STATE_CACHE = {"ts": 0.0, "data": {}}
-
-def service_statuses(names, ttl=3.0):
-    """One batched `systemctl is-active` for many units, cached for `ttl` seconds.
-
-    Returns {name: state} with state in active/inactive/failed/... (raw systemd).
-    A missing/stalled systemd never hangs: the batch gets a hard timeout.
-    """
-    names = list(names)
-    now = time.time()
-    if now - _SVC_STATE_CACHE["ts"] < ttl:
-        return {n: _SVC_STATE_CACHE["data"].get(n, "inactive") for n in names}
-    result = run(["systemctl", "is-active"] + names, timeout=10)
-    lines = [l.strip() for l in result.stdout.splitlines() if l.strip()]
-    while len(lines) < len(names):
-        lines.append("inactive")
-    _SVC_STATE_CACHE["ts"] = time.time()
-    _SVC_STATE_CACHE["data"] = dict(zip(names, lines))
-    return {n: _SVC_STATE_CACHE["data"].get(n, "inactive") for n in names}
 
 
 def run_live(cmd):
@@ -2618,33 +2435,13 @@ def run_live(cmd):
     return process.returncode, stderr
 
 
-def get_serial(zonefile=None):
-    """SOA serial that always advances: max(existing serial + 1, today*100).
-
-    The zone's current serial (if readable) is bumped by one so repeated
-    edits on the same day always propagate; across days the date base takes
-    over. Accepts the zone file path so edits stay monotonic per zone.
-    """
-    try:
-        base = int(datetime.now().strftime("%Y%m%d")) * 100
-    except Exception:
-        base = int(time.time() % 9000000000) * 10
-    if zonefile and os.path.isfile(zonefile):
-        try:
-            with open(zonefile, "r", encoding="utf-8", errors="replace") as _zf:
-                m = re.search(r"(?m)^\s*(\d{1,10})\s*;\s*Serial", _zf.read())
-            if m:
-                base = max(base, int(m.group(1)) + 1)
-        except OSError:
-            pass
-    return str(base)
+def get_serial():
+    return datetime.now().strftime("%Y%m%d01")
 
 
-def service_status(name, color=True):
-    state = service_statuses([name]).get(name, "inactive")
-    active = state == "active"
-    if not color:
-        return "running" if active else "stopped"
+def service_status(name):
+    result = run(["systemctl", "is-active", name])
+    active = result.stdout.strip() == "active"
     label = f"{C.GREEN}running{C.RESET}" if active else f"{C.RED}stopped{C.RESET}"
     return label
 
@@ -3530,7 +3327,7 @@ def last_octet(ip):
 
 
 def write_forward_zone(domain, ip, zonefile):
-    serial = get_serial(zonefile)
+    serial = get_serial()
 
     content = f"""; Forward zone for {domain}
 $TTL    604800
@@ -3555,7 +3352,7 @@ www IN  A       {ip}
 
 
 def write_reverse_zone(domain, ip, zonefile):
-    serial = get_serial(zonefile)
+    serial = get_serial()
     octet  = last_octet(ip)
 
     content = f"""; Reverse zone for {domain}
@@ -3947,7 +3744,7 @@ def list_mx_records():
         print(f"\n  {C.BOLD}{domain}{C.RESET}")
 
         if not zonefile or not os.path.isfile(zonefile):
-            err("  Zone file not found.")
+            err(f"  Zone file not found.")
             continue
 
         with open(zonefile, "r") as f:
@@ -4015,10 +3812,10 @@ def ask_for_custom_site_files(docroot):
         return True
 
     print()
-    if not prompt_confirm(f"{C.BOLD}Use existing site files?{C.RESET}", key="use_site_files"):
+    if not prompt_confirm(f"{C.BOLD}Use existing site files?{C.RESET}"):
         return False
 
-    src = _ask("  Path to existing site files: ", key="site_files_path").strip()
+    src = input("  Path to existing site files: ").strip()
 
     if not src:
         warn("No path provided, using default page.")
@@ -4039,11 +3836,11 @@ def ask_for_custom_site_files(docroot):
 
 def prompt_db_import(db_name, db_user, db_pass, docroot):
     print()
-    if not prompt_confirm(f"{C.BOLD}Import an existing SQL database dump?{C.RESET}", key="import_sql"):
+    if not prompt_confirm(f"{C.BOLD}Import an existing SQL database dump?{C.RESET}"):
         return
 
     while True:
-        sql_file = _ask(f"  SQL file path (or just filename if in {docroot}): ", key="sql_path").strip()
+        sql_file = input(f"  SQL file path (or just filename if in {docroot}): ").strip()
         if not sql_file:
             warn("Database import cancelled.")
             return
@@ -4085,7 +3882,7 @@ def create_full_site():
         return
 
     # MODIFICATION: ask for DNS first
-    dns_choice = _ask("  Create DNS zones for this site? (y/N): ", key="dns_choice").strip().lower()
+    dns_choice = input("  Create DNS zones for this site? (y/N): ").strip().lower()
     create_dns = (dns_choice == "y")
 
     ip = None
@@ -4100,7 +3897,7 @@ def create_full_site():
     print("  2. HTTPS (self-signed cert)")
     print("  3. HTTPS (existing cert)")
 
-    ssl_choice = _ask("  \nChoice: ", key="ssl").strip()
+    ssl_choice = input("  \nChoice: ").strip()
 
     docroot = ask_docroot("Document root", default=f"/var/www/{domain}")
 
@@ -4122,8 +3919,8 @@ def create_full_site():
 
     elif ssl_choice == "3":
         ensure_modules()
-        cert = _ask("  Certificate path: ", key="cert_path").strip()
-        key  = _ask("  Key path: ", key="key_path").strip()
+        cert = input("  Certificate path: ").strip()
+        key  = input("  Key path: ").strip()
 
         if not os.path.isfile(cert):
             err("Certificate not found.")
@@ -4857,7 +4654,7 @@ def create_lamp_site():
         return
 
     # MODIFICATION: ask for DNS first
-    dns_choice = _ask("  Create DNS zones for this site? (y/N): ", key="dns_choice").strip().lower()
+    dns_choice = input("  Create DNS zones for this site? (y/N): ").strip().lower()
     create_dns = (dns_choice == "y")
 
     ip = None
@@ -4874,7 +4671,7 @@ def create_lamp_site():
 
     db_user = ask_db_user("Database user", f"{default_db}_user")
 
-    db_pass = _ask("  Database password: ", key="db_pass").strip()
+    db_pass = input("  Database password: ").strip()
 
     if not db_pass:
         err("Password cannot be empty.")
@@ -4885,7 +4682,7 @@ def create_lamp_site():
     print("  1. HTTP only")
     print("  2. HTTPS (self-signed cert)")
 
-    ssl_choice = _ask("  \nChoice [1]: ", key="ssl").strip() or "1"
+    ssl_choice = input("  \nChoice [1]: ").strip() or "1"
 
     docroot = ask_docroot("Document root", default=f"/var/www/{domain}")
 
@@ -5218,9 +5015,9 @@ mysql {db_name} -e "DELETE FROM test_entries;"</pre>
         print(f"  Cert:      {cert}")
 
     if create_dns:
-        print("  DNS:       created")
+        print(f"  DNS:       created")
     else:
-        print("  DNS:       not created")
+        print(f"  DNS:       not created")
 
     print(f"  {C.BOLD}URL:{C.RESET}       {C.CYAN}{proto}://{domain}{C.RESET}")
     print(f"{C.BOLD}{'─' * 35}{C.RESET}")
@@ -5413,6 +5210,8 @@ def modify_full_site():
             if has_dns:
                 # Determine old forward zone file (if exists)
                 old_fwd_file = None
+                old_rev_zone_name = None
+                old_rev_file = None
 
                 if zone_exists(domain):
                     old_fwd_file = get_zone_file(domain)
@@ -5839,7 +5638,7 @@ def create_nginx_full_site():
     if not domain:
         return
 
-    dns_choice = _ask("  Create DNS zones for this site? (y/N): ", key="dns_choice").strip().lower()
+    dns_choice = input("  Create DNS zones for this site? (y/N): ").strip().lower()
     create_dns = (dns_choice == "y")
 
     ip = None
@@ -5854,7 +5653,7 @@ def create_nginx_full_site():
     print("  2. HTTPS (self-signed cert)")
     print("  3. HTTPS (existing cert)")
 
-    ssl_choice = _ask("  \nChoice: ", key="ssl").strip()
+    ssl_choice = input("  \nChoice: ").strip()
 
     docroot = ask_docroot("Document root", default=f"/var/www/{domain}")
 
@@ -5871,8 +5670,8 @@ def create_nginx_full_site():
         ok("Certificate generated.")
 
     elif ssl_choice == "3":
-        cert = _ask("  Certificate path: ", key="cert_path").strip()
-        key  = _ask("  Key path: ", key="key_path").strip()
+        cert = input("  Certificate path: ").strip()
+        key  = input("  Key path: ").strip()
         if not os.path.isfile(cert):
             err("Certificate not found.")
             return
@@ -6120,7 +5919,7 @@ def create_lemp_site():
     if not domain:
         return
 
-    dns_choice = _ask("  Create DNS zones for this site? (y/N): ", key="dns_choice").strip().lower()
+    dns_choice = input("  Create DNS zones for this site? (y/N): ").strip().lower()
     create_dns = (dns_choice == "y")
 
     ip = None
@@ -6133,7 +5932,7 @@ def create_lemp_site():
     default_db = re.sub(r"[^a-zA-Z0-9_]", "_", domain.split(".")[0])
     db_name = ask_db_name("Database name", default_db)
     db_user = ask_db_user("Database user", f"{default_db}_user")
-    db_pass = _ask("  Database password: ", key="db_pass").strip()
+    db_pass = input("  Database password: ").strip()
 
     if not db_pass:
         err("Password cannot be empty.")
@@ -6142,7 +5941,7 @@ def create_lemp_site():
     print("\nSSL options:")
     print("  1. HTTP only")
     print("  2. HTTPS (self-signed cert)")
-    ssl_choice = _ask("  \nChoice [1]: ", key="ssl").strip() or "1"
+    ssl_choice = input("  \nChoice [1]: ").strip() or "1"
 
     docroot = ask_docroot("Document root", default=f"/var/www/{domain}")
 
@@ -6697,7 +6496,7 @@ def create_apache_static_site():
     docroot = f"/var/www/{domain}"
     create_docroot(docroot, domain)
     content = http_vhost(domain, docroot)
-    write_vhost(domain, content)
+    path = write_vhost(domain, content)
     enable_site(domain)
     ok_a, msg_a = validate_apache()
     if not ok_a:
@@ -6708,7 +6507,7 @@ def create_apache_static_site():
     save_site_meta(domain, "static", docroot, web_server="apache", dns=False)
     ok(f"Static site created: http://{domain}")
     print(f"  Document root: {docroot}")
-    input_pause("\n  Press Enter to continue...")
+    input("\n  Press Enter to continue...")
 
 
 def create_nginx_static_site():
@@ -6729,7 +6528,7 @@ def create_nginx_static_site():
     save_site_meta(domain, "static", docroot, web_server="nginx", dns=False)
     ok(f"Static site created: http://{domain}")
     print(f"  Document root: {docroot}")
-    input_pause("\n  Press Enter to continue...")
+    input("\n  Press Enter to continue...")
 
 
 def static_apache_menu():
@@ -6785,7 +6584,7 @@ def create_apache_reverse_proxy():
     domain = ask_domain()
     if not domain: return
     
-    dns_choice = _ask("  Create DNS zones for this site? (y/N): ", key="dns_choice").strip().lower()
+    dns_choice = input("  Create DNS zones for this site? (y/N): ").strip().lower()
     create_dns = (dns_choice == "y")
 
     ip = None
@@ -6794,7 +6593,7 @@ def create_apache_reverse_proxy():
         if not ip:
             create_dns = False
 
-    target = _ask("  Proxy target [localhost:3000]: ", key="backend").strip()
+    target = input("  Proxy target [localhost:3000]: ").strip()
     if not target:
         target = "localhost:3000"
     if not target.startswith("http://") and not target.startswith("https://"):
@@ -6864,7 +6663,7 @@ def create_apache_reverse_proxy():
     apply_reloads()
 
     ok(f"Reverse proxy created: http://{domain} -> {target}")
-    input_pause("\n  Press Enter to continue...")
+    input("\n  Press Enter to continue...")
 
 
 def create_nginx_reverse_proxy():
@@ -6872,7 +6671,7 @@ def create_nginx_reverse_proxy():
     domain = ask_domain()
     if not domain: return
 
-    dns_choice = _ask("  Create DNS zones for this site? (y/N): ", key="dns_choice").strip().lower()
+    dns_choice = input("  Create DNS zones for this site? (y/N): ").strip().lower()
     create_dns = (dns_choice == "y")
 
     ip = None
@@ -6880,7 +6679,7 @@ def create_nginx_reverse_proxy():
         ip = prompt_for_ip("Server IP")
         if not ip:
             create_dns = False
-    target = _ask("  Proxy target [localhost:3000]: ", key="backend").strip()
+    target = input("  Proxy target [localhost:3000]: ").strip()
     if not target:
         target = "localhost:3000"
     if not target.startswith("http://") and not target.startswith("https://"):
@@ -6953,8 +6752,8 @@ def create_nginx_reverse_proxy():
 
     ok(f"Reverse proxy created: http://{domain} -> {target}")
     if create_dns:
-        print("  DNS:       created")
-    input_pause("\n  Press Enter to continue...")
+        print(f"  DNS:       created")
+    input("\n  Press Enter to continue...")
 
 
 def reverse_proxy_apache_menu():
@@ -7008,7 +6807,7 @@ def install_docker():
     menu_header("Install Docker")
     if is_docker_installed():
         ok("Docker is already installed.")
-        input_pause("\n  Press Enter to continue...")
+        input("\n  Press Enter to continue...")
         return True
 
     step("Checking dependencies...")
@@ -7055,7 +6854,7 @@ def install_docker():
         info(f"Added user {sudo_user} to docker group. Please log out and log back in for this to take effect.")
         
     ok("Docker installed successfully.")
-    input_pause("\n  Press Enter to continue...")
+    input("\n  Press Enter to continue...")
     return True
 
 def _find_free_docker_port(start=8080, max_tries=200):
@@ -7075,7 +6874,7 @@ def create_container_site():
     
     if not is_docker_installed():
         err("Docker is not installed. Please install it first.")
-        input_pause("\n  Press Enter to continue...")
+        input("\n  Press Enter to continue...")
         return
         
     if not ensure_nginx():
@@ -7084,10 +6883,10 @@ def create_container_site():
     domain = ask_domain()
     if not domain: return
     
-    image = _ask("  Container image [e.g. nginx:alpine]: ", key="image").strip()
+    image = input("  Container image [e.g. nginx:alpine]: ").strip()
     if not image: return
     
-    int_port_str = _ask("  Internal port [80]: ", key="port").strip() or "80"
+    int_port_str = input("  Internal port [80]: ").strip() or "80"
     if not int_port_str.isdigit():
         err("Port must be a number.")
         return
@@ -7120,7 +6919,7 @@ def create_container_site():
         
     target = f"http://127.0.0.1:{host_port}"
     
-    dns_choice = _ask("  Create DNS zones for this site? (y/N): ", key="dns_choice").strip().lower()
+    dns_choice = input("  Create DNS zones for this site? (y/N): ").strip().lower()
     create_dns = (dns_choice == "y")
     ip = None
     if create_dns:
@@ -7195,7 +6994,7 @@ def create_container_site():
             
     apply_reloads()
     ok(f"Container site created: http://{domain} -> {image}")
-    input_pause("\n  Press Enter to continue...")
+    input("\n  Press Enter to continue...")
 
 def delete_container_site():
     menu_header("Delete Container Site")
@@ -7236,7 +7035,7 @@ def delete_container_site():
         return
     reload_nginx()
     apply_reloads()
-    input_pause("\n  Press Enter to continue...")
+    input("\n  Press Enter to continue...")
 
 def list_container_sites():
     menu_header("Container Sites")
@@ -7269,7 +7068,7 @@ def list_container_sites():
         
     if not found:
         warn("No container sites found.")
-    input_pause("\n  Press Enter to continue...")
+    input("\n  Press Enter to continue...")
 
 def parse_multi_select(raw, count):
     if not raw: return []
@@ -7319,7 +7118,7 @@ def manage_containers_menu():
             print()
             for c in containers:
                 print(f"  {C.BOLD}{c[0]}{C.RESET} | {c[1]} | {c[2]}")
-            input_pause("\n  Press Enter to continue...")
+            input("\n  Press Enter to continue...")
             continue
             
         print()
@@ -7419,7 +7218,7 @@ def docker_oneclick_menu():
             else:
                 err(f"Failed to start PostgreSQL: {r.stderr}")
                 
-        input_pause("\n  Press Enter to continue...")
+        input("\n  Press Enter to continue...")
 
 def docker_system_cleanup():
     menu_header("Docker System Cleanup")
@@ -7430,7 +7229,7 @@ def docker_system_cleanup():
     if prompt_confirm(f"{C.YELLOW}Run docker system prune (removes unused images, build cache, stopped containers)?{C.RESET}"):
         run_live(["docker", "system", "prune", "-f"])
         ok("Cleanup complete.")
-    input_pause("\n  Press Enter to continue...")
+    input("\n  Press Enter to continue...")
 
 def docker_menu():
     while True:
@@ -7498,9 +7297,9 @@ def _install_wordpress(domain, docroot, db_name, db_user, db_pass, web_server="a
         return False
     finally:
         try: os.remove(wp_tar)
-        except OSError: pass
+        except: pass
         try: shutil.rmtree("/tmp/wordpress", ignore_errors=True)
-        except OSError: pass
+        except: pass
 
     # Write wp-config.php
     wp_config_src = Path(docroot) / "wp-config-sample.php"
@@ -7532,7 +7331,7 @@ def create_apache_wordpress_site():
     if not domain: return
     docroot = f"/var/www/{domain}"
 
-    dns_choice = _ask("  Create DNS zones for this site? (y/N): ", key="dns_choice").strip().lower()
+    dns_choice = input("  Create DNS zones for this site? (y/N): ").strip().lower()
     create_dns = (dns_choice == "y")
     ip = None
     if create_dns:
@@ -7546,7 +7345,7 @@ def create_apache_wordpress_site():
     default_db = re.sub(r"[^a-zA-Z0-9_]", "_", domain.split(".")[0])
     db_name = ask_db_name("Database name", default_db)
     db_user = ask_db_user("Database user", f"{default_db}_user")
-    db_pass = _ask("  Database password: ", key="db_pass").strip()
+    db_pass = input("  Database password: ").strip()
     if not db_pass:
         err("Password is required.")
         return
@@ -7661,7 +7460,7 @@ def create_apache_wordpress_site():
         print(f"  {C.YELLOW}  {ip}  {domain}{C.RESET}")
     print(f"  {C.DIM}Open in browser to complete WordPress setup wizard.{C.RESET}")
     print(f"{C.BOLD}{'─' * 35}{C.RESET}")
-    input_pause("\n  Press Enter to continue...")
+    input("\n  Press Enter to continue...")
 
 
 def create_nginx_wordpress_site():
@@ -7674,7 +7473,7 @@ def create_nginx_wordpress_site():
     if not domain: return
     docroot = f"/var/www/{domain}"
 
-    dns_choice = _ask("  Create DNS zones for this site? (y/N): ", key="dns_choice").strip().lower()
+    dns_choice = input("  Create DNS zones for this site? (y/N): ").strip().lower()
     create_dns = (dns_choice == "y")
     ip = None
     if create_dns:
@@ -7688,7 +7487,7 @@ def create_nginx_wordpress_site():
     default_db = re.sub(r"[^a-zA-Z0-9_]", "_", domain.split(".")[0])
     db_name = ask_db_name("Database name", default_db)
     db_user = ask_db_user("Database user", f"{default_db}_user")
-    db_pass = _ask("  Database password: ", key="db_pass").strip()
+    db_pass = input("  Database password: ").strip()
     if not db_pass:
         err("Password is required.")
         return
@@ -7812,7 +7611,7 @@ def create_nginx_wordpress_site():
         print(f"  {C.YELLOW}  {ip}  {domain}{C.RESET}")
     print(f"  {C.DIM}Open in browser to complete WordPress setup wizard.{C.RESET}")
     print(f"{C.BOLD}{'─' * 35}{C.RESET}")
-    input_pause("\n  Press Enter to continue...")
+    input("\n  Press Enter to continue...")
 
 
 def wordpress_apache_menu():
@@ -7890,7 +7689,7 @@ def create_apache_letsencrypt_site():
         warn("The HTTP site is still active at http://" + domain)
         if r.stderr: print(f"  {C.DIM}{r.stderr.strip()}{C.RESET}")
     save_site_meta(domain, "letsencrypt", docroot, web_server="apache", dns=False)
-    input_pause("\n  Press Enter to continue...")
+    input("\n  Press Enter to continue...")
 
 
 def create_nginx_letsencrypt_site():
@@ -7921,7 +7720,7 @@ def create_nginx_letsencrypt_site():
         warn("The HTTP site is still active at http://" + domain)
         if r.stderr: print(f"  {C.DIM}{r.stderr.strip()}{C.RESET}")
     save_site_meta(domain, "letsencrypt", docroot, web_server="nginx", dns=False)
-    input_pause("\n  Press Enter to continue...")
+    input("\n  Press Enter to continue...")
 
 
 def letsencrypt_apache_menu():
@@ -7941,7 +7740,7 @@ def letsencrypt_apache_menu():
             step("Renewing all certificates...")
             r = run(["certbot", "renew"])
             ok("Renewal complete.") if r.returncode == 0 else err("Renewal failed.")
-            input_pause("\n  Press Enter to continue...")
+            input("\n  Press Enter to continue...")
         elif choice == "3": delete_apache_site()
         elif choice == "4": list_apache_sites()
         elif choice == "0": break
@@ -7965,7 +7764,7 @@ def letsencrypt_nginx_menu():
             step("Renewing all certificates...")
             r = run(["certbot", "renew"])
             ok("Renewal complete.") if r.returncode == 0 else err("Renewal failed.")
-            input_pause("\n  Press Enter to continue...")
+            input("\n  Press Enter to continue...")
         elif choice == "3": delete_nginx_site()
         elif choice == "4": list_nginx_sites()
         elif choice == "0": break
@@ -8161,7 +7960,7 @@ def _pick_interface(interfaces):
 
 def _apply_networking(iface_name, backup_path):
     apply_now = input(
-        "\n  Apply changes now? Networking will restart (yes/no): "
+        f"\n  Apply changes now? Networking will restart (yes/no): "
     ).strip().lower()
 
     if apply_now != "yes":
@@ -8775,7 +8574,7 @@ def show_loading_screen():
     elif status == "uncertain":
         print(f"  {C.YELLOW}[~] Supported (uncertain): {os_name}{C.RESET}")
         print(f"\n  {C.YELLOW}[!] This OS may work but has not been fully tested.{C.RESET}")
-        print("      Some features may behave differently from Debian 11/12/13.\n")
+        print(f"      Some features may behave differently from Debian 11/12/13.\n")
         if not prompt_confirm("Do you want to proceed anyway?", default="yes"):
             _shutdown()
     else:
@@ -9031,6 +8830,105 @@ def mariadb_restore():
             else:
                 err("Restore failed.")
 
+# --- OLD CODE ---
+# def mariadb_menu():
+#     while True:
+#         menu_header("Manage MariaDB")
+#         print("1. List Databases")
+#         print("2. Create Database")
+#         print("3. Drop Database")
+#         print("4. List Users")
+#         print("5. Create User")
+#         print("6. Drop User")
+#         print("7. Grant Privileges")
+#         print("8. Revoke Privileges")
+#         print("9. Change User Password")
+#         print("10. Backup Database")
+#         print("11. Restore Database")
+#         print("0. Back")
+#         menu_separator()
+#         
+#         choice = input("  Choice: ").strip()
+#         if not choice.isdigit():
+#             warn("Please enter a number.")
+#             continue
+#             
+#         if choice == "1":
+#             mariadb_list_databases()
+#         elif choice == "2":
+#             mariadb_create_database()
+#         elif choice == "3":
+#             mariadb_drop_database()
+#         elif choice == "4":
+#             mariadb_list_users()
+#         elif choice == "5":
+#             mariadb_create_user()
+#         elif choice == "6":
+#             mariadb_drop_user()
+#         elif choice == "7":
+#             mariadb_grant_privileges()
+#         elif choice == "8":
+#             mariadb_revoke_privileges()
+#         elif choice == "9":
+#             mariadb_change_password()
+#         elif choice == "10":
+#             mariadb_backup()
+#         elif choice == "11":
+#             mariadb_restore()
+#         elif choice == "0":
+#             break
+#         else:
+#             warn("Invalid choice.")
+# --- OLD CODE END ---
+
+# --- OLD CODE ---
+# def mariadb_inspect_database():
+#     mariadb_list_databases()
+#     db = input("\n  Database name to inspect: ").strip()
+#     if not db:
+#         return
+#     if not re.match(r"^[a-zA-Z0-9_]+$", db):
+#         err("Invalid database name.")
+#         return
+# 
+#     res = mariadb_run_sql(f"SHOW TABLES FROM `{db}`;", fetch=True)
+#     if not res:
+#         err(f"Database '{db}' does not exist or has no tables.")
+#         return
+#         
+#     step(f"Tables in '{db}':")
+#     for line in res.splitlines():
+#         if line.startswith(f"Tables_in_{db}"):
+#             continue
+#         line = line.strip()
+#         if line:
+#             print(f"    - {line}")
+# 
+#     while True:
+#         table = input("\n  Enter table name to inspect (or 0 to go back): ").strip()
+#         if not table or table == "0":
+#             break
+#             
+#         if not re.match(r"^[a-zA-Z0-9_]+$", table):
+#             err("Invalid table name.")
+#             continue
+#             
+#         res_desc = mariadb_run_sql(f"DESCRIBE `{db}`.`{table}`;", fetch=True)
+#         if not res_desc:
+#             err(f"Table '{table}' does not exist.")
+#             step(f"Tables in '{db}':")
+#             for line in res.splitlines():
+#                 if line.startswith(f"Tables_in_{db}"):
+#                     continue
+#                 line = line.strip()
+#                 if line:
+#                     print(f"    - {line}")
+#             continue
+#             
+#         step(f"Schema for `{db}`.`{table}`:")
+#         for line in res_desc.splitlines():
+#             print(f"    {line}")
+# --- OLD CODE END ---
 
 def mariadb_inspect_database():
     res_db = mariadb_run_sql("SHOW DATABASES;", fetch=True)
@@ -9126,7 +9024,7 @@ def mariadb_inspect_database():
             for line in res_data.splitlines():
                 print(f"    {line}")
         
-        input_pause("\n  Press Enter to continue...")
+        input("\n  Press Enter to continue...")
 
 def mariadb_databases_menu():
     while True:
@@ -10426,9 +10324,9 @@ ssl_enable=NO
 
     print()
     print(f"  {C.BOLD}FTP is ready.{C.RESET}")
-    print("  Use any system user to connect via FTP.")
-    print("  Config: /etc/vsftpd.conf")
-    input_pause("\n  Press Enter to continue...")
+    print(f"  Use any system user to connect via FTP.")
+    print(f"  Config: /etc/vsftpd.conf")
+    input("\n  Press Enter to continue...")
 
 
 def delete_ftp_server():
@@ -10439,7 +10337,7 @@ def delete_ftp_server():
     rc, _ = run_live(["apt-get", "purge", "-y", "vsftpd"])
     ok("vsftpd removed.") if rc == 0 else err("Failed to remove vsftpd.")
     run(["rm", "-f", "/etc/vsftpd.conf"])
-    input_pause("\n  Press Enter to continue...")
+    input("\n  Press Enter to continue...")
 
 
 def ftp_server_menu():
@@ -10521,8 +10419,8 @@ def setup_phpmyadmin():
     else:
         port = 8080 if apache_on_backend_port() else 80
         print(f"  {C.BOLD}Access via:{C.RESET}  http://{ip}:{port}/phpmyadmin")
-    print("  Login with your MariaDB root or site database credentials.")
-    input_pause("\n  Press Enter to continue...")
+    print(f"  Login with your MariaDB root or site database credentials.")
+    input("\n  Press Enter to continue...")
 
 
 def delete_phpmyadmin():
@@ -10534,7 +10432,7 @@ def delete_phpmyadmin():
     unexpose_phpmyadmin_nginx()
     mark_reload("apache2")
     apply_reloads()
-    input_pause("\n  Press Enter to continue...")
+    input("\n  Press Enter to continue...")
 
 
 def phpmyadmin_menu():
@@ -10599,7 +10497,7 @@ def setup_samba():
     try:
         backup_config("/etc/samba/smb.conf")
         if DRY_RUN:
-            step("[dry-run] Would append to /etc/samba/smb.conf")
+            step(f"[dry-run] Would append to /etc/samba/smb.conf")
         else:
             with open("/etc/samba/smb.conf", "a") as f:
                 f.write(smb_block)
@@ -10615,8 +10513,8 @@ def setup_samba():
     print()
     print(f"  {C.BOLD}Samba share ready:{C.RESET}  \\\\<server-ip>\\{share_name}")
     if not public:
-        print("  Add Samba users with:  smbpasswd -a <username>")
-    input_pause("\n  Press Enter to continue...")
+        print(f"  Add Samba users with:  smbpasswd -a <username>")
+    input("\n  Press Enter to continue...")
 
 
 def delete_samba():
@@ -10626,7 +10524,7 @@ def delete_samba():
     run_live(["systemctl", "stop", "smbd"])
     rc, _ = run_live(["apt-get", "purge", "-y", "samba", "samba-common"])
     ok("Samba removed.") if rc == 0 else err("Failed to remove Samba.")
-    input_pause("\n  Press Enter to continue...")
+    input("\n  Press Enter to continue...")
 
 
 def samba_menu():
@@ -10860,6 +10758,13 @@ def display_main_menu() -> str:
     print(f"  {C.CYAN}OS Detected: {get_os_version()}{C.RESET}")
     return input("  \nChoice: ").strip()
 
+
+def check_apparmor_warning(service_name):
+    if not os.path.isfile("/usr/sbin/aa-status"):
+        return
+    res = subprocess.run(["aa-status"], capture_output=True, text=True)
+    if service_name in res.stdout and "enforce" in res.stdout:
+        warn(f"AppArmor is enforcing a profile for {service_name}. This may block custom config paths.")
 
 def _shutdown():
     """Centralised graceful shutdown — add cleanup tasks here as needed."""
@@ -11109,31 +11014,12 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
 
         if parsed.path.startswith("/api/"):
-            # ── Phase 0: Auth-free routes ─────────────────────────────────────
-            AUTH_FREE_GET = {"/api/session", "/api/health"}
-            # Fix: GET /api/session must reach web_handle_auth — auth.js
-            # bootstraps every page load with it and needs
-            # {"ok":true, csrf, actor} for a live cookie. Without this,
-            # the request fell through handle_api_get to the generic
-            # `{}` and every reload forced a re-login.
-            if parsed.path in ("/api/session", "/api/login", "/api/logout"):
-                if web_handle_auth(self, parsed.path):
-                    return
-            if parsed.path not in AUTH_FREE_GET:
-                cookie = self.headers.get("Cookie", "")
-                sid = ""
-                for part in cookie.split(";"):
-                    part = part.strip()
-                    if part.startswith("zm_session="):
-                        sid = part[len("zm_session="):]
-                sess = auth_session(sid)
-                if not sess:
-                    self.send_response(401)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(b'{"error":"login required"}')
-                    return
-                self.zm_session = sess
+            # ── Open access: no login required ────────────────────────────────
+            self.zm_session = {"actor": "web", "role": "admin", "csrf": ""}
+
+            if parsed.path == "/api/session":
+                _web_json(self, {"ok": True, "actor": "web", "role": "admin", "csrf": ""})
+                return
 
             # ── Phase 2–6: New API endpoints ───────────────────────────────────
             if web_handle_new_api(self, parsed.path):
@@ -11157,15 +11043,10 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         
         if parsed.path == "/api/status":
-            # One batched systemctl query for all units. Do NOT call
-            # service_status() per unit here: each call re-checks the shared
-            # TTL cache, so the units that were not part of the first cached
-            # batch would be served as cache-miss "inactive" for the TTL.
-            svc_names = ("apache2", "nginx", "bind9", "mariadb",
-                         "postfix", "dovecot", "ufw")
-            svc_state = service_statuses(list(svc_names), ttl=3.0)
-            svc = {name: ("running" if svc_state.get(name) == "active" else "stopped")
-                   for name in svc_names}
+            # Strip ANSI escape codes
+            def strip_ansi(text):
+                return re.sub(r'\x1b\[[0-9;]*m', '', text)
+            
             uptime_info = get_system_uptime()
             ram_info = get_ram_usage()
             cpu_info = get_cpu_usage()
@@ -11173,13 +11054,13 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
             open_inc = incidents_list("open")
             data = {
                 "os": get_os_version(),
-                "apache2": svc["apache2"],
-                "nginx": svc["nginx"],
-                "bind9": svc["bind9"],
-                "mariadb": svc["mariadb"],
-                "postfix": svc["postfix"],
-                "dovecot": svc["dovecot"],
-                "ufw": svc["ufw"],
+                "apache2": strip_ansi(service_status("apache2")),
+                "nginx": strip_ansi(service_status("nginx")),
+                "bind9": strip_ansi(service_status("bind9")),
+                "mariadb": strip_ansi(service_status("mariadb")),
+                "postfix": strip_ansi(service_status("postfix")),
+                "dovecot": strip_ansi(service_status("dovecot")),
+                "ufw": strip_ansi(service_status("ufw")),
                 "docker_installed": is_docker_installed(),
                 "version": SCRIPT_VERSION,
                 "api_version": API_VERSION,
@@ -11274,35 +11155,8 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
 
-        # ── Phase 0: Auth endpoints (no session required) ─────────────────────
-        if parsed.path in ("/api/login", "/api/logout"):
-            web_handle_auth(self, parsed.path)
-            return
-
-        # ── Phase 0: Session enforcement ─────────────────────────────────
-        cookie = self.headers.get("Cookie", "")
-        sid = ""
-        for part in cookie.split(";"):
-            part = part.strip()
-            if part.startswith("zm_session="):
-                sid = part[len("zm_session="):]
-        sess = auth_session(sid)
-        if not sess:
-            self.send_response(401)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b'{"error":"login required"}')
-            return
-        self.zm_session = sess
-
-        # ── Phase 0: CSRF check ──────────────────────────────────────────
-        csrf_header = self.headers.get("X-ZM-CSRF", "")
-        if not auth_csrf_ok(sid, csrf_header):
-            self.send_response(403)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b'{"error":"invalid CSRF token"}')
-            return
+        # ── Open access: no login or CSRF token required ──────────────────────
+        self.zm_session = {"actor": "web", "role": "admin", "csrf": ""}
 
         # ── Phase 5: Safe-mode guard ───────────────────────────────────────
         SAFE_MODE_ALLOWED = {
@@ -11335,7 +11189,7 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         # ── Phase 0: Audit context ─────────────────────────────────────────
-        self._zm_actor = sess.get("actor", "web")
+        self._zm_actor = "web"
         self._zm_src   = self.client_address[0] if self.client_address else ""
 
         # ── Phase 2–6: New API endpoints ───────────────────────────────────
@@ -11368,6 +11222,9 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(b'{"success": false, "error": "No content"}')
             return
 
+        query = urllib.parse.parse_qs(parsed.query)
+        filename = query.get("filename", ["site.zip"])[0]
+        
         upload_dir = "/tmp/zerver_uploads"
         if not os.path.exists(upload_dir):
             os.makedirs(upload_dir, exist_ok=True)
@@ -11573,6 +11430,7 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             success = False
             message = str(e)
+            import traceback
             traceback.print_exc()
             
         self.send_response(200)
@@ -11585,6 +11443,7 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
+        import sys, io, re
         
         class StreamingLogger:
             def __init__(self, wfile):
@@ -11671,6 +11530,7 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
                     docker_oneclick_menu()
             success = True
         except Exception as e:
+            import traceback
             print(f"Error: {e}")
             traceback.print_exc()
         finally:
@@ -11682,7 +11542,7 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
         data = json.loads(post_data.decode('utf-8'))
         
         old_stdout, old_stdin = self._setup_stream()
-        import sys
+        import sys, io
         
         success = False
         try:
@@ -11838,6 +11698,7 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
                     success = delete_mail_user_account(data.get("mail_user", ""))
         except Exception as e:
             print(f"\n[!] Server Error: {e}")
+            import traceback
             traceback.print_exc(file=sys.stdout)
             success = False
         finally:
@@ -11849,7 +11710,7 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
         data = json.loads(post_data.decode('utf-8'))
         
         old_stdout, old_stdin = self._setup_stream()
-        import sys
+        import sys, io
         
         success = False
         try:
@@ -11912,6 +11773,7 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
                 success = True
         except Exception as e:
             print(f"\n[!] Server Error: {e}")
+            import traceback
             traceback.print_exc(file=sys.stdout)
             success = False
         finally:
@@ -11921,134 +11783,234 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
         content_length = int(self.headers.get('Content-Length', 0))
         post_data = self.rfile.read(content_length) if content_length > 0 else b'{}'
         data = json.loads(post_data.decode('utf-8'))
-
+        
         old_stdout, old_stdin = self._setup_stream()
-
+        import sys, io
+        
+        # MockStdin is defined at module level (shared by every handler)
+        
         site_type = path.split("/")[-1]
         success = False
-
+        
         try:
             domain = data.get("domain", "")
             if "create_dns" in data:
                 dns_enabled = bool(data.get("create_dns"))
             else:
+                import re
                 is_ip = bool(re.match(r"^\d{1,3}(\.\d{1,3}){3}$", domain))
                 dns_enabled = bool(domain and not is_ip)
             ip = data.get("ip", "")
             db_pass = data.get("db_pass", "")
-
-            # Answer bridge: prompts inside the creator consume these BY KEY
-            # (via _ask), so prompt order/branching can change freely without
-            # corrupting the web flow (replaces the old MockStdin sequences).
-            answers = {
-                "domain": domain,
-                "dns_choice": "y" if dns_enabled else "n",
-                "ip": ip,
-                "db_pass": db_pass,
-                "press_enter": "",
-            }
-            ssl_choice = data.get("ssl", "1")
-            le_email = data.get("le_email", "")
-            actual_ssl = "1" if ssl_choice == "4" else ssl_choice
-
+            
             if site_type == "lamp":
-                answers.update({
-                    "db_name": data.get("db_name", ""),
-                    "db_user": data.get("db_user", ""),
-                    "ssl": actual_ssl,
-                    "docroot": data.get("docroot", ""),
-                    "use_site_files": "y" if (data.get("use_site_files") and data.get("site_files_path")) else "n",
-                    "site_files_path": data.get("site_files_path", ""),
-                    "import_sql": "y" if (data.get("import_sql") and data.get("sql_path")) else "n",
-                    "sql_path": data.get("sql_path", ""),
-                })
-                with _web_prompt_driver(answers):
-                    create_lamp_site()
+                # create_lamp_site() input sequence:
+                #  1. ask_domain()           -> domain
+                #  2. "Create DNS zones?"     -> "y"/"n"
+                #  3. prompt_for_ip()         -> ip  (ONLY if dns="y")
+                #  4. ask_db_name()           -> db_name or "" (accept default)
+                #  5. ask_db_user()           -> db_user or "" (accept default)
+                #  6. "Database password:"    -> db_pass
+                #  7. "SSL Choice [1]:"       -> ssl ("1" or "2")
+                #  8. ask_docroot()           -> docroot or "" (accept default)
+                #  9. prompt_confirm (custom files) -> "y"/"n"
+                # 10. path to site files       -> site_files_path (ONLY if use_site_files="y")
+                # 11. prompt_confirm (db import)    -> "y"/"n"
+                # 12. sql file path            -> sql_path (ONLY if import_sql="y")
+                db_name = data.get("db_name", "")
+                db_user = data.get("db_user", "")
+                ssl_choice = data.get("ssl", "1")
+                le_email = data.get("le_email", "")
+                actual_ssl = "1" if ssl_choice == "4" else ssl_choice
+                docroot = data.get("docroot", "")
+                use_site_files = bool(data.get("use_site_files"))
+                site_files_path = data.get("site_files_path", "")
+                import_sql = bool(data.get("import_sql"))
+                sql_path = data.get("sql_path", "")
+                responses = [domain]
+                if dns_enabled:
+                    responses += ["y", ip]
+                else:
+                    responses += ["n"]
+                responses += [db_name, db_user, db_pass, actual_ssl, docroot]
+                # custom site files
+                if use_site_files and site_files_path:
+                    responses += ["y", site_files_path]
+                else:
+                    responses += ["n"]
+                # db import
+                if import_sql and sql_path:
+                    responses += ["y", sql_path]
+                else:
+                    responses += ["n"]
+                sys.stdin = MockStdin(responses)
+                create_lamp_site()
                 if ssl_choice == "4":
                     _ensure_certbot("apache")
                     step("Running Certbot for Let's Encrypt...")
-                    r = run(["certbot", "--apache", "-d", domain, "-d", f"www.{domain}", "--non-interactive", "--agree-tos", "-m", le_email, "--redirect"], timeout=600)
+                    r = run(["certbot", "--apache", "-d", domain, "-d", f"www.{domain}", "--non-interactive", "--agree-tos", "-m", le_email, "--redirect"])
                     if r.returncode == 0: ok(f"SSL certificate issued for {domain}.")
                     else: err(f"Certbot failed: {r.stderr}")
                 success = True
-
+                
             elif site_type == "lemp":
-                answers.update({
-                    "db_name": data.get("db_name", ""),
-                    "db_user": data.get("db_user", ""),
-                    "ssl": actual_ssl,
-                    "docroot": data.get("docroot", ""),
-                    "use_site_files": "y" if (data.get("use_site_files") and data.get("site_files_path")) else "n",
-                    "site_files_path": data.get("site_files_path", ""),
-                    "import_sql": "y" if (data.get("import_sql") and data.get("sql_path")) else "n",
-                    "sql_path": data.get("sql_path", ""),
-                })
-                with _web_prompt_driver(answers):
-                    create_lemp_site()
+                # create_lemp_site() — same pattern as LAMP but with Nginx/PHP-FPM
+                #  1-12 same sequence as LAMP
+                db_name = data.get("db_name", "")
+                db_user = data.get("db_user", "")
+                ssl_choice = data.get("ssl", "1")
+                le_email = data.get("le_email", "")
+                actual_ssl = "1" if ssl_choice == "4" else ssl_choice
+                docroot = data.get("docroot", "")
+                use_site_files = bool(data.get("use_site_files"))
+                site_files_path = data.get("site_files_path", "")
+                import_sql = bool(data.get("import_sql"))
+                sql_path = data.get("sql_path", "")
+                responses = [domain]
+                if dns_enabled:
+                    responses += ["y", ip]
+                else:
+                    responses += ["n"]
+                responses += [db_name, db_user, db_pass, actual_ssl, docroot]
+                # custom site files
+                if use_site_files and site_files_path:
+                    responses += ["y", site_files_path]
+                else:
+                    responses += ["n"]
+                # db import
+                if import_sql and sql_path:
+                    responses += ["y", sql_path]
+                else:
+                    responses += ["n"]
+                sys.stdin = MockStdin(responses)
+                create_lemp_site()
                 if ssl_choice == "4":
                     _ensure_certbot("nginx")
                     step("Running Certbot for Let's Encrypt...")
-                    r = run(["certbot", "--nginx", "-d", domain, "-d", f"www.{domain}", "--non-interactive", "--agree-tos", "-m", le_email, "--redirect"], timeout=600)
+                    r = run(["certbot", "--nginx", "-d", domain, "-d", f"www.{domain}", "--non-interactive", "--agree-tos", "-m", le_email, "--redirect"])
                     if r.returncode == 0: ok(f"SSL certificate issued for {domain}.")
                     else: err(f"Certbot failed: {r.stderr}")
                 success = True
-
+                
             elif site_type == "wordpress":
-                # db_name/db_user come through empty so the creator applies
-                # its own generated defaults (same as the old ["", "", pass].
-                answers["db_name"] = data.get("db_name", "")
-                answers["db_user"] = data.get("db_user", "")
+                # create_apache/nginx_wordpress_site() input sequence:
+                #  1. ask_domain()           -> domain
+                #  2. "Create DNS zones?"     -> "y"/"n"
+                #  3. prompt_for_ip()         -> ip  (ONLY if dns="y")
+                #  4. ask_db_name()           -> "" (accept default)
+                #  5. ask_db_user()           -> "" (accept default)
+                #  6. "Database password:"    -> db_pass
                 server = data.get("server", "apache")
-                with _web_prompt_driver(answers):
-                    if server == "apache":
-                        create_apache_wordpress_site()
-                    else:
-                        create_nginx_wordpress_site()
+                responses = [domain]
+                if dns_enabled:
+                    responses += ["y", ip]
+                else:
+                    responses += ["n"]
+                responses += ["", "", db_pass]  # db_name, db_user, pass
+                responses += [""]  # press enter at end
+                sys.stdin = MockStdin(responses)
+                if server == "apache":
+                    create_apache_wordpress_site()
+                else:
+                    create_nginx_wordpress_site()
                 success = True
-
+                
             elif site_type == "static":
+                # create_full_site() / create_nginx_full_site() input sequence:
+                #  1. ask_domain()           -> domain
+                #  2. "Create DNS zones?"     -> "y"/"n"
+                #  3. prompt_for_ip()         -> ip  (ONLY if dns="y")
+                #  4. SSL Choice             -> ssl
+                #  5. cert path (if ssl=3)   -> cert_path
+                #  6. key path (if ssl=3)    -> key_path
+                #  7. ask_docroot()          -> docroot (or "")
+                #  8. custom site files?     -> "n"
+                #  9. input("Press Enter")   -> "" (at end)
                 server = data.get("server", "apache")
-                answers.update({
-                    "ssl": actual_ssl,
-                    "cert_path": data.get("cert_path", ""),
-                    "key_path": data.get("key_path", ""),
-                    "docroot": data.get("docroot", ""),
-                    "use_site_files": "y" if (data.get("use_site_files") and data.get("site_files_path")) else "n",
-                    "site_files_path": data.get("site_files_path", ""),
-                })
-                with _web_prompt_driver(answers):
-                    if server == "apache":
-                        create_full_site()
-                    else:
-                        create_nginx_full_site()
+                ssl_choice = data.get("ssl", "1")
+                le_email = data.get("le_email", "")
+                actual_ssl = "1" if ssl_choice == "4" else ssl_choice
+                docroot = data.get("docroot", "")
+                use_site_files = bool(data.get("use_site_files"))
+                site_files_path = data.get("site_files_path", "")
+                
+                responses = [domain]
+                if dns_enabled:
+                    responses += ["y", ip]
+                else:
+                    responses += ["n"]
+                
+                responses.append(actual_ssl)
+                responses.append(docroot)
+                
+                if actual_ssl == "3":
+                    responses += [data.get("cert_path", ""), data.get("key_path", "")]
+                
+                if use_site_files and site_files_path:
+                    responses += ["y", site_files_path]
+                else:
+                    responses.append("n")
+                responses.append("")
+                
+                sys.stdin = MockStdin(responses)
+                if server == "apache":
+                    create_full_site()
+                else:
+                    create_nginx_full_site()
+
                 if ssl_choice == "4":
                     _ensure_certbot(server)
                     step("Running Certbot for Let's Encrypt...")
-                    r = run(["certbot", f"--{server}", "-d", domain, "-d", f"www.{domain}", "--non-interactive", "--agree-tos", "-m", le_email, "--redirect"], timeout=600)
+                    r = run(["certbot", f"--{server}", "-d", domain, "-d", f"www.{domain}", "--non-interactive", "--agree-tos", "-m", le_email, "--redirect"])
                     if r.returncode == 0: ok(f"SSL certificate issued for {domain}.")
                     else: err(f"Certbot failed: {r.stderr}")
+                    
                 success = True
-
+                
             elif site_type == "proxy":
+                # create_apache/nginx_reverse_proxy() input sequence:
+                #  1. ask_domain()           -> domain
+                #  2. "Create DNS zones?"     -> "y"/"n"
+                #  3. prompt_for_ip()         -> ip  (ONLY if dns="y")
+                #  4. "Proxy target:"         -> backend
+                #  5. input("Press Enter")    -> ""
                 server = data.get("server", "apache")
-                answers["backend"] = data.get("backend", "")
-                with _web_prompt_driver(answers):
-                    if server == "apache":
-                        create_apache_reverse_proxy()
-                    else:
-                        create_nginx_reverse_proxy()
+                backend = data.get("backend", "")
+                responses = [domain]
+                if dns_enabled:
+                    responses += ["y", ip]
+                else:
+                    responses += ["n"]
+                responses += [backend, ""]  # target, press enter
+                sys.stdin = MockStdin(responses)
+                if server == "apache":
+                    create_apache_reverse_proxy()
+                else:
+                    create_nginx_reverse_proxy()
                 success = True
 
             elif site_type == "docker":
-                answers["image"] = data.get("image", "")
-                answers["port"] = str(data.get("port", "80") or "80")
-                answers["dns_choice"] = "y" if data.get("dns") else "n"
-                with _web_prompt_driver(answers):
-                    create_container_site()
+                # create_container_site() input sequence:
+                #  1. ask_domain()           -> domain
+                #  2. image                  -> image
+                #  3. internal port          -> port
+                #  4. "Create DNS zones?"    -> "y"/"n"
+                #  5. prompt_for_ip()        -> ip  (ONLY if dns="y")
+                image = data.get("image", "")
+                port = data.get("port", "80")
+                dns = "y" if data.get("dns") else "n"
+                ip = data.get("ip", "")
+                responses = [domain, image, str(port), dns]
+                if dns == "y":
+                    responses.append(ip)
+                responses.append("")  # press enter
+                sys.stdin = MockStdin(responses)
+                create_container_site()
                 success = True
 
         except Exception as e:
             print(f"\n[!] Server Error: {e}")
+            import traceback
             traceback.print_exc(file=sys.stdout)
             success = False
         finally:
@@ -12126,17 +12088,7 @@ def start_web_ui():
     except Exception:
         pass
 
-    # ── Phase 0: Auth init ───────────────────────────────────────────────────
-    if not auth_is_configured():
-        warn("No admin credentials configured. Setting up first-time password...")
-        import getpass
-        pw = getpass.getpass("  Set admin password for the Web UI: ")
-        if pw:
-            auth_init(pw)
-            ok("Admin credentials saved to /etc/zervermanager/auth.json")
-        else:
-            warn("No password entered — Web UI will start but login will be required. "
-                 "Run: python3 zervermanager.py auth reset")
+    # ── Phase 0: Auth is intentionally disabled (open control panel) ─────────
 
     # ── Port & bind address ──────────────────────────────────────────────────
     PREFERRED_PORT = WEB_UI_DEFAULT_PORT
@@ -12148,8 +12100,8 @@ def start_web_ui():
             PREFERRED_PORT = int(_env_port)
 
     # Default: bind to all interfaces so the Web UI is reachable from the
-    # admin's browser. Auth (session + CSRF) is now enforced on all routes.
-    # Use --listen 127.0.0.1 to restrict to loopback only.
+    # admin's browser. Login is disabled; use --listen 127.0.0.1 to restrict
+    # access to loopback only.
     LISTEN_ADDR = "0.0.0.0"
     if "--listen" in sys.argv:
         idx = sys.argv.index("--listen")
@@ -12183,8 +12135,6 @@ def start_web_ui():
         warn(f"Port {PREFERRED_PORT} was busy — using port {PORT} instead.")
     print(f"\n  {C.GREEN}\u2713 Web Configuration started.{C.RESET}")
     print(f"  {C.CYAN}Please open your browser to: http://{display_addr}:{PORT}{C.RESET}")
-    if not auth_is_configured():
-        print(f"  {C.YELLOW}  WARNING: No admin credentials — login is required.{C.RESET}")
     if is_safe_mode():
         print(f"  {C.RED}  SAFE MODE ACTIVE — recovery only.{C.RESET}")
     print(f"  {C.DIM}Press Ctrl+C to stop the web server and exit.{C.RESET}\n")
@@ -12209,13 +12159,6 @@ def main():
     if "--dry-run" in sys.argv:
         DRY_RUN = True
         warn("DRY-RUN mode active — no commands will be executed.")
-
-    # ── Phase 0: auth reset CLI shortcut ────────────────────────────────────
-    if len(sys.argv) >= 3 and sys.argv[1] == "auth" and sys.argv[2] == "reset":
-        import getpass
-        pw = getpass.getpass("  New admin password: ")
-        cli_auth_reset(pw)
-        sys.exit(0)
 
     # ── Phase 2/9: snapshot CLI ──────────────────────────────────────────────
     if len(sys.argv) >= 2 and sys.argv[1] == "snapshot":
@@ -12317,6 +12260,7 @@ if __name__ == "__main__":
         print("\n  [!] Exiting gracefully...")
         sys.exit(0)
     except Exception as e:
+        import traceback
         err(f"An unexpected error occurred: {e}")
         traceback.print_exc()
         sys.exit(1)

@@ -1,56 +1,3 @@
-// ── Startup Splash ──────────────────────────────────────────────────────────
-(function () {
-    const splash = document.getElementById('startup-splash');
-    if (!splash) return;
-
-    // Populate version badge
-    fetch('/api/status')
-        .then(r => r.json())
-        .then(d => {
-            const el = document.getElementById('splash-ver');
-            if (el && d.version) el.textContent = d.version;
-        })
-        .catch(() => {});
-
-    // ── Image slideshow ──
-    const photos = splash.querySelectorAll('.splash-photo');
-    const dots   = splash.querySelectorAll('.splash-dot');
-    let current  = 0;
-    const SLIDE_INTERVAL = 2400; // ms per image
-
-    function showSlide(idx) {
-        photos.forEach((p, i) => p.classList.toggle('active', i === idx));
-        dots.forEach((d, i) => d.classList.toggle('active', i === idx));
-        current = idx;
-    }
-
-    // Start cycling after first image has settled (~1.3s)
-    let slideTimer = null;
-    setTimeout(() => {
-        slideTimer = setInterval(() => {
-            const next = (current + 1) % photos.length;
-            showSlide(next);
-        }, SLIDE_INTERVAL);
-    }, 1300);
-
-    // ── Dismiss after full animation: 8s delay + 0.7s fade ──
-    const TOTAL_MS = 8800;
-    const dismiss = () => {
-        if (slideTimer) clearInterval(slideTimer);
-        splash.classList.add('hidden');
-        splash.remove();
-    };
-
-    // Primary trigger: when CSS fade-out animation completes
-    splash.addEventListener('animationend', (e) => {
-        if (e.animationName === 'splashFadeOut') dismiss();
-    }, { once: true });
-
-    // Fallback
-    setTimeout(dismiss, TOTAL_MS);
-}());
-
-
 // ── Custom Dialog Engine ─────────────────────────────────────────────────────
 // Promise-based drop-in replacement for confirm() and alert().
 // Usage:
@@ -58,6 +5,14 @@
 //   await showAlert('Title', 'Message text');
 
 let _dialogResolve = null;
+let _dlgToken = 0;
+
+// Where the dialog came from: the next open animates out of the trigger
+// (11. enter from the trigger / 12. exit to the trigger).
+const _dlgOrigin = { x: null, y: null };
+document.addEventListener('pointerdown', e => {
+    _dlgOrigin.x = e.clientX; _dlgOrigin.y = e.clientY;
+}, true);
 
 function _openDialog({ title, msg, okLabel = 'OK', okClass = 'danger-solid', hasCancel = true, extraText = null, isInfo = false }) {
     return new Promise(resolve => {
@@ -98,16 +53,41 @@ function _openDialog({ title, msg, okLabel = 'OK', okClass = 'danger-solid', has
         }
 
         overlay.classList.add('open');
+        box.classList.remove('closing');
+        if (_dlgOrigin.x !== null) {
+            box.style.setProperty('--dlg-ox', Math.round(_dlgOrigin.x) + 'px');
+            box.style.setProperty('--dlg-oy', Math.round(_dlgOrigin.y) + 'px');
+        }
         // Focus the primary action button
         setTimeout(() => (hasCancel ? cancelBtn : okBtn).focus(), 80);
     });
+}
+
+// 15. Exits are 20% shorter. The token guards against a dialog being
+//     re-opened while a close animation is still winding down.
+function _closeDialog() {
+    const token = ++_dlgToken;
+    const overlay = document.getElementById('dialog-overlay');
+    const box = document.getElementById('dialog-box');
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        overlay.classList.remove('open');
+        box.classList.remove('closing');
+        return;
+    }
+    box.classList.add('closing');
+    setTimeout(() => {
+        if (_dlgToken === token) {
+            overlay.classList.remove('open');
+            box.classList.remove('closing');
+        }
+    }, 180);
 }
 
 function dialogOk() {
     const extraCheck = document.getElementById('dialog-extra-check');
     const extraDiv = document.getElementById('dialog-extra');
     const hasExtra = !extraDiv.classList.contains('hidden');
-    document.getElementById('dialog-overlay').classList.remove('open');
+    _closeDialog();
     if (_dialogResolve) {
         _dialogResolve(hasExtra ? { confirmed: true, extra: extraCheck.checked } : true);
         _dialogResolve = null;
@@ -115,7 +95,7 @@ function dialogOk() {
 }
 
 function dialogCancel() {
-    document.getElementById('dialog-overlay').classList.remove('open');
+    _closeDialog();
     if (_dialogResolve) {
         _dialogResolve(false);
         _dialogResolve = null;
@@ -216,7 +196,10 @@ function applyGoldfishMode(isActive, showToastMsg = false) {
     document.body.classList.toggle('goldfish-mode', isActive);
 
     const btn = document.getElementById('goldfish-btn');
-    if (btn) btn.classList.toggle('is-active', isActive);
+    if (btn) {
+        btn.classList.toggle('is-active', isActive);
+        btn.setAttribute('aria-pressed', String(isActive));
+    }
 
     // If LEMP tab is active and we're entering goldfish mode, switch to LAMP
     if (isActive) {
@@ -233,8 +216,8 @@ function applyGoldfishMode(isActive, showToastMsg = false) {
         const msgEl = document.getElementById('goldfish-toast-msg');
         if (toast) {
             if (msgEl) msgEl.textContent = isActive
-                ? '🐟 Simple Mode ON — advanced options hidden'
-                : '⚙️ Simple Mode OFF — all options restored';
+                ? 'Simple view on — advanced options hidden'
+                : 'Simple view off — all options restored';
             toast.classList.add('show');
             clearTimeout(_goldfishToastTimer);
             _goldfishToastTimer = setTimeout(() => toast.classList.remove('show'), 2800);
@@ -268,7 +251,7 @@ async function topBarReloadAll() {
     const fakeForm = document.createElement('form');
     const btn = document.createElement('button');
     btn.type = 'submit';
-    btn.innerHTML = 'Reload All';
+    btn.innerHTML = 'Reload all';
     fakeForm.appendChild(btn);
 
     const event = { preventDefault: () => {}, target: fakeForm };
@@ -283,51 +266,47 @@ function switchPage(pageId) {
 
     const navItem = document.querySelector('[data-page="' + pageId + '"]');
     const pageTitle = navItem ? navItem.getAttribute('data-title') : pageId;
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    let switched = false;
-    const finishSwitch = () => {
-        if (switched) return;   // animationend AND the 250ms fallback both call this — run once
-        switched = true;
-        // Hide all pages
-        document.querySelectorAll('.page-section').forEach(p => {
-            p.classList.remove('active', 'exiting');
-            p.style.animation = '';
-        });
-        // Deactivate all nav items
-        document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
-        
-        // Show selected page
-        target.classList.add('active');
-        // Activate nav item
-        if (navItem) navItem.classList.add('active');
-        
-        // Update breadcrumb
-        updateBreadcrumb(pageTitle);
-        // Load data for specific pages
-        if (pageId === 'managesites') {
-            loadSites();
-        } else if (pageId === 'dns') {
-            loadDNS();
-        } else if (pageId === 'services') {
-            loadMailUsers();
-        } else if (pageId === 'docker') {
-            loadDocker();
-        }
-    };
-
-    if (current && current.id !== 'page-' + pageId && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        current.classList.add('exiting');
-        current.style.animation = 'pageOut 0.18s cubic-bezier(0.4, 0, 1, 1) forwards';
-        current.addEventListener('animationend', function handler(e) {
-            if (e.animationName === 'pageOut') {
-                current.removeEventListener('animationend', handler);
-                finishSwitch();
-            }
-        });
-        // Fallback in case animationend doesn't fire
-        setTimeout(finishSwitch, 250);
+    // 16. Overlap old & new states: the outgoing page keeps painting
+    // (absolutely positioned) while the incoming one fades in on top.
+    if (current && current !== target && !reduced) {
+        const old = current;
+        old.classList.add('leaving');
+        old.classList.remove('active');
+        old.style.animation = '';
+        setTimeout(() => {
+            old.classList.remove('leaving');
+            old.style.animation = '';
+        }, 260);
     } else {
-        finishSwitch();
+        document.querySelectorAll('.page-section').forEach(p => {
+            if (p !== target) { p.classList.remove('active', 'exiting', 'leaving'); p.style.animation = ''; }
+        });
+    }
+
+    // Deactivate all nav items
+    document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+
+    // Show selected page
+    target.classList.add('active');
+    if (navItem) navItem.classList.add('active');
+
+    // Start the new page from the top so the crossfade lines up
+    const main = document.querySelector('.main-content');
+    if (current && !reduced && main && main.scrollTop) main.scrollTop = 0;
+
+    // Update breadcrumb
+    updateBreadcrumb(pageTitle);
+    // Load data for specific pages
+    if (pageId === 'managesites') {
+        loadSites();
+    } else if (pageId === 'dns') {
+        loadDNS();
+    } else if (pageId === 'services') {
+        loadMailUsers();
+    } else if (pageId === 'docker') {
+        loadDocker();
     }
 }
 
@@ -427,6 +406,8 @@ async function submitApiForm(event, endpoint, terminalId) {
     let execSeconds = 0;
     btn.innerHTML = `<div class="btn-spinner"></div> Executing... <span class="btn-timer">(0s)</span>`;
     btn.disabled = true;
+    btn.classList.add('is-busy-face');                      // 18. blur the icon swap
+    setTimeout(() => btn.classList.remove('is-busy-face'), 260);
     term.classList.add('visible');
     
     const execTimer = setInterval(() => {
@@ -500,7 +481,7 @@ async function submitApiForm(event, endpoint, terminalId) {
                         term.innerHTML += "<br><br><span style='color: var(--success); font-weight: 600;'>&#10003; Task completed successfully.</span>";
                         if (result.domain) {
                             const proto = payload.ssl === '2' ? 'https' : 'http';
-                            term.innerHTML += '<br><br>&#128279; <b>Site Ready:</b> <a href="' + proto + '://' + result.domain + '" target="_blank" style="color: var(--accent); text-decoration: underline;">' + proto + '://' + result.domain + '</a>';
+                            term.innerHTML += '<br><br>&#128279; <b>Site ready:</b> <a href="' + proto + '://' + result.domain + '" target="_blank" style="color: var(--accent); text-decoration: underline;">' + proto + '://' + result.domain + '</a>';
                         }
                         form.reset();
                     } else {
@@ -545,16 +526,16 @@ async function fetchStatus() {
             const baseClass = isLg ? 'badge badge-lg' : 'badge';
 
             if (s === 'running') {
-                el.innerText = 'RUNNING';
+                el.innerText = 'Running';
                 el.className = baseClass + ' active';
             } else if (s === 'stopped') {
-                el.innerText = 'STOPPED';
+                el.innerText = 'Stopped';
                 el.className = baseClass + ' inactive';
             } else if (s.includes('not installed') || s.includes('not found')) {
-                el.innerText = 'NOT INSTALLED';
+                el.innerText = 'Not installed';
                 el.className = baseClass + ' warning';
             } else {
-                el.innerText = status.toUpperCase();
+                el.innerText = status.charAt(0).toUpperCase() + status.slice(1);
                 el.className = baseClass;
             }
         };
@@ -571,7 +552,7 @@ async function fetchStatus() {
         const dockerEl = document.getElementById('docker-val');
         if (dockerEl) {
             const isDocker = data.docker_installed;
-            dockerEl.innerText = isDocker ? 'INSTALLED' : 'NOT INSTALLED';
+            dockerEl.innerText = isDocker ? 'Installed' : 'Not installed';
             dockerEl.className = isDocker ? 'badge badge-lg active' : 'badge badge-lg warning';
 
             const installCard = document.getElementById('docker-install-card');
@@ -622,13 +603,13 @@ async function fetchStatus() {
         const cpuStateEl = document.getElementById('metric-cpu-state');
         if (cpuStateEl) {
             if (cpuPercent >= 85) {
-                cpuStateEl.textContent = 'HIGH';
+                cpuStateEl.textContent = 'High';
                 cpuStateEl.className = 'metric-state-pill is-danger';
             } else if (cpuPercent >= 70) {
-                cpuStateEl.textContent = 'MODERATE';
+                cpuStateEl.textContent = 'Moderate';
                 cpuStateEl.className = 'metric-state-pill is-warning';
             } else {
-                cpuStateEl.textContent = 'NORMAL';
+                cpuStateEl.textContent = 'Normal';
                 cpuStateEl.className = 'metric-state-pill is-normal';
             }
         }
@@ -658,13 +639,13 @@ async function fetchStatus() {
         const ramStateEl = document.getElementById('metric-ram-state');
         if (ramStateEl) {
             if (ramPercent >= 90) {
-                ramStateEl.textContent = 'CRITICAL';
+                ramStateEl.textContent = 'Critical';
                 ramStateEl.className = 'metric-state-pill is-danger';
             } else if (ramPercent >= 75) {
-                ramStateEl.textContent = 'ELEVATED';
+                ramStateEl.textContent = 'Elevated';
                 ramStateEl.className = 'metric-state-pill is-warning';
             } else {
-                ramStateEl.textContent = 'NORMAL';
+                ramStateEl.textContent = 'Normal';
                 ramStateEl.className = 'metric-state-pill is-normal';
             }
         }
@@ -737,7 +718,7 @@ async function fetchStatus() {
             } else {
                 pillTempVal.textContent = 'N/A';
                 if (pillTempPip) pillTempPip.className = 'res-pip';
-                if (pillTemp) pillTemp.title = 'CPU Temperature: sensor unavailable';
+                if (pillTemp) pillTemp.title = 'CPU temperature: sensor unavailable';
             }
         }
 
@@ -794,7 +775,7 @@ async function fetchStatus() {
             const badges = ['apache2-val', 'nginx-val', 'bind9-val', 'mariadb-val', 'postfix-val', 'dovecot-val', 'ufw-val'];
             badges.forEach(id => {
                 const el = document.getElementById(id);
-                if(el) { el.innerText = 'OFFLINE'; el.className = (el.classList.contains('badge-lg') ? 'badge badge-lg inactive' : 'badge inactive'); }
+                if(el) { el.innerText = 'Offline'; el.className = (el.classList.contains('badge-lg') ? 'badge badge-lg inactive' : 'badge inactive'); }
             });
             const tbs = ['tb-apache2', 'tb-nginx', 'tb-bind9', 'tb-mariadb', 'tb-postfix', 'tb-ufw'];
             tbs.forEach(id => {
@@ -857,7 +838,7 @@ async function quickServiceAction(service, action) {
             showToast(service + ' ' + action + ' successful.', 'success');
             fetchStatus();
         } else {
-            showAlert('Action Failed', 'Failed to ' + action + ' ' + service + '. Check logs.');
+            showAlert('Action failed', 'Failed to ' + action + ' ' + service + '. Check logs.');
         }
     } catch (e) {
         showAlert('Error', 'Network error: ' + e.message);
@@ -908,7 +889,10 @@ async function loadSites() {
     const tbody = document.getElementById('sites-tbody');
     if (!tbody) return;
 
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px">Loading...</td></tr>';
+    tbody.innerHTML = `
+        <tr class="skeleton-row"><td colspan="5"><div class="skel skel-md"></div></td></tr>
+        <tr class="skeleton-row"><td colspan="5"><div class="skel skel-lg"></div></td></tr>
+        <tr class="skeleton-row"><td colspan="5"><div class="skel skel-sm"></div></td></tr>`;
 
     try {
         const res = await fetch('/api/sites');
@@ -920,9 +904,9 @@ async function loadSites() {
                     <div class="empty-state-icon">
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
                     </div>
-                    <div class="empty-state-title">No sites configured yet</div>
-                    <div class="empty-state-sub">Create your first site with the Make Site tool.</div>
-                    <button class="btn btn-primary" onclick="switchPage('makesite')">Make Site</button>
+                    <div class="empty-state-title">No sites yet</div>
+                    <div class="empty-state-sub">Create your first site to get started.</div>
+                    <button class="btn btn-primary" onclick="switchPage('makesite')">Create a site</button>
                 </div>
             </td></tr>`;
             return;
@@ -943,9 +927,9 @@ async function loadSites() {
 
             rows += '<tr>';
             rows += `<td><a href="http://${d}" target="_blank" class="site-domain-link"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg> ${d}</a></td>`;
-            rows += '<td><span class="badge" style="background:var(--bg-lighter)">' + sv + '</span></td>';
-            rows += '<td><span class="badge" style="background:var(--bg-lighter)">' + tp + '</span></td>';
-            rows += '<td><span class="badge ' + statusClass + '">' + statusText + '</span></td>';
+            rows += '<td><span class="cell-muted">' + sv + '</span></td>';
+            rows += '<td><span class="cell-muted">' + tp + '</span></td>';
+            rows += '<td><span class="status-text ' + statusClass + '"><span class="status-dot"></span>' + statusText + '</span></td>';
             rows += '<td class="actions-cell" style="display:flex;gap:6px;flex-wrap:wrap">';
             rows += `<button class="btn-sm ${toggleBtnClass}" onclick="toggleSite('${sv}','${d}','${toggleAction}')">${toggleText}</button>`;
             rows += `<button class="btn-sm btn-modify" onclick="openModifyModal('${sv}','${d}','${tp}','${dr.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}')">Modify</button>`;
@@ -961,7 +945,7 @@ async function loadSites() {
 
 async function siteAction(payload, confirmMsg) {
     if (confirmMsg) {
-        const ok = await showConfirm('Confirm Action', confirmMsg, 'Proceed');
+        const ok = await showConfirm('Confirm action', confirmMsg, 'Proceed');
         if (!ok) return null;
     }
 
@@ -993,9 +977,9 @@ function toggleSite(server, domain, action) {
 
 async function deleteSite(server, domain) {
     const result = await showConfirmWithExtra(
-        'Delete Site',
+        'Delete site',
         'Are you sure you want to completely delete <strong>' + domain + '</strong>?<br><br>This will remove the web server configuration and all associated files.',
-        'Delete Site',
+        'Delete site',
         'Also delete the document root (website files) for ' + domain
     );
     if (!result) return;
@@ -1052,7 +1036,10 @@ function switchModifyTab(tabId) {
 async function loadDNS() {
     const tbody = document.getElementById('dns-tbody');
     if (!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:32px;color:var(--text-muted)">Loading...</td></tr>';
+    tbody.innerHTML = `
+        <tr class="skeleton-row"><td colspan="3"><div class="skel skel-md"></div></td></tr>
+        <tr class="skeleton-row"><td colspan="3"><div class="skel skel-lg"></div></td></tr>
+        <tr class="skeleton-row"><td colspan="3"><div class="skel skel-sm"></div></td></tr>`;
     
     try {
         const res = await fetch('/api/manage/dns?action=list');
@@ -1065,7 +1052,7 @@ async function loadDNS() {
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2H3v16h5v4l4-4h5l4-4V2zM11 11V7M16 11V7"/></svg>
                     </div>
                     <div class="empty-state-title">No DNS zones found</div>
-                    <div class="empty-state-sub">Zones are automatically created when making a site, or you can add them manually.</div>
+                    <div class="empty-state-sub">Zones are created automatically with a site, or you can add one manually.</div>
                 </div>
             </td></tr>`;
             return;
@@ -1076,7 +1063,7 @@ async function loadDNS() {
             const z = data[i];
             rows += '<tr>';
             rows += '<td><span class="site-domain">' + z.domain + '</span></td>';
-            rows += '<td><span class="site-tag">' + z.type + '</span></td>';
+            rows += '<td><span class="cell-muted">' + z.type + '</span></td>';
             rows += '<td class="actions-cell">';
             rows += '<button class="btn-sm btn-delete" onclick="deleteDnsZone(\'' + z.domain + '\', \'' + z.type + '\')">Delete</button>';
             rows += '</td>';
@@ -1090,7 +1077,7 @@ async function loadDNS() {
 
 async function deleteDnsZone(domain, type) {
     const ok = await showConfirm(
-        'Delete DNS Zone',
+        'Delete DNS zone',
         'Are you sure you want to delete the <strong>' + type + '</strong> zone for <strong>' + domain + '</strong>?'
     );
     if (!ok) return;
@@ -1110,10 +1097,10 @@ async function deleteDnsZone(domain, type) {
             loadDNS();
             showToast('DNS zone deleted.', 'success');
         } else {
-            showAlert('Delete Failed', 'Could not delete the DNS zone. Please check the server logs.');
+            showAlert('Delete failed', 'Could not delete the DNS zone. Please check the server logs.');
         }
     } catch (e) {
-        showAlert('Request Failed', 'Network or server error: ' + e.message);
+        showAlert('Request failed', 'Network or server error: ' + e.message);
     }
 }
 
@@ -1388,7 +1375,7 @@ function setupDropZone(dropZoneId, inputPathId) {
         if (!file) return;
         
         if (!file.name.endsWith('.zip')) {
-            showAlert('Invalid File', 'Please drop a <strong>.zip</strong> file containing your site files.');
+            showAlert('Invalid file', 'Please drop a <strong>.zip</strong> file containing your site files.');
             return;
         }
 
@@ -1629,7 +1616,7 @@ async function loadDocker() {
 
         // Update the dashboard badge too if visible
         if (dockerValEl) {
-            dockerValEl.innerText   = isDockerInstalled ? 'INSTALLED' : 'NOT INSTALLED';
+            dockerValEl.innerText   = isDockerInstalled ? 'Installed' : 'Not installed';
             dockerValEl.className   = isDockerInstalled ? 'badge badge-lg active' : 'badge badge-lg warning';
         }
     } catch (e) {
@@ -1647,7 +1634,9 @@ async function loadDocker() {
     if (mainContent) mainContent.style.display = 'block';
 
     if (!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="4" class="text-center" style="padding:20px"><div class="btn-spinner"></div> Loading containers...</td></tr>';
+    tbody.innerHTML = `
+        <tr class="skeleton-row"><td colspan="4"><div class="skel skel-md"></div></td></tr>
+        <tr class="skeleton-row"><td colspan="4"><div class="skel skel-lg"></div></td></tr>`;
 
     try {
         const res = await fetch('/api/docker_containers');
@@ -1662,7 +1651,7 @@ async function loadDocker() {
         containers.forEach(c => {
             const tr = document.createElement('tr');
             const isUp = c.status.toLowerCase().startsWith('up');
-            const statusBadge = `<span class="badge ${isUp ? 'success' : 'danger'}">${escapeHtml(c.status)}</span>`;
+            const statusBadge = `<span class="status-text ${isUp ? 'active' : 'inactive'}"><span class="status-dot"></span>${escapeHtml(c.status)}</span>`;
             tr.innerHTML = `
                 <td style="font-weight:500">${escapeHtml(c.name)}</td>
                 <td style="color:var(--text-muted)">${escapeHtml(c.image)}</td>
@@ -1686,7 +1675,7 @@ async function loadDocker() {
 async function dockerAction(action, target) {
     if (action === 'rm') {
         const confirmed = await showConfirm(
-            'Delete Container', 
+            'Delete container', 
             `Are you sure you want to forcefully remove container <strong>${escapeHtml(target)}</strong>?`, 
             'Delete'
         );

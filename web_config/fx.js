@@ -37,6 +37,13 @@
         return e;
     }
 
+    // 5. tag a moving highlight so CSS can stretch it 12% on the way
+    function bumpMoving(el) {
+        el.classList.add('is-moving');
+        clearTimeout(el.__fxMv);
+        el.__fxMv = setTimeout(() => el.classList.remove('is-moving'), 280);
+    }
+
     const IC = {
         chevron: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>',
         check:   '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>',
@@ -99,6 +106,7 @@
             g.style.height = el.offsetHeight + 'px';
             g.style.transform = `translate(${el.offsetLeft}px, ${el.offsetTop}px)`;
             g.style.opacity = '1';
+            if (animate && placed && !reduce()) bumpMoving(g);   // 5. stretch the pill mid-flight
             placed = true;
         };
         place(false);
@@ -177,8 +185,7 @@
     /* ═══════════════════════════════════════════════
        5. DASHBOARD — cards, badges, pills, health tile
     ═══════════════════════════════════════════════ */
-    function enhanceCards() {
-        $$('#page-dashboard .status-box-clickable').forEach(box => {
+    function enhanceCards() {        $$('#page-dashboard .status-box-clickable').forEach(box => {
             const tip = box.getAttribute('title');
             if (tip) { box.dataset.tip = tip; box.removeAttribute('title'); }   // native tooltip covered the buttons
             box.tabIndex = 0;
@@ -295,7 +302,7 @@
             <div class="fx-health-top">
                 <div class="fx-ring" aria-hidden="true">
                     <svg viewBox="0 0 100 100">
-                        <defs><linearGradient id="fx-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00f5d4"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs>
+                        <defs><linearGradient id="fx-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8b5cf6"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs>
                         <circle class="fx-ring-track" cx="50" cy="50" r="42"/>
                         <circle class="fx-ring-bar" cx="50" cy="50" r="42" pathLength="100"/>
                     </svg>
@@ -308,7 +315,7 @@
             </div>
             <button type="button" class="fx-reload" title="Reload all services [r]">
                 <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
-                <span>Reload all</span><kbd class="waybar-kbd">r</kbd>
+                <span>Reload all</span>
             </button>`);
         tile.dataset.state = 'loading';
         grid.prepend(tile);
@@ -557,11 +564,12 @@
 
         function open(sel, btn) {
             close();
+            if (!btn.offsetParent) return;                      // trigger not rendered (hidden page) — don't open a ghost menu
             $$('.fx-select-opt, .fx-select-group', menu).forEach(n => n.remove());
             const opts = [];
             const add = (o) => {
                 const d = h('div', 'fx-select-opt', `<span>${esc(o.text.trim())}</span>${IC.check}`);
-                d.id = 'fx-opt-' + opts.length;
+                d.id = 'fx-opt-' + uid++;
                 d.setAttribute('role', 'option');
                 d.setAttribute('aria-selected', String(o.index === sel.selectedIndex));
                 if (o.disabled) d.setAttribute('aria-disabled', 'true');
@@ -613,6 +621,7 @@
             if (top < menu.scrollTop + 4) menu.scrollTop = top - 6;
             else if (bot > menu.scrollTop + menu.clientHeight - 4) menu.scrollTop = bot - menu.clientHeight + 6;
             if (instant) hl.style.transition = 'none';
+            else bumpMoving(hl);                                            // 5. stretch the knob while it moves
             hl.style.height = o.el.offsetHeight + 'px';
             hl.style.transform = `translateY(${o.el.offsetTop}px)`;
             hl.style.opacity = '1';
@@ -838,6 +847,7 @@
             if (top < list.scrollTop + 4) list.scrollTop = Math.max(0, top - (active === 0 ? 40 : 8));
             else if (bot > list.scrollTop + list.clientHeight - 4) list.scrollTop = bot - list.clientHeight + 8;
             if (instant) hl.style.transition = 'none';
+            else bumpMoving(hl);                                            // 5. stretch the knob while it moves
             hl.style.height = el.offsetHeight + 'px';
             hl.style.transform = `translateY(${el.offsetTop}px)`;
             hl.style.opacity = '1';
@@ -1115,6 +1125,45 @@
     }
 
     /* ═══════════════════════════════════════════════
+       12. MOTION — row stagger + tab-strip rubber band
+       (the layoutId glider itself lives in initGliders/addGlider)
+    ═══════════════════════════════════════════════ */
+    function initMotion() {
+        /* 3. stagger new list rows by 30ms (--row-i drives animation-delay) */
+        const renumber = () => {
+            $$('.sites-table tbody, #mail-users-list').forEach(el => {
+                [...el.children].forEach((row, i) => row.style.setProperty('--row-i', i));
+            });
+        };
+        renumber();
+        new MutationObserver(renumber).observe(document.body, { childList: true, subtree: true });
+
+        /* 19. rubber band past bounds on the horizontal tab strips */
+        $$('.content-tabs').forEach(tabs => {
+            if (tabs.__fxRub) return;
+            tabs.__fxRub = true;
+            tabs.addEventListener('wheel', (e) => {
+                if (tabs.scrollWidth <= tabs.clientWidth) return;
+                const raw = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+                if (!raw) return;
+                const max = tabs.scrollWidth - tabs.clientWidth - 1;
+                const before = tabs.scrollLeft;
+                tabs.scrollLeft += raw;
+                if (tabs.scrollLeft === before && !reduce()) {
+                    const cls = (raw > 0 && before >= max) ? 'rubber-r'
+                              : (raw < 0 && before <= 0) ? 'rubber-l' : null;
+                    if (cls) {
+                        tabs.classList.remove('rubber-l', 'rubber-r');
+                        void tabs.offsetWidth;
+                        tabs.classList.add(cls);
+                    }
+                }
+            }, { passive: true });
+            tabs.addEventListener('animationend', () => tabs.classList.remove('rubber-l', 'rubber-r'));
+        });
+    }
+
+    /* ═══════════════════════════════════════════════
        BOOT — each module isolated
     ═══════════════════════════════════════════════ */
     function boot() {
@@ -1124,7 +1173,6 @@
         run(enhanceCards);
         run(watchBadges);
         run(initPills);
-        run(bindSpotlight);
         run(initGliders);
         run(initWaybar);
         run(initBanner);
@@ -1135,6 +1183,7 @@
         run(initMakeSite);
         run(wrapSwitchPage);
         run(watchGoldfish);
+        run(initMotion);         // row stagger + tab-strip rubber band
         run(initEntrance);       // last: arms the first page
     }
 

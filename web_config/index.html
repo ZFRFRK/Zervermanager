@@ -6,62 +6,10 @@
     <title>Zervermanager</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=20">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css?v=34">
 </head>
 <body>
-
-    <!-- ═══════════════════════════════════════
-         STARTUP SPLASH
-    ═══════════════════════════════════════ -->
-    <div id="startup-splash" aria-hidden="true">
-        <div class="splash-bg-grid"></div>
-        <div class="splash-orb splash-orb-1"></div>
-        <div class="splash-orb splash-orb-2"></div>
-
-        <!-- LEFT — brand panel -->
-        <div class="splash-left">
-            <div class="splash-mark">
-                <span class="splash-mark-letter">Z</span>
-                <div class="splash-mark-ring"></div>
-                <div class="splash-mark-ring splash-mark-ring-2"></div>
-            </div>
-
-            <div class="splash-wordmark">
-                <span class="splash-word">zerver<span class="splash-word-accent">manager</span></span>
-            </div>
-
-            <div class="splash-tagline">server management interface</div>
-
-            <div class="splash-dots">
-                <span class="splash-dot active" data-idx="0"></span>
-                <span class="splash-dot" data-idx="1"></span>
-                <span class="splash-dot" data-idx="2"></span>
-            </div>
-
-            <div class="splash-loader">
-                <div class="splash-loader-track">
-                    <div class="splash-loader-fill"></div>
-                </div>
-                <span class="splash-loader-label">initializing</span>
-            </div>
-
-            <div class="splash-version">v<span id="splash-ver">—</span></div>
-        </div>
-
-        <!-- RIGHT — Mai slideshow panel -->
-        <div class="splash-right">
-            <div class="splash-photos">
-                <img class="splash-photo active"  src="loading1.jpg"     alt="Loading 1">
-                <img class="splash-photo"          src="loading2.jpg"     alt="Loading 2">
-                <img class="splash-photo"          src="loading3.jpg"  alt="Loading 3">
-            </div>
-            <div class="splash-photo-overlay"></div>
-            <div class="splash-photo-caption">
-                <span class="splash-photo-name">Ouzuka Mai</span>
-            </div>
-        </div>
-    </div>
 
     <div class="app-container">
 
@@ -70,7 +18,7 @@
                 <div class="brand">
                     <div class="brand-mark">Z</div>
                     <div class="brand-info">
-                        <h1>zervermanager</h1>
+                        <h1>Zervermanager</h1>
                         <p>v<span id="version">...</span></p>
                     </div>
                 </div>
@@ -93,17 +41,17 @@
                 </div>
                 <div class="nav-section">
                     <div class="nav-section-title">Sites</div>
-                    <button class="nav-item" data-page="makesite" data-title="Make Site" onclick="switchPage('makesite')">
+                    <button class="nav-item" data-page="makesite" data-title="Create site" onclick="switchPage('makesite')">
                         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/></svg>
-                        <span class="nav-label">Make Site</span>
+                        <span class="nav-label">Create site</span>
                     </button>
-                    <button class="nav-item" data-page="managesites" data-title="Manage Sites" onclick="switchPage('managesites')">
+                    <button class="nav-item" data-page="managesites" data-title="Sites" onclick="switchPage('managesites')">
                         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4z"/></svg>
-                        <span class="nav-label">Manage Sites</span>
+                        <span class="nav-label">Sites</span>
                     </button>
-                    <button class="nav-item" data-page="dns" data-title="DNS Zones" onclick="switchPage('dns')">
+                    <button class="nav-item" data-page="dns" data-title="DNS zones" onclick="switchPage('dns')">
                         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM4.332 8.027a6.012 6.012 0 011.912-2.706C6.512 5.73 6.974 6 7.5 6A1.5 1.5 0 019 7.5V8a2 2 0 004 0 2 2 0 011.523-1.943A5.977 5.977 0 0116 10c0 .34-.028.675-.083 1H15a2 2 0 00-2 2v2.197A5.973 5.973 0 0110 16v-2a2 2 0 00-2-2 2 2 0 01-2-2 2 2 0 00-1.668-1.973z" clip-rule="evenodd"/></svg>
-                        <span class="nav-label">DNS Zones</span>
+                        <span class="nav-label">DNS zones</span>
                     </button>
                 </div>
                 <div class="nav-section">
@@ -115,13 +63,13 @@
                 </div>
                 <div class="nav-section">
                     <div class="nav-section-title">System</div>
-                    <button class="nav-item" data-page="services" data-title="Install Services" onclick="switchPage('services')">
+                    <button class="nav-item" data-page="services" data-title="Install services" onclick="switchPage('services')">
                         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
-                        <span class="nav-label">Install Services</span>
+                        <span class="nav-label">Install services</span>
                     </button>
-                    <button class="nav-item" data-page="server" data-title="Server" onclick="switchPage('server')">
+                    <button class="nav-item" data-page="server" data-title="Server control" onclick="switchPage('server')">
                         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm14 1a1 1 0 11-2 0 1 1 0 012 0zM2 13a2 2 0 012-2h12a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2v-2zm14 1a1 1 0 11-2 0 1 1 0 012 0z" clip-rule="evenodd"/></svg>
-                        <span class="nav-label">Server</span>
+                        <span class="nav-label">Server control</span>
                     </button>
                     <button class="nav-item" data-page="network" data-title="Network" onclick="switchPage('network')">
                         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M17.778 8.222c-4.296-4.296-11.26-4.296-15.556 0A1 1 0 01.808 6.808c5.076-5.077 13.308-5.077 18.384 0a1 1 0 01-1.414 1.414zM14.95 11.05a7 7 0 00-9.9 0 1 1 0 01-1.414-1.414 9 9 0 0112.728 0 1 1 0 01-1.414 1.414zM12.12 13.88a3 3 0 00-4.242 0 1 1 0 01-1.415-1.415 5 5 0 017.072 0 1 1 0 01-1.415 1.415zM9 16a1 1 0 112 0 1 1 0 01-2 0z" clip-rule="evenodd"/></svg>
@@ -145,10 +93,6 @@
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.84 1.236 1.84 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.418-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23a11.52 11.52 0 0 1 3-.405c1.02.005 2.045.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.605-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12z"/></svg>
                     ZFRFRK
                 </a>
-                <button class="zm-logout-btn" onclick="zmLogout()" title="Sign out" aria-label="Sign out">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-                    <span id="zm-actor-badge">admin</span>
-                </button>
             </div>
         </aside>
 
@@ -171,28 +115,27 @@
                     </div>
                 </div>
                 <div class="top-bar-services waybar-center">
-                    <span class="top-bar-svc" id="tb-apache2"><span class="svc-pip"></span><span class="svc-txt">apache2</span></span>
-                    <span class="top-bar-svc" id="tb-nginx"><span class="svc-pip"></span><span class="svc-txt">nginx</span></span>
-                    <span class="top-bar-svc" id="tb-bind9"><span class="svc-pip"></span><span class="svc-txt">bind9</span></span>
-                    <span class="top-bar-svc" id="tb-mariadb"><span class="svc-pip"></span><span class="svc-txt">mariadb</span></span>
-                    <span class="top-bar-svc" id="tb-postfix"><span class="svc-pip"></span><span class="svc-txt">postfix</span></span>
-                    <span class="top-bar-svc" id="tb-ufw"><span class="svc-pip"></span><span class="svc-txt">ufw</span></span>
+                    <span class="top-bar-svc" id="tb-apache2"><span class="svc-pip"></span><span class="svc-txt">Apache</span></span>
+                    <span class="top-bar-svc" id="tb-nginx"><span class="svc-pip"></span><span class="svc-txt">Nginx</span></span>
+                    <span class="top-bar-svc" id="tb-bind9"><span class="svc-pip"></span><span class="svc-txt">BIND</span></span>
+                    <span class="top-bar-svc" id="tb-mariadb"><span class="svc-pip"></span><span class="svc-txt">MariaDB</span></span>
+                    <span class="top-bar-svc" id="tb-postfix"><span class="svc-pip"></span><span class="svc-txt">Postfix</span></span>
+                    <span class="top-bar-svc" id="tb-ufw"><span class="svc-pip"></span><span class="svc-txt">UFW</span></span>
                 </div>
                 <div class="top-bar-actions waybar-right">
                     <!-- Clock module -->
                     <div class="waybar-clock" id="waybar-clock" aria-label="Local time"><span class="clock-date"></span><span class="clock-time"></span></div>
                     <div class="top-bar-divider waybar-clock-div"></div>
 
-                    <!-- Goldfish Mode Toggle -->
-                    <button class="top-bar-btn" id="goldfish-btn" onclick="toggleGoldfishMode()" title="Goldfish Mode — simplify all forms">
-                        <span class="goldfish-icon" aria-hidden="true">🐟</span>
-                        <span class="goldfish-label">Simple</span>
+                    <!-- Simple view toggle -->
+                    <button class="top-bar-btn" id="goldfish-btn" onclick="toggleGoldfishMode()" title="Simple view — hide advanced options" aria-pressed="false">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="14" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line><circle cx="18" cy="12" r="2"></circle></svg>
+                        <span class="goldfish-label">Simple view</span>
                     </button>
                     <div class="top-bar-divider"></div>
                     <button class="top-bar-btn accent" id="tb-reload-btn" onclick="topBarReloadAll()" title="Reload all services [r]">
                         <svg width="11" height="11" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
-                        <span>Reload</span>
-                        <kbd class="waybar-kbd">r</kbd>
+                        <span>Reload services</span>
                     </button>
                 </div>
             </div>
@@ -213,181 +156,21 @@
             <section id="page-dashboard" class="page-section active">
                 <div class="page-header dashboard-header">
                     <div class="page-header-text">
-                        <h2>System Status</h2>
-                        <p>Overview of core services on <span id="os-val">Debian GNU/Linux</span>.</p>
-                    </div>
-                    <!-- Server Resources Usage Viewer (Pills) -->
-                    <div class="server-resources-bar" id="server-resources-bar" role="region" aria-label="Server Resources">
-                        <!-- RAM Usage -->
-                        <div class="res-pill" id="pill-ram" title="RAM Usage">
-                            <span class="res-pill-icon" aria-hidden="true">
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
-                            </span>
-                            <span class="res-pill-label">RAM</span>
-                            <span class="res-pill-val" id="pill-ram-val">—</span>
-                            <span class="res-pip" id="pill-ram-pip"></span>
-                        </div>
-
-                        <!-- CPU Usage -->
-                        <div class="res-pill" id="pill-cpu" title="CPU Usage">
-                            <span class="res-pill-icon" aria-hidden="true">
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
-                            </span>
-                            <span class="res-pill-label">CPU</span>
-                            <span class="res-pill-val" id="pill-cpu-val">—</span>
-                            <span class="res-pip" id="pill-cpu-pip"></span>
-                        </div>
-
-                        <!-- CPU Temperature -->
-                        <div class="res-pill" id="pill-temp" title="CPU Temperature">
-                            <span class="res-pill-icon" aria-hidden="true">
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"></path></svg>
-                            </span>
-                            <span class="res-pill-label">TEMP</span>
-                            <span class="res-pill-val" id="pill-temp-val">—</span>
-                            <span class="res-pip" id="pill-temp-pip"></span>
-                        </div>
-
-                        <!-- Uptime -->
-                        <div class="res-pill" id="pill-uptime" title="System Uptime">
-                            <span class="res-pill-icon" aria-hidden="true">
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-                            </span>
-                            <span class="res-pill-label">UPTIME</span>
-                            <span class="res-pill-val" id="pill-uptime-val">—</span>
-                            <span class="res-pip is-normal" id="pill-uptime-pip"></span>
-                        </div>
+                        <h2>Server overview</h2>
+                        <p>Live health of core services and system resources on <span id="os-val">Debian GNU/Linux</span>.</p>
                     </div>
                 </div>
                 
-                <div class="fx-section-head">
-                    <h3>Services</h3>
-                    <span class="fx-rule"></span>
-                    <span class="fx-updated" id="fx-updated"><i class="fx-beat"></i><span>waiting for data…</span></span>
-                </div>
-                <div class="status-grid">
-                    <!-- Apache2 -->
-                    <div class="status-box status-box-clickable" onclick="switchPage('server')" title="Go to Server Management">
-                        <div class="status-box-header">
-                            <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg></div>
-                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
-                        </div>
-                        <div class="status-box-body">
-                            <span class="status-label">Apache2</span>
-                            <span id="apache2-val" class="badge badge-lg">Loading...</span>
-                        </div>
-                        <div class="status-box-actions" onclick="event.stopPropagation()">
-                            <button class="btn-sm" onclick="quickServiceAction('apache2', 'start')">Start</button>
-                            <button class="btn-sm" onclick="quickServiceAction('apache2', 'stop')">Stop</button>
-                            <button class="btn-sm" onclick="quickServiceAction('apache2', 'restart')">Restart</button>
-                        </div>
-                    </div>
-                    
-                    <!-- Nginx -->
-                    <div class="status-box status-box-clickable" onclick="switchPage('server')" title="Go to Server Management">
-                        <div class="status-box-header">
-                            <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg></div>
-                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
-                        </div>
-                        <div class="status-box-body">
-                            <span class="status-label">Nginx</span>
-                            <span id="nginx-val" class="badge badge-lg">Loading...</span>
-                        </div>
-                        <div class="status-box-actions" onclick="event.stopPropagation()">
-                            <button class="btn-sm" onclick="quickServiceAction('nginx', 'start')">Start</button>
-                            <button class="btn-sm" onclick="quickServiceAction('nginx', 'stop')">Stop</button>
-                            <button class="btn-sm" onclick="quickServiceAction('nginx', 'restart')">Restart</button>
-                        </div>
-                    </div>
-                    
-                    <!-- BIND9 -->
-                    <div class="status-box status-box-clickable" onclick="switchPage('dns')" title="Go to DNS Management">
-                        <div class="status-box-header">
-                            <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg></div>
-                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
-                        </div>
-                        <div class="status-box-body">
-                            <span class="status-label">BIND9 DNS</span>
-                            <span id="bind9-val" class="badge badge-lg">Loading...</span>
-                        </div>
-                        <div class="status-box-actions" onclick="event.stopPropagation()">
-                            <button class="btn-sm" onclick="quickServiceAction('bind9', 'start')">Start</button>
-                            <button class="btn-sm" onclick="quickServiceAction('bind9', 'stop')">Stop</button>
-                            <button class="btn-sm" onclick="quickServiceAction('bind9', 'restart')">Restart</button>
-                        </div>
-                    </div>
-                    
-                    <!-- MariaDB -->
-                    <div class="status-box status-box-clickable" onclick="switchPage('mariadb')" title="Go to MariaDB Management">
-                        <div class="status-box-header">
-                            <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg></div>
-                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
-                        </div>
-                        <div class="status-box-body">
-                            <span class="status-label">MariaDB</span>
-                            <span id="mariadb-val" class="badge badge-lg">Loading...</span>
-                        </div>
-                        <div class="status-box-actions" onclick="event.stopPropagation()">
-                            <button class="btn-sm" onclick="quickServiceAction('mariadb', 'start')">Start</button>
-                            <button class="btn-sm" onclick="quickServiceAction('mariadb', 'stop')">Stop</button>
-                            <button class="btn-sm" onclick="quickServiceAction('mariadb', 'restart')">Restart</button>
-                        </div>
-                    </div>
-                    
-                    <!-- Postfix -->
-                    <div class="status-box status-box-clickable" onclick="switchPage('services')" title="Go to Services Management">
-                        <div class="status-box-header">
-                            <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg></div>
-                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
-                        </div>
-                        <div class="status-box-body">
-                            <span class="status-label">Postfix (Mail)</span>
-                            <span id="postfix-val" class="badge badge-lg">Loading...</span>
-                        </div>
-                        <div class="status-box-actions" onclick="event.stopPropagation()">
-                            <button class="btn-sm" onclick="quickServiceAction('postfix', 'start')">Start</button>
-                            <button class="btn-sm" onclick="quickServiceAction('postfix', 'stop')">Stop</button>
-                            <button class="btn-sm" onclick="quickServiceAction('postfix', 'restart')">Restart</button>
-                        </div>
-                    </div>
-
-                    <!-- Dovecot -->
-                    <div class="status-box">
-                        <div class="status-box-header">
-                            <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg></div>
-                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
-                        </div>
-                        <div class="status-box-body">
-                            <span class="status-label">Dovecot (Mail)</span>
-                            <span id="dovecot-val" class="badge badge-lg">Loading...</span>
-                        </div>
-                        <div class="status-box-actions" onclick="event.stopPropagation()">
-                            <button class="btn-sm" onclick="quickServiceAction('dovecot', 'start')">Start</button>
-                            <button class="btn-sm" onclick="quickServiceAction('dovecot', 'stop')">Stop</button>
-                            <button class="btn-sm" onclick="quickServiceAction('dovecot', 'restart')">Restart</button>
-                        </div>
-                    </div>
-                    
-                    <!-- UFW -->
-                    <div class="status-box status-box-clickable" onclick="switchPage('network')" title="Go to Network Management">
-                        <div class="status-box-header">
-                            <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></div>
-                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
-                        </div>
-                        <div class="status-box-body">
-                            <span class="status-label">UFW Firewall</span>
-                            <span id="ufw-val" class="badge badge-lg">Loading...</span>
-                        </div>
-                        <div class="status-box-actions" onclick="event.stopPropagation()">
-                            <button class="btn-sm" onclick="quickServiceAction('ufw', 'enable')">Enable</button>
-                            <button class="btn-sm" onclick="quickServiceAction('ufw', 'disable')">Disable</button>
-                            <button class="btn-sm" onclick="quickServiceAction('ufw', 'reload')">Reload</button>
-                        </div>
-                    </div>
-                </div>
-
+                <nav class="hy-launch" aria-label="Quick launch">
+                    <button type="button" class="hy-key" onclick="switchPage('makesite')"><kbd>g</kbd><kbd>s</kbd><span>New site</span></button>
+                    <button type="button" class="hy-key" onclick="switchPage('managesites')"><kbd>g</kbd><kbd>m</kbd><span>Sites</span></button>
+                    <button type="button" class="hy-key" onclick="switchPage('dns')"><kbd>g</kbd><kbd>z</kbd><span>DNS zones</span></button>
+                    <button type="button" class="hy-key" onclick="switchPage('mariadb')"><kbd>g</kbd><kbd>b</kbd><span>MariaDB</span></button>
+                    <button type="button" class="hy-key" onclick="switchPage('docker')"><kbd>g</kbd><kbd>k</kbd><span>Docker</span></button>
+                    <button type="button" class="hy-key" onclick="switchPage('network')"><kbd>g</kbd><kbd>n</kbd><span>Network</span></button>
+                </nav>
                 <div class="fx-section-head fx-section-head--system">
-                    <h3>System</h3>
+                    <h3>Resources</h3>
                     <span class="fx-rule"></span>
                     <span class="fx-updated fx-updated--hint">last 6 min</span>
                 </div>
@@ -434,13 +217,145 @@
                         <footer class="fx-metric-foot fx-metric-foot--stack"><span id="metric-uptime-boot">—</span><span id="metric-uptime-extra"></span></footer>
                     </article>
                 </div>
+                <!-- Hidden sensor source: app.js writes CPU temperature here and fx.js
+                     mirrors the value into the Temperature tile. -->
+                <div hidden aria-hidden="true">
+                    <span id="pill-temp-val"></span>
+                    <span id="pill-temp-pip"></span>
+                </div>
+                <div class="fx-section-head">
+                    <h3>Core services</h3>
+                    <span class="fx-rule"></span>
+                    <span class="fx-updated" id="fx-updated"><i class="fx-beat"></i><span>waiting for data…</span></span>
+                </div>
+                <div class="status-grid">
+                    <!-- Apache2 -->
+                    <div class="status-box status-box-clickable" onclick="switchPage('server')" title="Go to server control">
+                        <div class="status-box-header">
+                            <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg></div>
+                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
+                        </div>
+                        <div class="status-box-body">
+                            <span class="status-label">Apache2</span>
+                            <span id="apache2-val" class="badge badge-lg is-loading">Checking</span>
+                        </div>
+                        <div class="status-box-actions" onclick="event.stopPropagation()">
+                            <button class="btn-sm" onclick="quickServiceAction('apache2', 'start')">Start</button>
+                            <button class="btn-sm" onclick="quickServiceAction('apache2', 'stop')">Stop</button>
+                            <button class="btn-sm" onclick="quickServiceAction('apache2', 'restart')">Restart</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Nginx -->
+                    <div class="status-box status-box-clickable" onclick="switchPage('server')" title="Go to server control">
+                        <div class="status-box-header">
+                            <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg></div>
+                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
+                        </div>
+                        <div class="status-box-body">
+                            <span class="status-label">Nginx</span>
+                            <span id="nginx-val" class="badge badge-lg is-loading">Checking</span>
+                        </div>
+                        <div class="status-box-actions" onclick="event.stopPropagation()">
+                            <button class="btn-sm" onclick="quickServiceAction('nginx', 'start')">Start</button>
+                            <button class="btn-sm" onclick="quickServiceAction('nginx', 'stop')">Stop</button>
+                            <button class="btn-sm" onclick="quickServiceAction('nginx', 'restart')">Restart</button>
+                        </div>
+                    </div>
+                    
+                    <!-- BIND9 -->
+                    <div class="status-box status-box-clickable" onclick="switchPage('dns')" title="Go to DNS Management">
+                        <div class="status-box-header">
+                            <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg></div>
+                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
+                        </div>
+                        <div class="status-box-body">
+                            <span class="status-label">BIND DNS</span>
+                            <span id="bind9-val" class="badge badge-lg is-loading">Checking</span>
+                        </div>
+                        <div class="status-box-actions" onclick="event.stopPropagation()">
+                            <button class="btn-sm" onclick="quickServiceAction('bind9', 'start')">Start</button>
+                            <button class="btn-sm" onclick="quickServiceAction('bind9', 'stop')">Stop</button>
+                            <button class="btn-sm" onclick="quickServiceAction('bind9', 'restart')">Restart</button>
+                        </div>
+                    </div>
+                    
+                    <!-- MariaDB -->
+                    <div class="status-box status-box-clickable" onclick="switchPage('mariadb')" title="Go to MariaDB Management">
+                        <div class="status-box-header">
+                            <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg></div>
+                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
+                        </div>
+                        <div class="status-box-body">
+                            <span class="status-label">MariaDB</span>
+                            <span id="mariadb-val" class="badge badge-lg is-loading">Checking</span>
+                        </div>
+                        <div class="status-box-actions" onclick="event.stopPropagation()">
+                            <button class="btn-sm" onclick="quickServiceAction('mariadb', 'start')">Start</button>
+                            <button class="btn-sm" onclick="quickServiceAction('mariadb', 'stop')">Stop</button>
+                            <button class="btn-sm" onclick="quickServiceAction('mariadb', 'restart')">Restart</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Postfix -->
+                    <div class="status-box status-box-clickable" onclick="switchPage('services')" title="Go to Services Management">
+                        <div class="status-box-header">
+                            <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg></div>
+                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
+                        </div>
+                        <div class="status-box-body">
+                            <span class="status-label">Postfix (Mail)</span>
+                            <span id="postfix-val" class="badge badge-lg is-loading">Checking</span>
+                        </div>
+                        <div class="status-box-actions" onclick="event.stopPropagation()">
+                            <button class="btn-sm" onclick="quickServiceAction('postfix', 'start')">Start</button>
+                            <button class="btn-sm" onclick="quickServiceAction('postfix', 'stop')">Stop</button>
+                            <button class="btn-sm" onclick="quickServiceAction('postfix', 'restart')">Restart</button>
+                        </div>
+                    </div>
+
+                    <!-- Dovecot -->
+                    <div class="status-box">
+                        <div class="status-box-header">
+                            <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg></div>
+                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
+                        </div>
+                        <div class="status-box-body">
+                            <span class="status-label">Dovecot (Mail)</span>
+                            <span id="dovecot-val" class="badge badge-lg is-loading">Checking</span>
+                        </div>
+                        <div class="status-box-actions" onclick="event.stopPropagation()">
+                            <button class="btn-sm" onclick="quickServiceAction('dovecot', 'start')">Start</button>
+                            <button class="btn-sm" onclick="quickServiceAction('dovecot', 'stop')">Stop</button>
+                            <button class="btn-sm" onclick="quickServiceAction('dovecot', 'restart')">Restart</button>
+                        </div>
+                    </div>
+                    
+                    <!-- UFW -->
+                    <div class="status-box status-box-clickable" onclick="switchPage('network')" title="Go to Network Management">
+                        <div class="status-box-header">
+                            <div class="status-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></div>
+                            <div class="svc-dot-wrap"><div class="svc-dot"></div></div>
+                        </div>
+                        <div class="status-box-body">
+                            <span class="status-label">UFW Firewall</span>
+                            <span id="ufw-val" class="badge badge-lg is-loading">Checking</span>
+                        </div>
+                        <div class="status-box-actions" onclick="event.stopPropagation()">
+                            <button class="btn-sm" onclick="quickServiceAction('ufw', 'enable')">Enable</button>
+                            <button class="btn-sm" onclick="quickServiceAction('ufw', 'disable')">Disable</button>
+                            <button class="btn-sm" onclick="quickServiceAction('ufw', 'reload')">Reload</button>
+                        </div>
+                    </div>
+                </div>
+
             </section>
 
-            <!-- Make Site Page -->
+            <!-- Create site Page -->
             <section id="page-makesite" class="page-section">
                 <div class="page-header">
-                    <h2>Make Site</h2>
-                    <p>Automate creation of vhosts, databases, and DNS zones.</p>
+                    <h2>Create a site</h2>
+                    <p>Spin up a vhost, database and DNS zone in one step.</p>
                 </div>
 
                 <div class="card">
@@ -451,7 +366,7 @@
                         <button class="content-tab-btn" data-tab="lemp" onclick="switchTab('makesite', 'lemp')">Nginx + PHP + DB</button>
                         <button class="content-tab-btn" data-tab="wordpress" onclick="switchTab('makesite', 'wordpress')">WordPress</button>
                         <button class="content-tab-btn" data-tab="static" onclick="switchTab('makesite', 'static')">HTML / Static</button>
-                        <button class="content-tab-btn" data-tab="proxy" onclick="switchTab('makesite', 'proxy')">Reverse Proxy</button>
+                        <button class="content-tab-btn" data-tab="proxy" onclick="switchTab('makesite', 'proxy')">Reverse proxy</button>
                     </div>
                     <div class="tab-desc-group">
                         <p class="tab-desc active" data-tab="lamp">Creates an Apache virtual host with PHP support and a MariaDB database.</p>
@@ -465,52 +380,51 @@
                     <div id="tab-makesite-lamp" class="tab-pane active">
                         <form onsubmit="submitApiForm(event, '/api/makesite/lamp', 'makesite-term')">
                             <div class="form-group">
-                                <label>Domain Name</label>
+                                <label>Domain name</label>
                                 <input type="text" class="form-control" name="domain" required>
                             </div>
                             <div class="form-group">
-                                <label>Database Password</label>
+                                <label>Database password</label>
                                 <input type="password" class="form-control" name="db_pass" required>
                             </div>
 
                             <details class="form-details">
-                                <summary>Database Settings</summary>
+                                <summary>Database settings</summary>
                                 <div class="form-details-body">
                                     <div class="form-group">
-                                        <label>Database Name <span class="label-hint">— optional, defaults to domain prefix</span></label>
+                                        <label>Database name <span class="label-hint">— optional, defaults to domain prefix</span></label>
                                         <input type="text" class="form-control" name="db_name" placeholder="e.g. mysite_db">
                                     </div>
                                     <div class="form-group">
-                                        <label>Database User <span class="label-hint">— optional, defaults to domain prefix + _user</span></label>
+                                        <label>Database user <span class="label-hint">— optional, defaults to domain prefix + _user</span></label>
                                         <input type="text" class="form-control" name="db_user" placeholder="e.g. mysite_user">
                                     </div>
                                 </div>
                             </details>
 
                             <details class="form-details">
-                                <summary>SSL &amp; Server</summary>
+                                <summary>SSL &amp; server</summary>
                                 <div class="form-details-body">
                                     <div class="form-group" id="lamp-ip">
                                         <label>Server IP
-                                            <span class="label-badge label-badge-auto">auto-dns</span>
-                                            <span class="label-hint">— leave blank to use current server IP</span>
+                                            <span class="label-hint">— leave blank to use the current server IP</span>
                                         </label>
                                         <input type="text" class="form-control" name="ip" placeholder="e.g. 192.168.1.10">
                                     </div>
                                     <div class="form-group">
-                                        <label>SSL Options</label>
+                                        <label>SSL options</label>
                                         <select class="form-control" name="ssl" onchange="document.getElementById('lamp-le-email').classList.toggle('hidden', this.value !== '4')" required>
-                                            <option value="1">HTTP Only</option>
-                                            <option value="2">HTTPS (Self-Signed)</option>
-                                            <option value="4">HTTPS (Let's Encrypt Automated)</option>
+                                            <option value="1">HTTP only</option>
+                                            <option value="2">HTTPS (self-signed)</option>
+                                            <option value="4">HTTPS (Let's Encrypt, automated)</option>
                                         </select>
                                     </div>
                                     <div class="form-group hidden" id="lamp-le-email">
-                                        <label>Let's Encrypt Admin Email</label>
+                                        <label>Let's Encrypt admin email</label>
                                         <input type="email" class="form-control" name="le_email" placeholder="admin@example.com">
                                     </div>
                                     <div class="form-group">
-                                        <label>Document Root <span class="label-hint">— optional, defaults to /var/www/domain</span></label>
+                                        <label>Document root <span class="label-hint">— optional, defaults to /var/www/domain</span></label>
                                         <input type="text" class="form-control" name="docroot" placeholder="e.g. /var/www/mysite">
                                     </div>
                                 </div>
@@ -528,8 +442,7 @@
                                         <label>Path to existing site files <span class="label-hint">— server-side path</span></label>
                                         <div class="drop-zone" id="lamp-dropzone">
                                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:8px;opacity:0.7;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg><br>
-                                            Drag and drop your site's .zip file here<br>
-                                            <span style="font-size:0.75rem;opacity:0.6;">(or enter the server-side path below)</span>
+                                            <div class="dz-text"><b>Drop your site's .zip here</b><span>or enter a server path below</span></div>
                                         </div>
                                         <input type="text" class="form-control" name="site_files_path" id="lamp-sitepath-input" placeholder="e.g. /home/user/mysite">
                                     </div>
@@ -546,7 +459,7 @@
                             </details>
 
                             <div class="btn-row">
-                                <button type="submit" class="btn btn-primary">Create Site</button>
+                                <button type="submit" class="btn btn-primary">Create site</button>
                             </div>
                         </form>
                     </div>
@@ -555,52 +468,51 @@
                     <div id="tab-makesite-lemp" class="tab-pane">
                         <form onsubmit="submitApiForm(event, '/api/makesite/lemp', 'makesite-term')">
                             <div class="form-group">
-                                <label>Domain Name</label>
+                                <label>Domain name</label>
                                 <input type="text" class="form-control" name="domain" required>
                             </div>
                             <div class="form-group">
-                                <label>Database Password</label>
+                                <label>Database password</label>
                                 <input type="password" class="form-control" name="db_pass" required>
                             </div>
 
                             <details class="form-details">
-                                <summary>Database Settings</summary>
+                                <summary>Database settings</summary>
                                 <div class="form-details-body">
                                     <div class="form-group">
-                                        <label>Database Name <span class="label-hint">— optional, defaults to domain prefix</span></label>
+                                        <label>Database name <span class="label-hint">— optional, defaults to domain prefix</span></label>
                                         <input type="text" class="form-control" name="db_name" placeholder="e.g. mysite_db">
                                     </div>
                                     <div class="form-group">
-                                        <label>Database User <span class="label-hint">— optional, defaults to domain prefix + _user</span></label>
+                                        <label>Database user <span class="label-hint">— optional, defaults to domain prefix + _user</span></label>
                                         <input type="text" class="form-control" name="db_user" placeholder="e.g. mysite_user">
                                     </div>
                                 </div>
                             </details>
 
                             <details class="form-details">
-                                <summary>SSL &amp; Server</summary>
+                                <summary>SSL &amp; server</summary>
                                 <div class="form-details-body">
                                     <div class="form-group" id="lemp-ip">
                                         <label>Server IP
-                                            <span class="label-badge label-badge-auto">auto-dns</span>
-                                            <span class="label-hint">— leave blank to use current server IP</span>
+                                            <span class="label-hint">— leave blank to use the current server IP</span>
                                         </label>
                                         <input type="text" class="form-control" name="ip" placeholder="e.g. 192.168.1.10">
                                     </div>
                                     <div class="form-group">
-                                        <label>SSL Options</label>
+                                        <label>SSL options</label>
                                         <select class="form-control" name="ssl" onchange="document.getElementById('lemp-le-email').classList.toggle('hidden', this.value !== '4')" required>
-                                            <option value="1">HTTP Only</option>
-                                            <option value="2">HTTPS (Self-Signed)</option>
-                                            <option value="4">HTTPS (Let's Encrypt Automated)</option>
+                                            <option value="1">HTTP only</option>
+                                            <option value="2">HTTPS (self-signed)</option>
+                                            <option value="4">HTTPS (Let's Encrypt, automated)</option>
                                         </select>
                                     </div>
                                     <div class="form-group hidden" id="lemp-le-email">
-                                        <label>Let's Encrypt Admin Email</label>
+                                        <label>Let's Encrypt admin email</label>
                                         <input type="email" class="form-control" name="le_email" placeholder="admin@example.com">
                                     </div>
                                     <div class="form-group">
-                                        <label>Document Root <span class="label-hint">— optional, defaults to /var/www/domain</span></label>
+                                        <label>Document root <span class="label-hint">— optional, defaults to /var/www/domain</span></label>
                                         <input type="text" class="form-control" name="docroot" placeholder="e.g. /var/www/mysite">
                                     </div>
                                 </div>
@@ -618,8 +530,7 @@
                                         <label>Path to existing site files <span class="label-hint">— server-side path</span></label>
                                         <div class="drop-zone" id="lemp-dropzone">
                                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:8px;opacity:0.7;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg><br>
-                                            Drag and drop your site's .zip file here<br>
-                                            <span style="font-size:0.75rem;opacity:0.6;">(or enter the server-side path below)</span>
+                                            <div class="dz-text"><b>Drop your site's .zip here</b><span>or enter a server path below</span></div>
                                         </div>
                                         <input type="text" class="form-control" name="site_files_path" id="lemp-sitepath-input" placeholder="e.g. /home/user/mysite">
                                     </div>
@@ -636,7 +547,7 @@
                             </details>
 
                             <div class="btn-row">
-                                <button type="submit" class="btn btn-primary">Create Site</button>
+                                <button type="submit" class="btn btn-primary">Create site</button>
                             </div>
                         </form>
                     </div>
@@ -645,25 +556,24 @@
                     <div id="tab-makesite-wordpress" class="tab-pane">
                         <form onsubmit="submitApiForm(event, '/api/makesite/wordpress', 'makesite-term')">
                             <div class="form-group">
-                                <label>Web Server</label>
+                                <label>Web server</label>
                                 <select class="form-control" name="server" required>
                                     <option value="apache">Apache</option>
                                     <option value="nginx">Nginx</option>
                                 </select>
                             </div>
                             <div class="form-group">
-                                <label>Domain Name</label>
+                                <label>Domain name</label>
                                 <input type="text" class="form-control" name="domain" required>
                             </div>
                             <div class="form-group" id="wp-ip">
                                 <label>Server IP
-                                    <span class="label-badge label-badge-auto">auto-dns</span>
                                     <span class="label-hint">— leave blank to use current server IP</span>
                                 </label>
                                 <input type="text" class="form-control" name="ip" placeholder="e.g. 192.168.1.10">
                             </div>
                             <div class="form-group">
-                                <label>Database Password</label>
+                                <label>Database password</label>
                                 <input type="password" class="form-control" name="db_pass" required>
                             </div>
                             <div class="btn-row">
@@ -676,48 +586,47 @@
                     <div id="tab-makesite-static" class="tab-pane">
                         <form onsubmit="submitApiForm(event, '/api/makesite/static', 'makesite-term')">
                             <div class="form-group">
-                                <label>Web Server</label>
+                                <label>Web server</label>
                                 <select class="form-control" name="server" required>
                                     <option value="apache">Apache</option>
                                     <option value="nginx">Nginx</option>
                                 </select>
                             </div>
                             <div class="form-group">
-                                <label>Domain Name</label>
+                                <label>Domain name</label>
                                 <input type="text" class="form-control" name="domain" required>
                             </div>
                             <div class="form-group" id="static-ip">
                                 <label>Server IP
-                                    <span class="label-badge label-badge-auto">auto-dns</span>
                                     <span class="label-hint">— leave blank to use current server IP</span>
                                 </label>
                                 <input type="text" class="form-control" name="ip" placeholder="e.g. 192.168.1.10">
                             </div>
                             <div class="form-group">
-                                <label>SSL Options</label>
+                                <label>SSL options</label>
                                 <select class="form-control" name="ssl" onchange="document.getElementById('static-certs').classList.toggle('hidden', this.value !== '3'); document.getElementById('static-le-email').classList.toggle('hidden', this.value !== '4');" required>
-                                    <option value="1">HTTP Only</option>
-                                    <option value="2">HTTPS (Self-Signed)</option>
-                                    <option value="3">HTTPS (Existing Cert)</option>
-                                    <option value="4">HTTPS (Let's Encrypt Automated)</option>
+                                    <option value="1">HTTP only</option>
+                                    <option value="2">HTTPS (self-signed)</option>
+                                    <option value="3">HTTPS (existing cert)</option>
+                                    <option value="4">HTTPS (Let's Encrypt, automated)</option>
                                 </select>
                             </div>
                             <div class="form-group hidden" id="static-le-email">
-                                <label>Let's Encrypt Admin Email</label>
+                                <label>Let's Encrypt admin email</label>
                                 <input type="email" class="form-control" name="le_email" placeholder="admin@example.com">
                             </div>
                             <div id="static-certs" class="hidden">
                                 <div class="form-group">
-                                    <label>Certificate Path</label>
+                                    <label>Certificate path</label>
                                     <input type="text" class="form-control" name="cert_path" placeholder="/etc/ssl/mycert.crt">
                                 </div>
                                 <div class="form-group">
-                                    <label>Key Path</label>
+                                    <label>Key path</label>
                                     <input type="text" class="form-control" name="key_path" placeholder="/etc/ssl/mycert.key">
                                 </div>
                             </div>
                             <div class="form-group">
-                                <label>Document Root <span class="label-hint">— optional, defaults to /var/www/domain</span></label>
+                                <label>Document root <span class="label-hint">— optional, defaults to /var/www/domain</span></label>
                                 <input type="text" class="form-control" name="docroot" placeholder="Default: /var/www/domain.com">
                             </div>
                             <div class="form-section">Advanced</div>
@@ -731,13 +640,12 @@
                                 <label>Path to existing site files <span class="label-hint">— server-side path</span></label>
                                 <div class="drop-zone" id="static-dropzone">
                                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:8px;opacity:0.7;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg><br>
-                                    Drag and drop your site's .zip file here<br>
-                                    <span style="font-size:0.75rem;opacity:0.6;">(or enter the server-side path below)</span>
+                                    <div class="dz-text"><b>Drop your site's .zip here</b><span>or enter a server path below</span></div>
                                 </div>
                                 <input type="text" class="form-control" name="site_files_path" id="static-sitepath-input" placeholder="e.g. /home/user/mysite">
                             </div>
                             <div class="btn-row">
-                                <button type="submit" class="btn btn-primary">Create Full Site</button>
+                                <button type="submit" class="btn btn-primary">Create full site</button>
                             </div>
                         </form>
                     </div>
@@ -746,21 +654,21 @@
                     <div id="tab-makesite-proxy" class="tab-pane">
                         <form onsubmit="submitApiForm(event, '/api/makesite/proxy', 'makesite-term')">
                             <div class="form-group">
-                                <label>Web Server</label>
+                                <label>Web server</label>
                                 <select class="form-control" name="server" required>
                                     <option value="apache">Apache</option>
                                     <option value="nginx">Nginx</option>
                                 </select>
                             </div>
                             <div class="form-group">
-                                <label>Domain Name</label>
+                                <label>Domain name</label>
                                 <input type="text" class="form-control" name="domain" required>
                             </div>
                             <div class="form-group">
-                                <label>Backend Target URL</label>
+                                <label>Backend target URL</label>
                                 <input type="text" class="form-control" name="backend" placeholder="http://127.0.0.1:3000" required>
                             </div>
-                            <button type="submit" class="btn btn-primary">Create Reverse Proxy</button>
+                            <button type="submit" class="btn btn-primary">Create reverse proxy</button>
                         </form>
                     </div>
 
@@ -783,11 +691,11 @@
                 </div>
             </section>
 
-            <!-- Manage Sites Page -->
+            <!-- Sites Page -->
             <section id="page-managesites" class="page-section">
                 <div class="page-header">
-                    <h2>Manage Sites</h2>
-                    <p>View, modify, enable, disable, or delete active web server configurations.</p>
+                    <h2>Sites</h2>
+                    <p>Enable, disable, modify or delete sites on this server.</p>
                 </div>
 
                 <div class="card">
@@ -803,7 +711,9 @@
                                 </tr>
                             </thead>
                             <tbody id="sites-tbody">
-                                <tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted)">Loading...</td></tr>
+                                <tr class="skeleton-row"><td colspan="5"><div class="skel skel-md"></div></td></tr>
+                                <tr class="skeleton-row"><td colspan="5"><div class="skel skel-lg"></div></td></tr>
+                                <tr class="skeleton-row"><td colspan="5"><div class="skel skel-sm"></div></td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -814,14 +724,14 @@
             <div id="modify-site-modal" class="modal-overlay">
                 <div class="modal-box">
                     <div class="modal-header">
-                        <h3 id="modify-site-title">Modify Site</h3>
+                        <h3 id="modify-site-title">Modify site</h3>
                         <button class="modal-close" onclick="closeModifyModal()">&times;</button>
                     </div>
 
                     <div class="content-tabs">
-                        <button class="content-tab-btn active" data-tab="docroot" onclick="switchModifyTab('docroot')">Doc Root</button>
-                        <button class="content-tab-btn" data-tab="dbpass" onclick="switchModifyTab('dbpass')">DB Password</button>
-                        <button class="content-tab-btn" data-tab="vhost" onclick="switchModifyTab('vhost')">VHost Config</button>
+                        <button class="content-tab-btn active" data-tab="docroot" onclick="switchModifyTab('docroot')">Doc root</button>
+                        <button class="content-tab-btn" data-tab="dbpass" onclick="switchModifyTab('dbpass')">Database password</button>
+                        <button class="content-tab-btn" data-tab="vhost" onclick="switchModifyTab('vhost')">VHost config</button>
                     </div>
 
                     <div id="mod-tab-docroot" class="tab-pane active">
@@ -829,10 +739,10 @@
                             <input type="hidden" id="mod-domain" name="domain">
                             <input type="hidden" id="mod-server" name="server">
                             <div class="form-group">
-                                <label>New Document Root</label>
+                                <label>New document root</label>
                                 <input type="text" class="form-control" name="docroot" id="mod-docroot-input" required>
                             </div>
-                            <button type="submit" class="btn btn-primary">Update Document Root</button>
+                            <button type="submit" class="btn btn-primary">Update document root</button>
                         </form>
                     </div>
 
@@ -840,11 +750,11 @@
                         <form onsubmit="submitModifySite(event, 'update_db_pass')">
                             <input type="hidden" id="mod-domain-db" name="domain">
                             <div class="form-group">
-                                <label>New Database Password</label>
+                                <label>New database password</label>
                                 <input type="password" class="form-control" name="db_pass" required autocomplete="new-password">
                             </div>
                             <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:24px">Updates MariaDB and syncs the password in <code>wp-config.php</code> or <code>index.php</code> automatically.</p>
-                            <button type="submit" class="btn btn-primary">Update Password</button>
+                            <button type="submit" class="btn btn-primary">Update password</button>
                         </form>
                     </div>
 
@@ -853,13 +763,13 @@
                             <input type="hidden" id="mod-domain-vhost" name="domain">
                             <input type="hidden" id="mod-server-vhost" name="server">
                             <div class="form-group vhost-editor">
-                                <label>Virtual Host Configuration</label>
+                                <label>Virtual host configuration</label>
                                 <div class="editor-wrap">
                                     <textarea class="form-control editor-textarea" name="config" id="mod-vhost-content" spellcheck="false" oninput="updateHighlighting(this.value); syncScroll(this);" onscroll="syncScroll(this);"></textarea>
                                     <pre class="editor-pre" aria-hidden="true"><code id="mod-vhost-highlight"></code></pre>
                                 </div>
                             </div>
-                            <button type="submit" class="btn btn-primary">Save Configuration</button>
+                            <button type="submit" class="btn btn-primary">Save configuration</button>
                         </form>
                     </div>
                 </div>
@@ -868,8 +778,8 @@
             <!-- MariaDB Manager -->
             <section id="page-mariadb" class="page-section">
                 <div class="page-header">
-                    <h2>MariaDB Manager</h2>
-                    <p>Manage databases and users.</p>
+                    <h2>MariaDB</h2>
+                    <p>Databases, users and backups.</p>
                 </div>
                 <div class="card">
                     <div class="card-split">
@@ -886,20 +796,20 @@
                             <div class="form-group">
                                 <label>Action</label>
                                 <select class="form-control" name="action" id="mariadb-db-action" onchange="toggleMariadbDbFields()" required>
-                                    <option value="list">List Databases</option>
-                                    <option value="create">Create Database</option>
-                                    <option value="drop">Drop Database</option>
-                                    <option value="inspect">Inspect Database</option>
-                                    <option value="backup">Backup Database</option>
-                                    <option value="restore">Restore Database</option>
+                                    <option value="list">List databases</option>
+                                    <option value="create">Create database</option>
+                                    <option value="drop">Drop database</option>
+                                    <option value="inspect">Inspect database</option>
+                                    <option value="backup">Backup database</option>
+                                    <option value="restore">Restore database</option>
                                 </select>
                             </div>
                             <div class="form-group hidden" id="mariadb-db-name">
-                                <label>Database Name</label>
+                                <label>Database name</label>
                                 <input type="text" class="form-control" name="db_name">
                             </div>
                             <div class="form-group hidden" id="mariadb-db-path">
-                                <label>Backup/Restore File Path</label>
+                                <label>Backup/restore file path</label>
                                 <input type="text" class="form-control" name="file_path" placeholder="/root/backup.sql">
                             </div>
                             <div class="form-group hidden" id="mariadb-db-confirm">
@@ -907,7 +817,7 @@
                                     <input type="checkbox" name="confirm"> I understand this is destructive and confirm the action.
                                 </label>
                             </div>
-                            <button type="submit" class="btn btn-primary">Execute Action</button>
+                            <button type="submit" class="btn btn-primary">Run action</button>
                         </form>
                     </div>
 
@@ -918,12 +828,12 @@
                             <div class="form-group">
                                 <label>Action</label>
                                 <select class="form-control" name="action" id="mariadb-user-action" onchange="toggleMariadbUserFields()" required>
-                                    <option value="list">List Users</option>
-                                    <option value="create">Create User</option>
-                                    <option value="drop">Drop User</option>
-                                    <option value="password">Change Password</option>
-                                    <option value="grant">Grant Privileges</option>
-                                    <option value="revoke">Revoke Privileges</option>
+                                    <option value="list">List users</option>
+                                    <option value="create">Create user</option>
+                                    <option value="drop">Drop user</option>
+                                    <option value="password">Change password</option>
+                                    <option value="grant">Grant privileges</option>
+                                    <option value="revoke">Revoke privileges</option>
                                 </select>
                             </div>
                             <div class="form-group hidden" id="mariadb-user-name">
@@ -935,10 +845,10 @@
                                 <input type="password" class="form-control" name="password">
                             </div>
                             <div class="form-group hidden" id="mariadb-user-db">
-                                <label>Database Name (for privileges)</label>
+                                <label>Database name (for privileges)</label>
                                 <input type="text" class="form-control" name="db_name">
                             </div>
-                            <button type="submit" class="btn btn-primary">Execute Action</button>
+                            <button type="submit" class="btn btn-primary">Run action</button>
                         </form>
                     </div>
 
@@ -961,18 +871,18 @@
                 </div>
             </section>
 
-            <!-- Install Services -->
+            <!-- Install services -->
             <section id="page-services" class="page-section">
                 <div class="page-header">
-                    <h2>Install Services</h2>
-                    <p>Setup Mail, FTP, Samba, and phpMyAdmin.</p>
+                    <h2>Install services</h2>
+                    <p>Set up mail, FTP, Samba and phpMyAdmin.</p>
                 </div>
                 <div class="card">
                     <div class="card-split">
                     <div class="card-split-form">
                     <div class="content-tabs">
-                        <button class="content-tab-btn active" data-tab="mail" onclick="switchTab('services', 'mail')">Mail Server</button>
-                        <button class="content-tab-btn" data-tab="ftp" onclick="switchTab('services', 'ftp')">FTP Server</button>
+                        <button class="content-tab-btn active" data-tab="mail" onclick="switchTab('services', 'mail')">Mail server</button>
+                        <button class="content-tab-btn" data-tab="ftp" onclick="switchTab('services', 'ftp')">FTP server</button>
                         <button class="content-tab-btn" data-tab="pma" onclick="switchTab('services', 'pma')">phpMyAdmin</button>
                         <button class="content-tab-btn" data-tab="samba" onclick="switchTab('services', 'samba')">Samba</button>
                     </div>
@@ -981,12 +891,12 @@
                         <form onsubmit="submitApiForm(event, '/api/install/mail', 'services-term')">
                             <p class="mb-4 text-muted">Installs a full mail stack: Postfix, Dovecot, and Roundcube Webmail.</p>
                             <div class="form-group">
-                                <label>Primary Mail Domain</label>
+                                <label>Mail domain</label>
                                 <input type="text" class="form-control" name="domain" placeholder="example.com" required>
                             </div>
                             <div class="btn-row">
-                                <button type="submit" class="btn btn-primary">Install Mail Server</button>
-                                <button type="button" class="btn btn-danger" onclick="submitCustomAction(this, '/api/uninstall/mail')">Uninstall Mail Server</button>
+                                <button type="submit" class="btn btn-primary">Install mail server</button>
+                                <button type="button" class="btn btn-danger-ghost" onclick="submitCustomAction(this, '/api/uninstall/mail')">Uninstall mail server</button>
                             </div>
                         </form>
 
@@ -1031,13 +941,13 @@
                         <form onsubmit="submitApiForm(event, '/api/install/ftp', 'services-term')">
                             <p class="mb-4 text-muted">Installs vsftpd and configures user isolation.</p>
                             <div class="btn-row mb-4">
-                                <button type="submit" class="btn btn-primary">Install FTP Server</button>
-                                <button type="button" class="btn btn-danger" onclick="submitCustomAction(this, '/api/uninstall/ftp')">Uninstall FTP Server</button>
+                                <button type="submit" class="btn btn-primary">Install FTP server</button>
+                                <button type="button" class="btn btn-danger-ghost" onclick="submitCustomAction(this, '/api/uninstall/ftp')">Uninstall FTP server</button>
                             </div>
                             
                             <hr style="border-color: var(--border); margin: 20px 0;">
                             
-                            <h4>Add FTP User</h4>
+                            <h4>Add FTP user</h4>
                             <div class="form-group mt-4">
                                 <label>Username</label>
                                 <input type="text" class="form-control" name="username">
@@ -1046,7 +956,7 @@
                                 <label>Password</label>
                                 <input type="password" class="form-control" name="password">
                             </div>
-                            <button type="button" class="btn btn-primary" onclick="submitCustomAction(this, '/api/install/ftp_user')">Add FTP User</button>
+                            <button type="button" class="btn btn-primary" onclick="submitCustomAction(this, '/api/install/ftp_user')">Add FTP user</button>
                         </form>
                     </div>
 
@@ -1055,7 +965,7 @@
                             <p class="mb-4 text-muted">Installs phpMyAdmin and configures it securely under a random alias or subdomain.</p>
                             <div class="btn-row">
                                 <button type="submit" class="btn btn-primary">Install phpMyAdmin</button>
-                                <button type="button" class="btn btn-danger" onclick="submitCustomAction(this, '/api/uninstall/pma')">Uninstall phpMyAdmin</button>
+                                <button type="button" class="btn btn-danger-ghost" onclick="submitCustomAction(this, '/api/uninstall/pma')">Uninstall phpMyAdmin</button>
                             </div>
                         </form>
                     </div>
@@ -1064,26 +974,26 @@
                         <form onsubmit="submitApiForm(event, '/api/install/samba', 'services-term')">
                             <p class="mb-4 text-muted">Installs Samba for Windows file sharing.</p>
                             <div class="btn-row mb-4">
-                                <button type="submit" class="btn btn-primary">Install Samba Server</button>
-                                <button type="button" class="btn btn-danger" onclick="submitCustomAction(this, '/api/uninstall/samba')">Uninstall Samba Server</button>
+                                <button type="submit" class="btn btn-primary">Install Samba server</button>
+                                <button type="button" class="btn btn-danger-ghost" onclick="submitCustomAction(this, '/api/uninstall/samba')">Uninstall Samba server</button>
                             </div>
 
                             <hr style="border-color: var(--border); margin: 20px 0;">
                             
-                            <h4>Add Samba Share</h4>
+                            <h4>Add Samba share</h4>
                             <div class="form-group mt-4">
-                                <label>Share Name</label>
+                                <label>Share name</label>
                                 <input type="text" class="form-control" name="share_name">
                             </div>
                             <div class="form-group">
-                                <label>Directory Path</label>
+                                <label>Directory path</label>
                                 <input type="text" class="form-control" name="path" placeholder="/var/www/example.com">
                             </div>
                             <div class="form-group">
-                                <label>Allowed Linux User</label>
+                                <label>Allowed Linux user</label>
                                 <input type="text" class="form-control" name="user">
                             </div>
-                            <button type="button" class="btn btn-primary" onclick="submitCustomAction(this, '/api/install/samba_share')">Add Share</button>
+                            <button type="button" class="btn btn-primary" onclick="submitCustomAction(this, '/api/install/samba_share')">Add share</button>
                         </form>
                     </div>
 
@@ -1106,32 +1016,32 @@
                 </div>
             </section>
 
-            <!-- Server Management -->
+            <!-- Server control -->
             <section id="page-server" class="page-section">
                 <div class="page-header">
-                    <h2>Server Management</h2>
-                    <p>Control system services and firewall rules.</p>
+                    <h2>Server control</h2>
+                    <p>Start, stop and configure core services and firewall rules.</p>
                 </div>
 
                 <div class="card">
                     <div class="card-split">
                     <div class="card-split-form">
                     <div class="content-tabs">
-                        <button class="content-tab-btn active" data-tab="service-ctrl" onclick="switchTab('server', 'service-ctrl')">Services Control</button>
+                        <button class="content-tab-btn active" data-tab="service-ctrl" onclick="switchTab('server', 'service-ctrl')">Services control</button>
                         <button class="content-tab-btn" data-tab="firewall" onclick="switchTab('server', 'firewall')">Firewall (UFW)</button>
-                        <button class="content-tab-btn" data-tab="reload" onclick="switchTab('server', 'reload')">Reload All</button>
-                        <button class="content-tab-btn" data-tab="os" onclick="switchTab('server', 'os')">OS Maintenance</button>
+                        <button class="content-tab-btn" data-tab="reload" onclick="switchTab('server', 'reload')">Reload all</button>
+                        <button class="content-tab-btn" data-tab="os" onclick="switchTab('server', 'os')">OS maintenance</button>
                     </div>
 
                     <!-- Services Control -->
                     <div id="tab-server-service-ctrl" class="tab-pane active">
                         <form onsubmit="submitApiForm(event, '/api/manage/service', 'server-term')">
                             <div class="form-group">
-                                <label>Select Service</label>
+                                <label>Service</label>
                                 <select class="form-control" name="service" required>
                                     <option value="apache2">Apache2</option>
                                     <option value="nginx">Nginx</option>
-                                    <option value="bind9">BIND9</option>
+                                    <option value="bind9">BIND</option>
                                     <option value="mariadb">MariaDB</option>
                                     <option value="postfix">Postfix</option>
                                     <option value="dovecot">Dovecot</option>
@@ -1147,7 +1057,7 @@
                                     <option value="disable">Disable</option>
                                 </select>
                             </div>
-                            <button type="submit" class="btn btn-primary">Execute Action</button>
+                            <button type="submit" class="btn btn-primary">Run action</button>
                         </form>
                     </div>
 
@@ -1157,18 +1067,18 @@
                             <div class="form-group">
                                 <label>Action</label>
                                 <select class="form-control" name="action" id="fw-action" onchange="document.getElementById('fw-port').classList.toggle('hidden', !['allow','deny'].includes(this.value))" required>
-                                    <option value="list">List Active Rules</option>
+                                    <option value="list">List active rules</option>
                                     <option value="enable">Enable UFW</option>
                                     <option value="disable">Disable UFW</option>
-                                    <option value="allow">Allow Port</option>
-                                    <option value="deny">Deny Port</option>
+                                    <option value="allow">Allow port</option>
+                                    <option value="deny">Deny port</option>
                                 </select>
                             </div>
                             <div class="form-group hidden" id="fw-port">
                                 <label>Port (e.g. 80/tcp)</label>
                                 <input type="text" class="form-control" name="port">
                             </div>
-                            <button type="submit" class="btn btn-primary">Apply Firewall Rule</button>
+                            <button type="submit" class="btn btn-primary">Apply firewall rule</button>
                         </form>
                     </div>
 
@@ -1176,7 +1086,7 @@
                     <div id="tab-server-reload" class="tab-pane">
                         <form onsubmit="submitApiForm(event, '/api/manage/reload', 'server-term')">
                             <p class="mb-4 text-muted">This will check for pending configuration changes in Apache, Nginx, and BIND9 and reload them cleanly.</p>
-                            <button type="submit" class="btn btn-primary">Reload Services</button>
+                            <button type="submit" class="btn btn-primary">Reload services</button>
                         </form>
                     </div>
 
@@ -1185,7 +1095,7 @@
                         <form onsubmit="submitApiForm(event, '/api/manage/os', 'server-term')">
                             <input type="hidden" name="action" value="fix_dpkg">
                             <p class="mb-4 text-muted">Run this if you receive errors about broken dependencies or interrupted apt installations. It runs <code>dpkg --configure -a</code> and <code>apt --fix-broken install</code>.</p>
-                            <button type="submit" class="btn btn-primary">Fix Broken Packages</button>
+                            <button type="submit" class="btn btn-primary">Fix broken packages</button>
                         </form>
                     </div>
 
@@ -1207,18 +1117,18 @@
                     </div><!-- /card-split -->
                 </div>
             </section>
-            <!-- DNS Zones -->
+            <!-- DNS zones -->
             <section id="page-dns" class="page-section">
                 <div class="page-header">
-                    <h2>DNS Zones (BIND9)</h2>
-                    <p>Manage domain zones, reverse zones, and MX records.</p>
+                    <h2>DNS zones</h2>
+                    <p>Manage forward and reverse zones, MX records and lookups.</p>
                 </div>
 
                 <div class="card">
                     <div class="content-tabs">
-                        <button class="content-tab-btn active" data-tab="list" onclick="switchTab('dns', 'list')">Manage Zones</button>
-                        <button class="content-tab-btn" data-tab="create" onclick="switchTab('dns', 'create')">Create Zone</button>
-                        <button class="content-tab-btn" data-tab="mx" onclick="switchTab('dns', 'mx')">MX Records</button>
+                        <button class="content-tab-btn active" data-tab="list" onclick="switchTab('dns', 'list')">Manage zones</button>
+                        <button class="content-tab-btn" data-tab="create" onclick="switchTab('dns', 'create')">Create zone</button>
+                        <button class="content-tab-btn" data-tab="mx" onclick="switchTab('dns', 'mx')">MX records</button>
                         <button class="content-tab-btn" data-tab="test" onclick="switchTab('dns', 'test')">Test DNS</button>
                     </div>
 
@@ -1227,13 +1137,15 @@
                             <table class="sites-table" id="dns-table">
                                 <thead>
                                     <tr>
-                                        <th>Domain / Zone</th>
+                                        <th>Domain / zone</th>
                                         <th>Type</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody id="dns-tbody">
-                                    <tr><td colspan="3" style="text-align:center;padding:32px;color:var(--text-muted)">Loading...</td></tr>
+                                    <tr class="skeleton-row"><td colspan="3"><div class="skel skel-md"></div></td></tr>
+                                    <tr class="skeleton-row"><td colspan="3"><div class="skel skel-lg"></div></td></tr>
+                                    <tr class="skeleton-row"><td colspan="3"><div class="skel skel-sm"></div></td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -1243,22 +1155,22 @@
                         <form onsubmit="submitApiForm(event, '/api/manage/dns', 'dns-term')">
                             <input type="hidden" name="action" value="create">
                             <div class="form-group">
-                                <label>Zone Type</label>
+                                <label>Zone type</label>
                                 <select class="form-control" name="type" id="dns-create-type" onchange="document.getElementById('dns-ip-group').classList.toggle('hidden', this.value === 'forward')" required>
-                                    <option value="forward">Forward Zone Only</option>
-                                    <option value="reverse">Reverse Zone Only</option>
-                                    <option value="both">Both (Forward + Reverse)</option>
+                                    <option value="forward">Forward zone only</option>
+                                    <option value="reverse">Reverse zone only</option>
+                                    <option value="both">Both (forward + reverse)</option>
                                 </select>
                             </div>
                             <div class="form-group">
-                                <label>Domain Name</label>
+                                <label>Domain name</label>
                                 <input type="text" class="form-control" name="domain" required>
                             </div>
                             <div class="form-group hidden" id="dns-ip-group">
-                                <label>Server IP (Required for Reverse Zones)</label>
+                                <label>Server IP (required for reverse zones)</label>
                                 <input type="text" class="form-control" name="ip">
                             </div>
-                            <button type="submit" class="btn btn-primary">Create DNS Zone</button>
+                            <button type="submit" class="btn btn-primary">Create DNS zone</button>
                         </form>
                     </div>
 
@@ -1267,18 +1179,18 @@
                             <div class="form-group">
                                 <label>Action</label>
                                 <select class="form-control" name="action" id="dns-mx-action" onchange="document.getElementById('mx-add-fields').classList.toggle('hidden', this.value !== 'mx_add')" required>
-                                    <option value="mx_list">List MX Records</option>
-                                    <option value="mx_add">Add MX Record</option>
-                                    <option value="mx_remove">Remove MX Record</option>
+                                    <option value="mx_list">List MX records</option>
+                                    <option value="mx_add">Add MX record</option>
+                                    <option value="mx_remove">Remove MX record</option>
                                 </select>
                             </div>
                             <div class="form-group">
-                                <label>Domain Name</label>
+                                <label>Domain name</label>
                                 <input type="text" class="form-control" name="domain" required>
                             </div>
                             <div id="mx-add-fields" class="hidden">
                                 <div class="form-group">
-                                    <label>Mail Server Hostname (e.g. mail.example.com)</label>
+                                    <label>Mail server hostname (e.g. mail.example.com)</label>
                                     <input type="text" class="form-control" name="mail_host">
                                 </div>
                                 <div class="form-group">
@@ -1286,7 +1198,7 @@
                                     <input type="number" class="form-control" name="priority" value="10">
                                 </div>
                             </div>
-                            <button type="submit" class="btn btn-primary">Execute Action</button>
+                            <button type="submit" class="btn btn-primary">Run action</button>
                         </form>
                     </div>
 
@@ -1295,10 +1207,10 @@
                             <input type="hidden" name="action" value="test">
                             <p class="text-muted mb-4">Run named-checkconf and named-checkzone for a specific domain.</p>
                             <div class="form-group">
-                                <label>Domain Name (Optional - leave blank to just test config)</label>
+                                <label>Domain name (optional, leave blank to just test the config)</label>
                                 <input type="text" class="form-control" name="domain">
                             </div>
-                            <button type="submit" class="btn btn-primary">Run DNS Test</button>
+                            <button type="submit" class="btn btn-primary">Run DNS test</button>
                         </form>
                     </div>
 
@@ -1320,8 +1232,8 @@
             <!-- Network Configuration -->
             <section id="page-network" class="page-section">
                 <div class="page-header">
-                    <h2>Network Configuration</h2>
-                    <p>Manage Server IP addresses (Static/DHCP).</p>
+                    <h2>Network</h2>
+                    <p>Inspect and change this server's IP configuration.</p>
                 </div>
 
                 <div class="card">
@@ -1329,25 +1241,25 @@
                         <div class="form-group">
                             <label>Action</label>
                             <select class="form-control" name="action" id="net-action" onchange="document.getElementById('net-static-fields').classList.toggle('hidden', this.value !== 'static')" required>
-                                <option value="show">Show Current IP Config</option>
-                                <option value="static">Set Static IP</option>
+                                <option value="show">Show current IP config</option>
+                                <option value="static">Set static IP</option>
                                 <option value="dhcp">Set DHCP</option>
-                                <option value="restore">Restore Backup</option>
+                                <option value="restore">Restore backup</option>
                             </select>
                         </div>
                         
                         <div class="form-group">
-                            <label>Interface Name (e.g. eth0)</label>
+                            <label>Interface name (e.g. eth0)</label>
                             <input type="text" class="form-control" name="iface" required>
                         </div>
 
                         <div id="net-static-fields" class="hidden">
                             <div class="form-group">
-                                <label>New IP Address (e.g. 192.168.1.100)</label>
+                                <label>New IP address (e.g. 192.168.1.100)</label>
                                 <input type="text" class="form-control" name="ip">
                             </div>
                             <div class="form-group">
-                                <label>Subnet Mask (e.g. 255.255.255.0)</label>
+                                <label>Subnet mask (e.g. 255.255.255.0)</label>
                                 <input type="text" class="form-control" name="netmask" value="255.255.255.0">
                             </div>
                             <div class="form-group">
@@ -1362,7 +1274,7 @@
                                 </label>
                             </div>
 
-                        <button type="submit" class="btn btn-primary mt-4">Apply Network Changes</button>
+                        <button type="submit" class="btn btn-primary mt-4">Apply network changes</button>
                     </form>
                     <div class="terminal-header" style="margin-top:20px">
                         <div class="terminal-label">output</div>
@@ -1386,7 +1298,7 @@
             <section id="page-docker" class="page-section">
                 <div class="page-header">
                     <h2>Docker</h2>
-                    <p>Manage containers, deploy one-click services, and create proxied container sites.</p>
+                    <p>Containers, one-click deployments and proxied sites.</p>
                 </div>
 
                 <!-- Not installed state -->
@@ -1405,8 +1317,8 @@
                 <div id="docker-main-content" style="display:none;">
                     <div class="content-tabs">
                         <button class="content-tab-btn active" data-tab="containers" onclick="switchTab('docker', 'containers')">Containers</button>
-                        <button class="content-tab-btn" data-tab="create" onclick="switchTab('docker', 'create')">Create Site</button>
-                        <button class="content-tab-btn" data-tab="oneclick" onclick="switchTab('docker', 'oneclick')">One-Click Services</button>
+                        <button class="content-tab-btn" data-tab="create" onclick="switchTab('docker', 'create')">Create site</button>
+                        <button class="content-tab-btn" data-tab="oneclick" onclick="switchTab('docker', 'oneclick')">One-click services</button>
                     </div>
 
                     <div id="term-docker-main" class="terminal" style="margin-bottom:20px;"></div>
@@ -1415,7 +1327,7 @@
                     <div id="tab-docker-containers" class="tab-pane active">
                         <div class="card" style="padding:0; overflow:visible;">
                             <div style="display:flex; justify-content:space-between; align-items:center; padding:20px 24px; border-bottom:1px solid var(--border);">
-                                <h3 style="margin:0; padding:0; border:none; font-size:0.95rem;">Running Containers</h3>
+                                <h3 style="margin:0; padding:0; border:none; font-size:0.95rem;">Running containers</h3>
                                 <div style="display:flex; gap:8px; align-items:center;">
                                     <button class="btn-sm" onclick="loadDocker()">
                                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
@@ -1425,7 +1337,7 @@
                                         <input type="hidden" name="action" value="prune">
                                         <button type="submit" class="btn-sm" style="color:var(--danger); border-color:rgba(244,63,94,0.3);">
                                             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                                            System Prune
+                                            System prune
                                         </button>
                                     </form>
                                 </div>
@@ -1441,7 +1353,9 @@
                                         </tr>
                                     </thead>
                                     <tbody id="docker-tbody">
-                                        <tr><td colspan="4" style="text-align:center; padding:32px; color:var(--text-muted)">Loading...</td></tr>
+                                        <tr class="skeleton-row"><td colspan="4"><div class="skel skel-md"></div></td></tr>
+                                        <tr class="skeleton-row"><td colspan="4"><div class="skel skel-lg"></div></td></tr>
+                                        <tr class="skeleton-row"><td colspan="4"><div class="skel skel-sm"></div></td></tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -1454,15 +1368,15 @@
                             <form onsubmit="submitApiForm(event, '/api/makesite_docker', 'term-docker-main')">
                                 <input type="hidden" name="action" value="docker">
                                 <div class="form-group">
-                                    <label>Domain Name <span class="label-hint">— Nginx will act as a reverse proxy for this domain.</span></label>
+                                    <label>Domain name <span class="label-hint">— Nginx will act as a reverse proxy for this domain.</span></label>
                                     <input type="text" class="form-control" name="domain" required placeholder="e.g. app.example.com">
                                 </div>
                                 <div class="form-group">
-                                    <label>Container Image</label>
+                                    <label>Container image</label>
                                     <input type="text" class="form-control" name="image" required placeholder="e.g. nginx:alpine or ghost:latest">
                                 </div>
                                 <div class="form-group">
-                                    <label>Internal Container Port</label>
+                                    <label>Internal container port</label>
                                     <input type="number" class="form-control" name="port" value="80" required>
                                 </div>
                                 <div class="form-group">
@@ -1475,7 +1389,7 @@
                                     <input type="text" class="form-control" id="docker-ip" name="ip" placeholder="e.g. 192.168.1.100">
                                 </div>
                                 <div class="btn-row">
-                                    <button type="submit" class="btn btn-primary">Deploy Container Site</button>
+                                    <button type="submit" class="btn btn-primary">Deploy container site</button>
                                 </div>
                             </form>
                         </div>
@@ -1492,7 +1406,7 @@
                                     <input type="hidden" name="action" value="oneclick">
                                     <input type="hidden" name="service" value="1">
                                     <div class="form-group">
-                                        <label>Proxy Domain <span class="label-hint">— optional</span></label>
+                                        <label>Proxy domain <span class="label-hint">— optional</span></label>
                                         <input type="text" class="form-control" name="domain" placeholder="portainer.example.com">
                                     </div>
                                     <div class="btn-row">
@@ -1520,7 +1434,7 @@
                                     <input type="hidden" name="action" value="oneclick">
                                     <input type="hidden" name="service" value="3">
                                     <div class="form-group">
-                                        <label>POSTGRES_PASSWORD</label>
+                                        <label>Postgres password</label>
                                         <input type="password" class="form-control" name="password" required>
                                     </div>
                                     <div class="btn-row">
@@ -1534,26 +1448,26 @@
             </section>
             <section id="page-help" class="page-section">
                 <div class="page-header">
-                    <h2>Help & Documentation</h2>
-                    <p>Learn how to use Zervermanager effectively.</p>
+                    <h2>Help</h2>
+                    <p>A quick guide to each part of the panel.</p>
                 </div>
                 <div class="card">
-                    <h3>Overview</h3>
+                    <h3>What each page does</h3>
                     <p>Zervermanager is a lightweight control panel for Debian servers.</p>
                     <ul style="padding-left: 20px; margin-bottom: 20px; color: var(--text-muted); line-height: 1.8;">
                         <li><strong>Dashboard</strong>: View the real-time status of your server's core services.</li>
-                        <li><strong>Make Site</strong>: Automatically generate configurations for Nginx/Apache, create databases, and optionally create DNS zones all at once.</li>
-                        <li><strong>Manage Sites</strong>: Enable, disable, or completely delete existing web sites and their associated configs.</li>
-                        <li><strong>DNS Zones</strong>: View and manage BIND9 DNS records.</li>
-                        <li><strong>MariaDB</strong>: View databases, users, and optionally drop them.</li>
-                        <li><strong>Install Services</strong>: Manage system packages and create Mailbox users for Postfix/Dovecot.</li>
-                        <li><strong>Server</strong>: Reboot the server or manage global configurations.</li>
+                        <li><strong>Create site</strong>: Generate Nginx or Apache configs, create a database, and optionally add a DNS zone in one step.</li>
+                        <li><strong>Sites</strong>: Enable, disable, modify or delete existing sites and their configs.</li>
+                        <li><strong>DNS zones</strong>: View and manage BIND DNS records.</li>
+                        <li><strong>MariaDB</strong>: View databases and users, or drop them.</li>
+                        <li><strong>Install services</strong>: Manage system packages and create mailboxes for Postfix and Dovecot.</li>
+                        <li><strong>Server control</strong>: Start, stop and reload services, manage the firewall, or repair packages.</li>
                         <li><strong>Network</strong>: View and apply static IP settings.</li>
                     </ul>
                     <p style="margin-bottom: 24px;">
                         <button class="btn btn-primary" onclick="openVideo()" style="padding: 10px 20px; font-size: 0.95rem; display: inline-flex; align-items: center; gap: 8px;">
                             <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><path d="M4 4l12 6-12 6z"/></svg>
-                            Watch Tutorial Video
+                            Watch tutorial
                         </button>
                     </p>
                     <p style="color: var(--text-dim); font-size: 0.9em;">
@@ -1564,9 +1478,9 @@
 
         </main>
     </div>
-    <script src="auth.js?v=1"></script>
-    <script src="app.js?v=12"></script>
-    <script src="fx.js?v=3"></script>
+    <script src="app.js?v=15"></script>
+    <script src="fx.js?v=8"></script>
+    <script src="motion.js?v=2"></script>
 
     <!-- ── Keyboard Shortcuts Overlay ── -->
     <div class="kbd-overlay" id="kbd-overlay" onclick="closeKbdOverlay()">
@@ -1578,17 +1492,17 @@
             <div class="kbd-list">
                 <div class="kbd-section-title">Navigation — press <kbd>g</kbd> then</div>
                 <div class="kbd-row"><span class="kbd-desc">Dashboard</span><span class="kbd-keys"><kbd>g</kbd><kbd>d</kbd></span></div>
-                <div class="kbd-row"><span class="kbd-desc">Make Site</span><span class="kbd-keys"><kbd>g</kbd><kbd>s</kbd></span></div>
-                <div class="kbd-row"><span class="kbd-desc">Manage Sites</span><span class="kbd-keys"><kbd>g</kbd><kbd>m</kbd></span></div>
-                <div class="kbd-row"><span class="kbd-desc">DNS Zones</span><span class="kbd-keys"><kbd>g</kbd><kbd>z</kbd></span></div>
+                <div class="kbd-row"><span class="kbd-desc">Create site</span><span class="kbd-keys"><kbd>g</kbd><kbd>s</kbd></span></div>
+                <div class="kbd-row"><span class="kbd-desc">Sites</span><span class="kbd-keys"><kbd>g</kbd><kbd>m</kbd></span></div>
+                <div class="kbd-row"><span class="kbd-desc">DNS zones</span><span class="kbd-keys"><kbd>g</kbd><kbd>z</kbd></span></div>
                 <div class="kbd-row"><span class="kbd-desc">MariaDB</span><span class="kbd-keys"><kbd>g</kbd><kbd>b</kbd></span></div>
-                <div class="kbd-row"><span class="kbd-desc">Install Services</span><span class="kbd-keys"><kbd>g</kbd><kbd>i</kbd></span></div>
-                <div class="kbd-row"><span class="kbd-desc">Server Management</span><span class="kbd-keys"><kbd>g</kbd><kbd>v</kbd></span></div>
+                <div class="kbd-row"><span class="kbd-desc">Install services</span><span class="kbd-keys"><kbd>g</kbd><kbd>i</kbd></span></div>
+                <div class="kbd-row"><span class="kbd-desc">Server control</span><span class="kbd-keys"><kbd>g</kbd><kbd>v</kbd></span></div>
                 <div class="kbd-row"><span class="kbd-desc">Network</span><span class="kbd-keys"><kbd>g</kbd><kbd>n</kbd></span></div>
                 <div class="kbd-row"><span class="kbd-desc">Docker</span><span class="kbd-keys"><kbd>g</kbd><kbd>k</kbd></span></div>
                 <div class="kbd-row"><span class="kbd-desc">Help</span><span class="kbd-keys"><kbd>g</kbd><kbd>h</kbd></span></div>
                 <div class="kbd-section-title">Actions</div>
-                <div class="kbd-row"><span class="kbd-desc">Reload All Services</span><span class="kbd-keys"><kbd>r</kbd></span></div>
+                <div class="kbd-row"><span class="kbd-desc">Reload all services</span><span class="kbd-keys"><kbd>r</kbd></span></div>
                 <div class="kbd-row"><span class="kbd-desc">Show this help</span><span class="kbd-keys"><kbd>?</kbd></span></div>
                 <div class="kbd-row"><span class="kbd-desc">Close overlay</span><span class="kbd-keys"><kbd>Esc</kbd></span></div>
             </div>
@@ -1607,7 +1521,7 @@
                 <svg id="dialog-icon-info" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
             </div>
             <div class="dialog-body">
-                <div class="dialog-title" id="dialog-title">Confirm Action</div>
+                <div class="dialog-title" id="dialog-title">Confirm action</div>
                 <div class="dialog-msg" id="dialog-msg"></div>
                 <!-- Optional second-step checkbox (e.g. "also delete files") -->
                 <div id="dialog-extra" class="hidden">
@@ -1639,49 +1553,8 @@
     </div>
     <!-- Goldfish Mode Toast -->
     <div id="goldfish-toast" role="status" aria-live="polite">
-        <span class="gt-icon">🐟</span>
-        <span id="goldfish-toast-msg">Simple Mode ON — advanced options hidden</span>
-    </div>
-
-    <!-- ═══════════════════════════════════════
-         LOGIN MODAL (auth.js)
-    ═══════════════════════════════════════ -->
-    <div id="zm-login-modal" class="zm-login-overlay" role="dialog" aria-modal="true" aria-labelledby="zm-login-title">
-        <div class="zm-login-box">
-            <!-- Brand mark -->
-            <div class="zm-login-brand">
-                <div class="zm-login-mark">Z</div>
-                <div>
-                    <div class="zm-login-title" id="zm-login-title">Zervermanager</div>
-                    <div class="zm-login-subtitle">Sign in to continue</div>
-                </div>
-            </div>
-
-            <!-- Fields -->
-            <div class="zm-login-fields">
-                <div class="zm-login-field">
-                    <label for="zm-login-username" class="zm-login-label">Username</label>
-                    <input id="zm-login-username" type="text" class="zm-login-input"
-                           value="admin" autocomplete="username" spellcheck="false">
-                </div>
-                <div class="zm-login-field">
-                    <label for="zm-login-password" class="zm-login-label">Password</label>
-                    <input id="zm-login-password" type="password" class="zm-login-input"
-                           placeholder="Enter your password"
-                           autocomplete="current-password"
-                           onkeydown="zmLoginKeydown(event)">
-                </div>
-                <div id="zm-login-error" class="zm-login-error" role="alert"></div>
-            </div>
-
-            <!-- Action -->
-            <button id="zm-login-btn" class="zm-login-submit" onclick="zmSubmitLogin()">Sign in</button>
-
-            <!-- Footer -->
-            <div class="zm-login-footer">
-                Forgot password? Run <code>sudo python3 zervermanager.py auth reset</code> on the server.
-            </div>
-        </div>
+        <span class="gt-icon" aria-hidden="true">✓</span>
+        <span id="goldfish-toast-msg">Simple view on — advanced options hidden</span>
     </div>
 
 </body>
