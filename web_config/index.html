@@ -1,13 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <script>try{if(localStorage.getItem("zm-motion")==="reduce")document.documentElement.dataset.motion="reduce"}catch(e){}</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Zervermanager</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=34">
+    <link rel="stylesheet" href="style.css?v=40">
 </head>
 <body>
 
@@ -362,11 +363,11 @@
                     <div class="card-split">
                     <div class="card-split-form">
                     <div class="content-tabs">
-                        <button class="content-tab-btn active" data-tab="lamp" onclick="switchTab('makesite', 'lamp')">Apache + PHP + DB</button>
-                        <button class="content-tab-btn" data-tab="lemp" onclick="switchTab('makesite', 'lemp')">Nginx + PHP + DB</button>
-                        <button class="content-tab-btn" data-tab="wordpress" onclick="switchTab('makesite', 'wordpress')">WordPress</button>
-                        <button class="content-tab-btn" data-tab="static" onclick="switchTab('makesite', 'static')">HTML / Static</button>
-                        <button class="content-tab-btn" data-tab="proxy" onclick="switchTab('makesite', 'proxy')">Reverse proxy</button>
+                        <button class="content-tab-btn active" data-tab="lamp" onclick="switchTab('makesite', 'lamp')" data-sub="Apache · PHP · DB">Apache + PHP + DB</button>
+                        <button class="content-tab-btn" data-tab="lemp" onclick="switchTab('makesite', 'lemp')" data-sub="Nginx · PHP · DB">Nginx + PHP + DB</button>
+                        <button class="content-tab-btn" data-tab="wordpress" onclick="switchTab('makesite', 'wordpress')" data-sub="CMS install">WordPress</button>
+                        <button class="content-tab-btn" data-tab="static" onclick="switchTab('makesite', 'static')" data-sub="Files only">HTML / Static</button>
+                        <button class="content-tab-btn" data-tab="proxy" onclick="switchTab('makesite', 'proxy')" data-sub="Port forward">Reverse proxy</button>
                     </div>
                     <div class="tab-desc-group">
                         <p class="tab-desc active" data-tab="lamp">Creates an Apache virtual host with PHP support and a MariaDB database.</p>
@@ -674,6 +675,7 @@
 
                     </div><!-- /card-split-form -->
                     <div class="card-split-terminal">
+                    <section class="ms-plan" id="ms-plan" aria-live="polite" aria-label="What will be created"></section>
                         <div class="terminal-header">
                             <div class="terminal-label">output</div>
                             <div class="term-toolbar">
@@ -1478,9 +1480,10 @@
 
         </main>
     </div>
-    <script src="app.js?v=15"></script>
-    <script src="fx.js?v=8"></script>
-    <script src="motion.js?v=2"></script>
+    <script src="app.js?v=16"></script>
+    <script src="fx.js?v=11"></script>
+    <script src="motion.js?v=7"></script>
+    <script src="makesite.js?v=1"></script>
 
     <!-- ── Keyboard Shortcuts Overlay ── -->
     <div class="kbd-overlay" id="kbd-overlay" onclick="closeKbdOverlay()">

@@ -24,7 +24,8 @@
     const $   = (s, r = document) => r.querySelector(s);
     const $$  = (s, r = document) => Array.from(r.querySelectorAll(s));
     const raf = (fn) => requestAnimationFrame(fn);
-    const reduce = () => !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+    const Z = () => { const b = document.body; return (b && b.offsetWidth) ? (b.getBoundingClientRect().width / b.offsetWidth) || 1 : 1; };
+    const reduce = () => document.documentElement.dataset.motion === 'reduce';
     const typing = (t) => !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
     const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const clamp = (n, a = 0, b = 100) => Math.min(b, Math.max(a, n));
@@ -387,8 +388,8 @@
                 ticking = false;
                 if (!ev) return;
                 const r = ev.box.getBoundingClientRect();
-                ev.box.style.setProperty('--mx', (ev.x - r.left) + 'px');
-                ev.box.style.setProperty('--my', (ev.y - r.top) + 'px');
+                ev.box.style.setProperty('--mx', ((ev.x - r.left) / Z()) + 'px');
+                ev.box.style.setProperty('--my', ((ev.y - r.top) / Z()) + 'px');
             });
         }, { passive: true });
     }
@@ -600,13 +601,14 @@
             if (!cur) return;
             if (!cur.btn.offsetParent) return close();          // trigger vanished (page switched, etc.)
             const r = cur.btn.getBoundingClientRect();
-            const below = innerHeight - r.bottom - 14, above = r.top - 14;
+            const z = Z();
+            const below = (innerHeight - r.bottom - 14) / z, above = (r.top - 14) / z;
             const down = below >= 200 || below >= above;
             menu.style.maxHeight = clamp(down ? below : above, 120, 280) + 'px';
-            menu.style.width = r.width + 'px';
-            menu.style.left = r.left + 'px';
+            menu.style.width = (r.width / z) + 'px';
+            menu.style.left = (r.left / z) + 'px';
             const hgt = Math.min(menu.scrollHeight, parseFloat(menu.style.maxHeight));
-            menu.style.top = (down ? r.bottom + 6 : r.top - 6 - hgt) + 'px';
+            menu.style.top = (down ? r.bottom / z + 6 : r.top / z - 6 - hgt) + 'px';
             menu.dataset.side = down ? 'bottom' : 'top';
         }
 

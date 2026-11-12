@@ -69,7 +69,7 @@ function _closeDialog() {
     const token = ++_dlgToken;
     const overlay = document.getElementById('dialog-overlay');
     const box = document.getElementById('dialog-box');
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if ((document.documentElement.dataset.motion === 'reduce')) {
         overlay.classList.remove('open');
         box.classList.remove('closing');
         return;
@@ -266,7 +266,7 @@ function switchPage(pageId) {
 
     const navItem = document.querySelector('[data-page="' + pageId + '"]');
     const pageTitle = navItem ? navItem.getAttribute('data-title') : pageId;
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reduced = (document.documentElement.dataset.motion === 'reduce');
 
     // 16. Overlap old & new states: the outgoing page keeps painting
     // (absolutely positioned) while the incoming one fades in on top.
