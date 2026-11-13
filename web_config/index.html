@@ -3,12 +3,12 @@
 <head>
     <script>try{if(localStorage.getItem("zm-motion")==="reduce")document.documentElement.dataset.motion="reduce"}catch(e){}</script>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zervermanager</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=40">
+    <link rel="stylesheet" href="style.css?v=53">
 </head>
 <body>
 
@@ -128,6 +128,13 @@
                     <div class="waybar-clock" id="waybar-clock" aria-label="Local time"><span class="clock-date"></span><span class="clock-time"></span></div>
                     <div class="top-bar-divider waybar-clock-div"></div>
 
+                    <!-- WIP-PHONE-ACCESS: feature paused, not yet phone-verified -->
+                    <button class="top-bar-btn" id="phone-access-btn" onclick="openPhoneAccess()" title="Connect from phone (WIP — does not yet work from phones)">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"></rect><line x1="11" y1="19" x2="13" y2="19"></line></svg>
+                        <span>Phone</span>
+                        <span class="wip-mini">WIP</span>
+                    </button>
+
                     <!-- Simple view toggle -->
                     <button class="top-bar-btn" id="goldfish-btn" onclick="toggleGoldfishMode()" title="Simple view — hide advanced options" aria-pressed="false">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="14" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line><circle cx="18" cy="12" r="2"></circle></svg>
@@ -160,6 +167,12 @@
                         <h2>Server overview</h2>
                         <p>Live health of core services and system resources on <span id="os-val">Debian GNU/Linux</span>.</p>
                     </div>
+                    <!-- WIP-PHONE-ACCESS: feature paused, not yet phone-verified -->
+                    <button type="button" class="hdr-phone" onclick="openPhoneAccess()" title="Connect from phone (WIP — does not yet work from phones)">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"></rect><line x1="11" y1="19" x2="13" y2="19"></line></svg>
+                        <span>Connect from phone</span>
+                        <span class="wip-mini">WIP</span>
+                    </button>
                 </div>
                 
                 <nav class="hy-launch" aria-label="Quick launch">
@@ -1480,9 +1493,10 @@
 
         </main>
     </div>
-    <script src="app.js?v=16"></script>
+    <script src="qr.js?v=1"></script>
+    <script src="app.js?v=20"></script>
     <script src="fx.js?v=11"></script>
-    <script src="motion.js?v=7"></script>
+    <script src="motion.js?v=8"></script>
     <script src="makesite.js?v=1"></script>
 
     <!-- ── Keyboard Shortcuts Overlay ── -->
@@ -1541,6 +1555,32 @@
         </div>
     </div>
 
+
+    <!-- ── Connect from phone ── -->
+    <div class="modal-overlay" id="phone-overlay" onclick="closePhoneAccess()">
+        <div class="modal-box phone-box" role="dialog" aria-label="Connect from your phone" onclick="event.stopPropagation()">
+            <div class="phone-head">
+                <div>
+                    <div class="phone-title">Connect from your phone</div>
+                    <div class="phone-sub">Scan the QR or type the address — the phone needs only its browser.</div>
+                </div>
+                <button class="phone-close" onclick="closePhoneAccess()" aria-label="Close">✕</button>
+            </div>
+            <div class="phone-body">
+                <!-- WIP-PHONE-ACCESS: feature paused, not yet phone-verified -->
+                <div class="phone-wip" role="status">
+                    <span class="wip-mini">WIP</span>
+                    <span>Work in progress — this does <strong>not</strong> work from phones yet. Debugging is paused; the scan and QR below are shown for testing only.</span>
+                </div>
+                <div class="phone-qr-wrap">
+                    <canvas id="phone-qr" width="240" height="240" aria-label="QR code of the Web UI address"></canvas>
+                    <div class="phone-qr-url mono" id="phone-qr-url">—</div>
+                </div>
+                <div class="phone-rows" id="phone-rows"></div>
+                <div class="phone-note" id="phone-note"></div>
+            </div>
+        </div>
+    </div>
 
     <!-- ── Video Overlay ── -->
     <div class="video-overlay" id="video-overlay" onclick="closeVideo()">

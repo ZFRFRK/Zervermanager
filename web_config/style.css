@@ -7997,3 +7997,965 @@ form.is-ready .btn-primary { animation: msPulse 2.8s ease-in-out infinite; }
 
 @media (max-width: 1180px) { #page-makesite .content-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 html[data-motion="reduce"] .ms-rows li.flash, html[data-motion="reduce"] form.is-ready .btn-primary { animation: none; }
+
+/* ═════════════════════════════════════════════════════════════════════
+   v22 — NAV LIGHT + PAGE SWITCH SMOOTHING
+═════════════════════════════════════════════════════════════════════ */
+
+/* 1. The light rides the sliding pill itself, so it follows the box's
+      glide instead of snapping to the newly selected row. Its colors
+      slowly cycle the whole hue wheel, starting from the theme's own. */
+.hy-pill--nav::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 24%;
+    bottom: 24%;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: linear-gradient(180deg, #00f5d4, var(--accent, #a78bfa) 55%, #f5c2e7);
+    box-shadow: 0 0 12px rgba(0, 245, 212, .40);
+    animation: hyHueWheel 7s linear infinite;
+}
+@keyframes hyHueWheel { from { filter: hue-rotate(0deg); } to { filter: hue-rotate(360deg); } }
+/* Motion off: bar still marks the item, it just doesn't cycle. */
+html[data-motion="reduce"] .hy-pill--nav::before { animation: none; }
+
+/* 2. Page switch: the exit is the mirror of the entrance — a workspace
+      pan (old page glides the same way you're navigating while fading),
+      long enough to actually be seen. It used to be a 0.15–0.22s blink. */
+@keyframes pageOut {
+    from { opacity: 1; transform: none; }
+    to   { opacity: 0; transform: translate3d(calc(var(--fx-dir, 1) * 36px), 0, 0); }
+}
+.page-section.leaving { animation: pageOut .3s var(--ease-out) forwards; }
+
+/* The incoming page waits a beat so the outgoing one is mid-fade, not gone. */
+.main-content > .page-section.active,
+.main-content .page-section.active { animation-delay: .06s; }
+
+/* 4. Text stays crisp during the page slide: the tiny scale(.994) forced
+      the browser to re-rasterize large letter-spaced headings every frame
+      (the "rough" shimmer). Slide + fade only. */
+@keyframes hyPage {
+    from { opacity: 0; transform: translate3d(calc(var(--fx-dir, 1) * 28px), 0, 0); }
+    to   { opacity: 1; transform: none; }
+}
+
+/* The big page header is a child of the page that is already sliding in —
+      it used to run its own hyRise on top of that (double transform, rough
+      edges). It now just fades in while the page moves it into place. */
+.page-section.active > .page-header { animation: hyFadeIn .5s var(--ease-out) .08s both; }
+@keyframes hyFadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* Breadcrumb: the old title gets a quick exit before the new one slides in
+      (it used to vanish the moment you clicked a nav item). */
+#breadcrumb-trail {
+    transition: opacity .14s var(--ease-out), transform .14s var(--ease-out);
+}
+#breadcrumb-trail.is-out {
+    opacity: 0;
+    transform: translate3d(calc(var(--fx-dir, 1) * -10px), 0, 0);
+}
+
+/* 3. ≤860px: the bar is a wrapping row — the pill can't glide it sensibly.
+      The item's own face + light carry the state instead. */
+@media (max-width: 860px) {
+    .nav-menu > .hy-pill--nav { display: none !important; }
+    .nav-menu .nav-item.active,
+    .nav-menu .nav-item.active:hover {
+        background: rgba(139, 92, 246, .16) !important;
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, .22) !important;
+        border-color: transparent !important;
+    }
+    .nav-menu .nav-item.active::before { display: none !important; }
+}
+
+/* ═════════════════════════════════════════════════════════════════════
+   v23 — SIDEBAR, POLISHED
+═════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. Surface: quiet violet wash from the top-left, cyan breath at the
+         bottom-right, hairline inner edges instead of a flat fill. ── */
+.sidebar {
+    background:
+        radial-gradient(130% 55% at 0% 0%, rgba(139, 92, 246, .10), transparent 55%),
+        radial-gradient(120% 45% at 100% 100%, rgba(0, 245, 212, .045), transparent 60%),
+        linear-gradient(180deg, #171426 0%, #120f1f 100%);
+    box-shadow:
+        var(--shadow-deep),
+        inset 0 1px 0 rgba(255, 255, 255, .07),
+        inset 1px 0 0 rgba(255, 255, 255, .03),
+        0 0 0 1px rgba(167, 139, 250, .07);
+}
+.sidebar::before {
+    left: 14%; right: 14%;
+    background: linear-gradient(90deg, transparent, rgba(167,139,250,.9), rgba(0,245,212,.65), rgba(167,139,250,.9), transparent);
+    opacity: .8;
+}
+
+/* ── 2. Brand: bigger mark, crisper name, version as a mono chip. ── */
+.sidebar-header { padding: 22px 18px 14px; }
+.brand-mark {
+    width: 40px; height: 40px; border-radius: 13px;
+    background: linear-gradient(145deg, #c4b0fd 0%, #8b5cf6 48%, #5b21b6 100%);
+    box-shadow: 0 6px 18px rgba(124, 58, 237, .5), 0 0 0 1px rgba(167, 139, 250, .4), inset 0 1px 0 rgba(255, 255, 255, .28);
+    font-size: 1.1rem; letter-spacing: -.02em;
+}
+.brand-info h1 { font-size: .9rem; font-weight: 750; letter-spacing: -.02em; }
+.brand-info p {
+    display: inline-flex; align-items: center;
+    margin-top: 5px; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid rgba(167, 139, 250, .28);
+    background: rgba(167, 139, 250, .09);
+    color: #c4b5fd;
+    font: 500 .6rem/1.5 var(--font-mono);
+    letter-spacing: .06em;
+}
+.sidebar-toggle-btn { width: 26px; height: 26px; border-radius: 8px; }
+
+/* ── 3. Search: a proper "launcher" pill. ── */
+.sidebar-search {
+    height: 38px; margin: 0 14px 4px; padding: 0 12px;
+    border-radius: 11px;
+    background: rgba(255, 255, 255, .045);
+    border: 1px solid rgba(255, 255, 255, .07);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, .25);
+    color: var(--text-dim);
+    font-size: .8rem;
+}
+.sidebar-search:hover {
+    background: rgba(255, 255, 255, .07);
+    border-color: rgba(167, 139, 250, .3);
+    color: var(--text);
+}
+.sidebar-search svg { color: var(--text-dim); transition: color .2s var(--ease-out); }
+.sidebar-search:hover svg { color: var(--accent); }
+.sidebar-search kbd {
+    margin-left: auto; padding: 2px 7px; border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, .08);
+    background: rgba(255, 255, 255, .05);
+    box-shadow: 0 1px 0 rgba(0, 0, 0, .3);
+    font-size: .6rem; color: var(--text-dim);
+}
+
+/* ── 4. Section titles with a fading hairline rule. ── */
+.nav-menu { padding: 8px 12px 12px; }
+.nav-section { margin-bottom: 8px; }
+.nav-section-title {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 12px 7px;
+    font-size: .58rem; letter-spacing: .16em;
+    color: #7d7695;
+}
+.nav-section-title::after {
+    content: '';
+    flex: 1; height: 1px;
+    background: linear-gradient(90deg, rgba(167, 139, 250, .22), transparent);
+}
+
+/* ── 5. Items: every icon sits in a rounded tile; hover lights the tile,
+         the active one burns violet under the sliding pill. ── */
+.nav-menu .nav-item {
+    gap: 11px; padding: 7px 10px; border-radius: 11px;
+    font-size: .855rem;
+    color: #a9a3bd;
+    transition: color .22s var(--ease-out), background-color .22s var(--ease-out);
+}
+.nav-menu .nav-item .nav-icon {
+    width: 28px; height: 28px; padding: 6px; border-radius: 9px;
+    background: rgba(255, 255, 255, .05);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .05);
+    opacity: .75;
+}
+.nav-menu .nav-item:hover { color: var(--text); background: rgba(255, 255, 255, .05); }
+.nav-menu .nav-item:not(.active):hover { transform: translateX(2px); }
+.nav-menu .nav-item:hover .nav-icon {
+    background: rgba(167, 139, 250, .16);
+    box-shadow: inset 0 0 0 1px rgba(167, 139, 250, .25);
+    opacity: 1; transform: none;
+}
+.nav-menu .nav-item:hover svg { transform: none; }
+.nav-menu .nav-item.active .nav-icon {
+    background: rgba(167, 139, 250, .2);
+    box-shadow: inset 0 0 0 1px rgba(167, 139, 250, .4), 0 0 14px rgba(139, 92, 246, .3);
+    opacity: 1; color: #d6c8ff;
+}
+.nav-menu .nav-item:active { transform: scale(.985); }
+.nav-menu .nav-item:focus-visible,
+.sidebar-search:focus-visible,
+.github-link:focus-visible {
+    outline: 2px solid rgba(167, 139, 250, .55);
+    outline-offset: 2px;
+}
+
+/* ── 6. The sliding pill gets a richer face (the color-wheel bar on its
+         left edge stays from v22). ── */
+.nav-menu > .hy-pill--nav {
+    border-radius: 12px;
+    background: linear-gradient(90deg, rgba(139, 92, 246, .26), rgba(139, 92, 246, .06));
+    box-shadow:
+        inset 0 0 0 1px rgba(167, 139, 250, .32),
+        inset 0 1px 0 rgba(255, 255, 255, .08),
+        0 6px 22px rgba(124, 58, 237, .25);
+}
+
+/* ── 7. Collapsed rail: centered icon tiles, glowing active. ── */
+.sidebar.collapsed .sidebar-header { padding: 16px 12px 8px; }
+.sidebar.collapsed .brand-mark { width: 42px; height: 42px; border-radius: 14px; }
+.sidebar.collapsed .nav-menu { padding: 8px 10px; }
+.sidebar.collapsed .nav-item { padding: 6px; justify-content: center; }
+.sidebar.collapsed .nav-item .nav-icon {
+    width: 34px; height: 34px; padding: 8px; border-radius: 11px;
+}
+.sidebar.collapsed .nav-item.active .nav-icon {
+    background: rgba(167, 139, 250, .24);
+    box-shadow: inset 0 0 0 1px rgba(167, 139, 250, .45), 0 0 18px rgba(139, 92, 246, .4);
+}
+.sidebar.collapsed .sidebar-search {
+    width: 42px; height: 42px; min-height: 42px; margin: 0 auto 4px;
+    padding: 0; justify-content: center; border-radius: 12px;
+}
+
+/* ── 8. Tooltips: glassier, violet-keyed. ── */
+.hy-tip {
+    padding: 7px 12px; border-radius: 10px;
+    font: 500 .76rem var(--font-ui); letter-spacing: .01em;
+    background: rgba(30, 26, 50, .97);
+    border: 1px solid rgba(167, 139, 250, .25);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, .55), 0 0 0 1px rgba(0, 0, 0, .4);
+}
+
+/* ── 9. Footer: the GitHub link becomes a quiet chip. ── */
+.sidebar-footer { padding: 10px 12px 12px; border-top: 1px solid rgba(255, 255, 255, .05); }
+.github-link {
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 11px; border-radius: 10px;
+    color: var(--text-dim); font-size: .78rem; font-weight: 500;
+    transition: color .2s var(--ease-out), background-color .2s var(--ease-out);
+}
+.github-link svg { opacity: .5; transition: opacity .2s var(--ease-out), transform .3s var(--ease-out); }
+.github-link:hover { color: var(--text); background: rgba(255, 255, 255, .05); }
+.github-link:hover svg { opacity: .85; transform: scale(1.08); }
+
+/* ── 10. ≤860px horizontal bar: tighter chips, titles stay quiet. ── */
+@media (max-width: 860px) {
+    .sidebar .nav-menu { padding: 6px 10px 10px; }
+    .sidebar .nav-item { padding: 5px 9px; }
+    .sidebar .nav-item .nav-icon { width: 24px; height: 24px; padding: 5px; }
+    .nav-section-title { padding: 8px 10px 4px; }
+    .nav-section-title::after { display: none; }
+    .sidebar-search { margin: 0 10px 6px; }
+}
+
+/* ═════════════════════════════════════════════════════════════════════
+   v24 — DASHBOARD: ONE RESOURCES CARD + PLACEMENT/SHAPE PASS
+         + JETBRAINS MONO NERD FONT
+═════════════════════════════════════════════════════════════════════ */
+
+/* ── 0. Fonts: JetBrainsMono Nerd Font first (if installed locally),
+         the existing JetBrains Mono webfont for letters, and a
+         symbols-only Nerd webfont as a PUA-glyph fallback so the page
+         never downloads ~1MB just to render a few icons. ───────────── */
+@font-face {
+    font-family: 'Nerd Symbols';
+    src: url('https://cdn.jsdelivr.net/npm/@azurity/pure-nerd-font@3.0.5/PureNerdFont.woff2') format('woff2');
+    font-display: swap;
+    /* Private Use Areas only: Nerd Font icons live here. */
+    unicode-range: U+E000-F8FF, U+F0000-FFFFD, U+100000-10FFFD;
+}
+:root {
+    --font-mono: 'JetBrainsMono Nerd Font', 'JetBrainsMono NF', 'JetBrainsMono Nerd Font Mono', 'JetBrains Mono', 'Nerd Symbols', ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+/* ── 1. Resources become ONE card: the four vitals turn into quiet
+         rows inside it, separated by hairlines, instead of four loose
+         windows each shouting for attention. ────────────────────────── */
+.fx-metrics {
+    grid-template-columns: 1fr;
+    gap: 0;
+    padding: 2px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--hy-round);
+    background-color: var(--bg-surface);
+    background-image: var(--glass);
+    box-shadow: var(--edge), 0 8px 24px rgba(0, 0, 0, .28);
+    overflow: hidden;
+}
+.fx-metrics .fx-metric {
+    --m-c: var(--hypr-cyan);
+    min-height: 0;
+    gap: 9px;
+    padding: 13px 2px;
+    border: 0;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+.fx-metrics .fx-metric:first-child { border-top: 0; }
+.fx-metrics .fx-metric::before { display: none; }         /* per-tile top bar → gone */
+.fx-metrics .fx-metric:hover {                            /* beats the v10 gradient-border hover */
+    border-color: var(--border);
+    background: color-mix(in srgb, var(--m-c) 5%, transparent);
+    box-shadow: none;
+}
+.fx-metrics .fx-metric-head { gap: 9px; }
+.fx-metrics .fx-metric-ico { width: 26px; height: 26px; border-radius: 8px; }
+.fx-metrics .fx-metric-name { font-size: .72rem; }
+.fx-metrics .fx-metric-main { gap: 5px; }
+.fx-metrics .fx-metric-main b {
+    font-size: clamp(1.2rem, 1.5vw, 1.5rem);
+    font-variant-numeric: tabular-nums;
+}
+.fx-metrics .fx-meter { height: 3px; }
+.fx-metrics .fx-spark { height: 24px; opacity: .85; }
+.fx-metrics .fx-metric-foot { font-size: .68rem; }
+
+/* ── 2. Placement ≥1180px: fixed vitals column, heads sitting right on
+         top of their own grids, launch pad as one scrolling strip. ──── */
+#page-dashboard > .hy-launch {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    gap: 8px;
+}
+#page-dashboard > .hy-launch::-webkit-scrollbar { display: none; }
+#page-dashboard > .hy-launch .hy-key { flex: 0 0 auto; }
+@media (min-width: 1180px) {
+    #page-dashboard.active { grid-template-columns: minmax(0, 1fr) 380px; column-gap: 32px; }
+    #page-dashboard > .page-header { margin-bottom: 10px; }
+    #page-dashboard > .hy-launch { margin: 0 0 10px; }
+    #page-dashboard > .fx-section-head,
+    #page-dashboard > .fx-section-head--system {
+        margin: 0 0 12px;
+        align-self: end;      /* head hugs the grid below it */
+    }
+}
+
+/* ── 3. Shape: unified radii + tighter service rows and ghost buttons. ── */
+#page-dashboard .fx-section-head { margin: 24px 0 12px; }
+#page-dashboard .fx-section-head--system { margin-top: 24px; }
+.status-grid { gap: 10px; }
+.status-grid > .status-box,
+.status-grid > .fx-health { padding: 12px 14px; border-radius: 12px; }
+.status-grid > .status-box .status-icon { width: 28px; height: 28px; border-radius: 8px; }
+.status-grid > .status-box .status-icon svg { width: 15px; height: 15px; }
+.status-grid > .status-box:not(.fx-health) .status-box-body { gap: 6px; }
+.status-grid > .status-box .btn-sm {
+    padding: 4px 10px;
+    font-size: .72rem;
+    border-radius: 8px;
+}
+
+/* ═════════════════════════════════════════════════════════════════════
+   v25 — PHONE (≤600px): compact app bar, one scroll-strip nav,
+         single-column services, touch sizing, notch safe areas
+═════════════════════════════════════════════════════════════════════ */
+@media (max-width: 600px) {
+
+    /* 1. Shell: tight padding + notch/home-indicator safe areas. */
+    body { overflow-x: hidden; }
+    .app-container {
+        padding: calc(6px + env(safe-area-inset-top, 0px)) 6px calc(8px + env(safe-area-inset-bottom, 0px));
+        gap: 6px;
+    }
+
+    /* 2. Header becomes a phone app bar: brand left, palette button right. */
+    .sidebar { border-radius: 16px; }
+    .sidebar .sidebar-header { flex: 1 1 auto; min-width: 0; padding: 10px 6px 8px 12px; }
+    .sidebar .brand-mark { width: 32px; height: 32px; border-radius: 10px; font-size: .95rem; }
+    .sidebar .brand-info h1 { font-size: .82rem; }
+    .sidebar .brand-info p { margin-top: 3px; padding: 1px 6px; font-size: .55rem; }
+    .sidebar .sidebar-toggle-btn { display: none; }      /* nothing to collapse on a phone */
+    .sidebar .sidebar-search {
+        flex: 0 0 34px;
+        width: 34px; height: 34px; min-height: 34px;
+        margin: 8px 10px 4px 0; padding: 0;
+        justify-content: center; border-radius: 10px;
+    }
+    .sidebar .sidebar-search .sidebar-search-label,
+    .sidebar .sidebar-search kbd { display: none; }
+    .sidebar .sidebar-search svg { margin: 0; }
+
+    /* 3. Nav: ONE scrollable chip strip instead of a wrapping block. */
+    .sidebar .nav-menu {
+        flex: 1 0 100%;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        gap: 6px;
+        padding: 4px 10px 10px;
+        scroll-padding-left: 10px;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+    }
+    .sidebar .nav-menu::-webkit-scrollbar { display: none; }
+    .sidebar .nav-section { display: contents; }
+    .sidebar .nav-item {
+        flex: 0 0 auto;
+        min-height: 44px;
+        padding: 6px 12px 6px 8px;
+        border-radius: 12px;
+        font-size: .8rem;
+    }
+    .sidebar .nav-item::after { display: none; }         /* workspace numbers off on the strip */
+    .sidebar .nav-item .nav-icon { width: 30px; height: 30px; padding: 7px; border-radius: 9px; }
+
+    /* 4. Main surface + page headers. */
+    .main-content {
+        padding: 14px 12px calc(28px + env(safe-area-inset-bottom, 0px));
+        border-radius: 16px;
+    }
+    .page-header h2 { font-size: 1.25rem; }
+    .page-header p { font-size: .78rem; }
+
+    /* 5. Waybar: dots only (no service text), clock tighter. */
+    .top-bar { padding: 6px 8px; }
+    .top-bar-svc .svc-txt { display: none; }
+    .top-bar-services { overflow-x: auto; scrollbar-width: none; }
+    .top-bar-services::-webkit-scrollbar { display: none; }
+    .waybar-clock { padding: 4px 8px; font-size: .72rem; }
+
+    /* 6. Dashboard: smaller launch chips, tighter vitals rows. */
+    #page-dashboard .hy-key { padding: 8px 10px; font-size: .76rem; }
+    #page-dashboard .hy-key kbd { font-size: .62rem; padding: 1px 5px; min-width: 16px; }
+    .fx-metrics { padding: 1px 12px; }
+    .fx-metrics .fx-metric { padding: 11px 0; gap: 8px; }
+    .fx-metrics .fx-metric-main b { font-size: clamp(1.05rem, 5.5vw, 1.3rem); }
+    .fx-metrics .fx-spark { height: 20px; }
+
+    /* 7. Services: single column; label + badge on one line, actions full-width. */
+    .status-grid { grid-template-columns: 1fr; }
+    .status-grid > .status-box:not(.fx-health) .status-box-header { margin: 0 0 6px; }
+    .status-grid > .status-box:not(.fx-health) .status-box-body {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin: 0;
+    }
+    .status-grid > .status-box:not(.fx-health) .status-box-actions { margin-top: 8px; padding-top: 8px; gap: 4px; }
+    .status-grid .btn-sm { min-height: 38px; font-size: .7rem; }
+
+    /* 8. Tables scroll comfortably; cells a touch tighter. */
+    .sites-table-wrap { -webkit-overflow-scrolling: touch; }
+    .sites-table th, .sites-table td { padding: 10px 12px; font-size: .74rem; }
+
+    /* 9. Forms: 16px inputs stop iOS from zoom-jumping on focus; roomy taps. */
+    .form-control, .fx-select-trigger { font-size: 16px; min-height: 44px; }
+    .btn { min-height: 44px; }
+
+    /* 10. Toasts + modals: full-width toasts above the home bar, scrollable modals. */
+    .toast-container { left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+    .toast { width: 100%; }
+    .modal-box {
+        max-width: calc(100vw - 24px);
+        max-height: min(86dvh, 86vh);
+        overflow-y: auto;
+    }
+
+    /* 11. Terminal: shorter so the form stays reachable without scrolling forever. */
+    #page-makesite .card-split-terminal .terminal,
+    #page-makesite .card-split-terminal .terminal.visible { height: 200px; min-height: 0; }
+}
+
+/* 12. Touch devices: sticky-hover artifacts never paint. */
+@media (hover: none) and (pointer: coarse) {
+    .status-box-clickable:hover { box-shadow: none; }
+    .fx-metric:hover { background: transparent; }
+    .hy-key:active { transform: scale(.97); }
+}
+
+/* ═════════════════════════════════════════════════════════════════════
+   v26 — MOBILE SIDEBAR FIX (≤860px)
+   The old `.sidebar.collapsed` rules (vertical column, 44px boxes,
+   dash section titles, absolutely-positioned brand) used to win here —
+   JS auto-collapsed the sidebar below 1024px. This block owns the bar
+   layout now, collapsed class or not.
+═════════════════════════════════════════════════════════════════════ */
+@media (max-width: 860px) {
+
+    /* Page scroll owns small screens: body's overflow propagates to the
+       viewport, so the desktop `body { overflow: hidden }` was freezing
+       the whole page (desktop scrolls inside .main-content instead). */
+    html { height: auto; }
+    body {
+        height: auto;
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
+    /* The shell no longer needs to be a scroll container itself. */
+    .app-container { height: auto; overflow: visible; }
+    .main-content { height: auto; overflow: visible; }
+
+    /* Bar shell: brand row, then one nav strip. */
+    .sidebar,
+    .sidebar.collapsed {
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        width: 100% !important;
+        height: auto;
+        max-height: none;
+    }
+    .sidebar-header,
+    .sidebar.collapsed .sidebar-header {
+        order: 0;
+        flex: 1 1 auto;
+        min-width: 0;
+        position: static;
+        padding: 10px 12px 6px;
+    }
+    .sidebar .brand-info,
+    .sidebar.collapsed .brand-info {
+        opacity: 1 !important;
+        position: static !important;
+        pointer-events: auto !important;
+        width: auto !important;
+    }
+    .sidebar-toggle-btn { display: none !important; }   /* nothing to collapse */
+
+    /* Palette stays reachable: icon-only button sharing the brand row. */
+    .sidebar .sidebar-search,
+    .sidebar.collapsed .sidebar-search {
+        display: flex !important;
+        order: 1;
+        flex: 0 0 34px;
+        width: 34px; height: 34px; min-height: 34px;
+        margin: 10px 12px 4px 0;
+        padding: 0;
+        justify-content: center;
+        border-radius: 10px;
+    }
+    .sidebar .sidebar-search .sidebar-search-label,
+    .sidebar .sidebar-search kbd,
+    .sidebar.collapsed .sidebar-search-label,
+    .sidebar.collapsed .sidebar-search kbd { display: none !important; }
+
+    /* Nav = ONE horizontally scrolling strip. */
+    .sidebar .nav-menu,
+    .sidebar.collapsed .nav-menu {
+        order: 2;
+        flex: 1 0 100%;
+        width: 100%;
+        height: auto;
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap;
+        align-items: center;
+        gap: 6px;
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+        padding: 2px 10px 10px;
+        scroll-padding-left: 10px;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+    }
+    .sidebar .nav-menu::-webkit-scrollbar { display: none; }
+    .sidebar .nav-section { display: contents; }
+    .sidebar .nav-section-title,
+    .sidebar.collapsed .nav-section-title { display: none !important; }   /* kills the dashes */
+
+    .sidebar .nav-item,
+    .sidebar.collapsed .nav-item {
+        flex: 0 0 auto;
+        width: auto !important;
+        height: auto !important;
+        min-height: 44px;
+        margin: 0 !important;
+        justify-content: flex-start !important;
+        padding: 6px 12px 6px 8px !important;
+        white-space: nowrap;
+        transform: none !important;
+    }
+    .sidebar .nav-label,
+    .sidebar.collapsed .nav-label {
+        display: inline !important;
+        opacity: 1 !important;
+        position: static !important;
+        pointer-events: auto !important;
+    }
+    .sidebar .nav-item .fx-key,
+    .sidebar.collapsed .nav-item .fx-key { display: none !important; }
+    .sidebar .nav-item::after { display: none !important; }              /* workspace numbers */
+    .sidebar .nav-item.active::before { display: none !important; }
+    .sidebar .nav-item .nav-icon,
+    .sidebar.collapsed .nav-item .nav-icon {
+        width: 28px !important;
+        height: 28px !important;
+        padding: 6px;
+        border-radius: 9px;
+        background: rgba(255, 255, 255, .05);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .05);
+    }
+    .sidebar.collapsed .nav-item.active .nav-icon {
+        background: rgba(167, 139, 250, .2);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, .4), 0 0 14px rgba(139, 92, 246, .3);
+    }
+    .sidebar .sidebar-footer,
+    .sidebar.collapsed .sidebar-footer { display: none !important; }
+}
+
+/* ═════════════════════════════════════════════════════════════════════
+   v50 — CONNECT FROM PHONE (dialog, badges, QR)
+═════════════════════════════════════════════════════════════════════ */
+
+.phone-box {
+    max-width: 440px;
+    padding: 20px 22px 18px;
+}
+.phone-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+.phone-title {
+    font: 700 .95rem var(--font-ui);
+    letter-spacing: -.01em;
+    color: var(--text);
+}
+.phone-sub {
+    margin-top: 3px;
+    font-size: .74rem;
+    color: var(--text-dim);
+    line-height: 1.45;
+}
+.phone-close {
+    flex: 0 0 auto;
+    width: 26px; height: 26px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    font-size: .8rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: color .15s ease-out, border-color .15s ease-out;
+}
+.phone-close:hover { color: var(--text); border-color: var(--border-light); }
+
+.phone-body { display: flex; flex-direction: column; gap: 14px; }
+.phone-qr-wrap { display: flex; align-items: center; gap: 16px; }
+.phone-qr-wrap canvas {
+    flex: 0 0 auto;
+    width: 132px; height: 132px;
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, .35), 0 0 0 1px rgba(255, 255, 255, .06);
+}
+.phone-qr-url {
+    font-size: .8rem;
+    color: var(--text);
+    word-break: break-all;
+    line-height: 1.4;
+}
+.phone-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.phone-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    text-align: left;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .03);
+    cursor: pointer;
+    transition: border-color .15s ease-out, background-color .15s ease-out;
+}
+.phone-row:hover { border-color: var(--border-light); background: rgba(255, 255, 255, .05); }
+.phone-row.picked {
+    border-color: rgba(167, 139, 250, .45);
+    background: rgba(139, 92, 246, .12);
+    box-shadow: 0 0 14px rgba(139, 92, 246, .15);
+}
+.phone-badge {
+    flex: 0 0 auto;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font: 600 .62rem/1.4 var(--font-ui);
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+.phone-badge--lan       { color: var(--accent2); background: rgba(0, 245, 212, .09); border: 1px solid rgba(0, 245, 212, .25); }
+.phone-badge--tailscale { color: #c4b5fd; background: rgba(139, 92, 246, .12); border: 1px solid rgba(167, 139, 250, .3); }
+.phone-badge--wireguard { color: #a6e3a1; background: rgba(166, 227, 161, .09); border: 1px solid rgba(166, 227, 161, .25); }
+.phone-badge--zerotier  { color: #f5c2e7; background: rgba(245, 194, 231, .09); border: 1px solid rgba(245, 194, 231, .25); }
+.phone-row-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.phone-url {
+    font-size: .78rem;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.phone-meta {
+    font-size: .66rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.phone-copy {
+    flex: 0 0 auto;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font: 500 .68rem var(--font-ui);
+    color: var(--text-muted);
+    transition: color .15s ease-out, border-color .15s ease-out;
+}
+.phone-row:hover .phone-copy { color: var(--accent2); border-color: rgba(0, 245, 212, .3); }
+.phone-dns { font-size: .68rem; color: var(--text-dim); padding: 2px 4px 0; }
+.phone-note { font-size: .68rem; color: #f9e2af; }
+.phone-loading { padding: 14px 4px; font-size: .76rem; color: var(--text-dim); }
+
+/* Dashboard header chip */
+.hdr-phone {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 13px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .03);
+    color: var(--text-muted);
+    font: 500 .76rem var(--font-ui);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color .18s ease-out, border-color .18s ease-out, background-color .18s ease-out, box-shadow .2s ease-out;
+}
+.hdr-phone:hover {
+    color: var(--text);
+    border-color: rgba(167, 139, 250, .35);
+    background: rgba(139, 92, 246, .1);
+    box-shadow: 0 0 16px rgba(139, 92, 246, .18);
+}
+.hdr-phone svg { color: var(--accent); }
+@media (max-width: 1180px) {
+    .dashboard-header { flex-wrap: wrap; row-gap: 8px; }
+}
+@media (max-width: 600px) {
+    .phone-box { max-width: calc(100vw - 24px); padding: 16px 14px 14px; }
+    .phone-qr-wrap { flex-direction: column; align-items: flex-start; gap: 10px; }
+    .hdr-phone { width: 100%; justify-content: center; }
+}
+
+/* ═════════════════════════════════════════════════════════════════════
+   v51 — WIP-PHONE-ACCESS: "connect from phone" is paused, not yet
+   phone-verified. Small WIP badge on entry points + banner in dialog.
+═════════════════════════════════════════════════════════════════════ */
+
+.wip-mini {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: rgba(250, 179, 135, .12);
+    border: 1px solid rgba(250, 179, 135, .38);
+    color: #fab387;
+    font: 600 .56rem/1.5 var(--font-ui);
+    letter-spacing: .07em;
+    vertical-align: 1px;
+}
+#phone-access-btn .wip-mini { margin-left: -2px; }
+.phone-wip {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    padding: 9px 11px;
+    border: 1px solid rgba(250, 179, 135, .32);
+    border-radius: 10px;
+    background: rgba(250, 179, 135, .07);
+    font-size: .72rem;
+    line-height: 1.5;
+    color: #fab387;
+}
+.phone-wip .wip-mini { flex: 0 0 auto; margin-top: 1px; }
+.phone-wip strong { color: #f5a97f; font-weight: 700; }
+
+/* ═════════════════════════════════════════════════════════════════════
+   v52 — SECTION LABELS · TOP BAR FIX · SITES TOOLBAR · SHARED WORKSPACE LAYOUT
+═════════════════════════════════════════════════════════════════════ */
+/* Zervermanager — revamp.css (additive layer; load AFTER style.css) */
+@keyframes hyIn { from { opacity: 0; transform: translate3d(0, 10px, 0); } to { opacity: 1; transform: none; } }
+
+/* ── Whole-panel finish: faint grain so large dark areas don't look flat. ── */
+body::after {
+    content: ""; position: fixed; inset: 0; z-index: 2147483000; pointer-events: none; opacity: .035;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* ── Section label above every page title. ── */
+.hy-eyebrow { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; font: 500 .68rem var(--font-mono); letter-spacing: .16em; text-transform: uppercase; color: var(--accent2); }
+.hy-eyebrow::before { content: ""; width: 18px; height: 2px; border-radius: 2px; background: linear-gradient(90deg, #00f5d4, #8b5cf6); }
+
+/* ── Top bar (it is a 3-column grid): left/right size to content, the centre takes what is left and clips.
+      Before: 1fr · auto · 1fr let the service names overlap the breadcrumb. ── */
+@media (min-width: 861px) {
+    .top-bar.waybar { grid-template-columns: auto minmax(0, 1fr) auto; }
+    .top-bar.waybar .waybar-center { flex-wrap: nowrap; overflow: hidden; }
+    .top-bar-svc { flex: 0 0 auto; }
+    #page-dashboard .dashboard-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+}
+#hy-motion-btn span { display: none; }
+#hy-motion-btn { padding-inline: 10px; }
+@media (min-width: 861px) and (max-width: 1500px) {          /* tighter: service dots only, names on hover title */
+    .top-bar-svc { font-size: 0 !important; gap: 0; padding: 4px 6px; }
+    .top-bar-svc .svc-pip { width: 8px; height: 8px; }
+}
+@media (min-width: 861px) and (max-width: 1100px) { .top-bar.waybar .waybar-center { display: none; } }
+
+/* ── Dashboard: one reload action while offline. ── */
+.main-content:has(#offline-banner:not(.hidden)) .fx-health .btn { display: none; }
+
+/* ── Sites: toolbar + calmer table. ── */
+#page-managesites > .card { padding: 0; overflow: hidden; }
+.hy-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.hy-toolbar[hidden] { display: none; }
+.hy-search { position: relative; flex: 1 1 240px; max-width: 380px; }
+.hy-search svg { position: absolute; left: 13px; top: 50%; width: 16px; height: 16px; transform: translateY(-50%); color: var(--text-dim); pointer-events: none; transition: color .2s var(--ease-out); }
+.hy-search input { width: 100%; height: 40px; padding: 0 14px 0 38px; border-radius: 12px; border: 1px solid var(--border); background: rgba(0,0,0,.32); color: var(--text); font: 400 .86rem var(--font-ui); transition: border-color .2s var(--ease-out), box-shadow .2s var(--ease-out); }
+.hy-search input:focus { outline: none; border-color: var(--accent2); box-shadow: 0 0 0 3px rgba(0,245,212,.14); }
+.hy-search:focus-within svg { color: var(--accent2); }
+.hy-seg { display: inline-flex; gap: 4px; padding: 4px; border-radius: 12px; background: rgba(0,0,0,.28); border: 1px solid var(--border); }
+.hy-seg button { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 0; border-radius: 9px; background: transparent; color: var(--text-muted); font: 500 .8rem var(--font-ui); cursor: pointer; transition: background-color .22s var(--ease-out), color .22s var(--ease-out), box-shadow .22s var(--ease-out); }
+.hy-seg button b { font: 500 .68rem var(--font-mono); color: var(--text-dim); background: rgba(255,255,255,.06); padding: 1px 7px; border-radius: 999px; }
+.hy-seg button:hover { color: var(--text); }
+.hy-seg button.on { color: #fff; background: linear-gradient(135deg, rgba(139,92,246,.30), rgba(0,245,212,.10)); box-shadow: inset 0 0 0 1px rgba(167,139,250,.4); }
+.sites-table { border-collapse: separate; border-spacing: 0; width: 100%; }
+.sites-table td { padding: 14px 20px; vertical-align: middle; border-top: 1px solid rgba(255,255,255,.045); }
+.sites-table thead th { border-bottom: 1px solid var(--border); }
+.sites-table tbody tr { transition: background-color .2s var(--ease-out); }
+.sites-table tbody tr:hover { background: rgba(139,92,246,.06); }
+.sites-table tbody tr.hy-hide { display: none; }
+.sites-table tbody tr:not(.skeleton-row):not(.hy-miss) { animation: hyIn .5s var(--ease-out) both; }
+.sites-table tbody tr:nth-child(2) { animation-delay: .04s; } .sites-table tbody tr:nth-child(3) { animation-delay: .08s; }
+.sites-table tbody tr:nth-child(4) { animation-delay: .12s; } .sites-table tbody tr:nth-child(n+5) { animation-delay: .16s; }
+.site-domain-link { font: 500 .88rem var(--font-mono); color: var(--text); text-decoration: none; }
+.site-domain-link:hover { color: var(--accent2); }
+.hy-av { display: inline-grid; place-items: center; width: 30px; height: 30px; margin-right: 12px; border-radius: 10px; vertical-align: middle; font: 600 .8rem var(--font-ui); color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border: 1px solid color-mix(in srgb, var(--c) 32%, transparent); }
+.hy-copy { width: 26px; height: 26px; margin-left: 8px; vertical-align: middle; display: inline-grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-dim); opacity: 0; cursor: pointer; transition: opacity .2s var(--ease-out), color .2s, background-color .2s; }
+.hy-copy svg { width: 14px; height: 14px; }
+tr:hover .hy-copy, .hy-copy:focus-visible { opacity: 1; }
+.hy-copy:hover { color: var(--accent2); background: rgba(0,245,212,.08); }
+.hy-copy.done { color: var(--success); opacity: 1; }
+.status-text { display: inline-flex; align-items: center; gap: 8px; font: 500 .78rem var(--font-ui); }
+.status-text .status-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+.status-text.active { color: var(--success); } .status-text.inactive { color: var(--text-dim); }
+.status-text.inactive .status-dot { box-shadow: none; }
+.hy-none { padding: 40px 16px; text-align: center; color: var(--text-dim); font-size: .85rem; }
+
+/* ── Server control / Install / MariaDB / DNS / Network: same two-pane workspace as Create site. ── */
+@media (min-width: 1000px) {
+    .page-section:not(#page-makesite):not(#page-dashboard) .card-split { grid-template-columns: minmax(0, 1fr) minmax(320px, 1fr); column-gap: 28px; }
+    .page-section:not(#page-makesite):not(#page-dashboard) .card-split-terminal { position: sticky; top: 96px; align-self: start; }
+    .page-section:not(#page-makesite):not(#page-dashboard) .card-split-terminal .terminal { height: clamp(260px, calc(100 * var(--vh1) - 520px), 520px) !important; }
+}
+.page-section:not(#page-makesite) .card-split-terminal .terminal-label { padding: 8px 12px; background: rgba(255,255,255,.03); border: 1px solid var(--border); border-bottom: 0; border-radius: 12px 12px 0 0; margin: 0; }
+.page-section:not(#page-makesite) .card-split-terminal .terminal { border-radius: 0 0 12px 12px; margin-top: 0; }
+.page-section:not(#page-makesite) .form-group > label { color: var(--text-muted); font-weight: 500; }
+.page-section:not(#page-makesite) .tab-pane form > .btn-primary { margin-top: 8px; }
+
+html[data-motion="reduce"] .sites-table tbody tr { animation: none; }
+
+/* ═════════════════════════════════════════════════════════════════════
+   v53 — DASHBOARD REWORK (phase 1)
+   Hero · vitals row · two-column services · calm "no data" state · quieter top bar
+═════════════════════════════════════════════════════════════════════ */
+
+/* ── Hero: the page header becomes the focal card. ── */
+#page-dashboard .dashboard-header {
+    align-items: center; margin-bottom: 14px; padding: 26px 30px;
+    border: 1px solid rgba(167, 139, 250, .2); border-radius: 20px;
+    background:
+        radial-gradient(520px 220px at 100% 0%, rgba(139, 92, 246, .22), transparent 70%),
+        radial-gradient(380px 200px at 0% 100%, rgba(0, 245, 212, .08), transparent 70%),
+        var(--glass), var(--bg-surface);
+    box-shadow: var(--edge), 0 18px 50px rgba(0, 0, 0, .35);
+}
+#page-dashboard .dashboard-header h2 { font-size: clamp(2rem, 2.8vw, 2.6rem); }
+#page-dashboard .dashboard-header p { margin-top: 8px; }
+.hdr-phone { border-radius: 12px; padding: 9px 15px; }
+
+/* ── One row of shortcuts, quiet. ── */
+#page-dashboard > .hy-launch { margin: 0 0 4px; }
+
+/* ── Layout ≥1000px: single column, strict order: hero → shortcuts → vitals → services. ── */
+@media (min-width: 1000px) {
+    #page-dashboard.active { display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 0; }
+    #page-dashboard.active > .page-header                    { grid-column: 1; grid-row: 1; }
+    #page-dashboard.active > .hy-launch                      { grid-column: 1; grid-row: 2; }
+    #page-dashboard.active > .fx-section-head--system        { grid-column: 1; grid-row: 3; margin: 28px 0 14px; align-self: auto; }
+    #page-dashboard.active > .fx-metrics                     { grid-column: 1; grid-row: 4; }
+    #page-dashboard.active > .fx-section-head:not(.fx-section-head--system) { grid-column: 1; grid-row: 5; margin: 30px 0 14px; align-self: auto; }
+    #page-dashboard.active > .status-grid                    { grid-column: 1; grid-row: 6; }
+
+    /* Vitals: four tiles across (they were one tall card). */
+    #page-dashboard.active > .fx-metrics {
+        display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px;
+        padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; overflow: visible;
+    }
+    #page-dashboard.active > .fx-metrics .fx-metric {
+        position: relative; overflow: hidden; gap: 12px; padding: 18px 20px 16px;
+        border: 1px solid var(--border); border-radius: 16px;
+        background-color: var(--bg-surface); background-image: var(--glass);
+        box-shadow: var(--edge), 0 10px 28px rgba(0, 0, 0, .28);
+        transition: border-color .25s var(--ease-out), transform .25s var(--ease-out);
+    }
+    #page-dashboard.active > .fx-metrics .fx-metric::before {
+        display: block; content: ""; position: absolute; inset: 0 0 auto 0; height: 2px; opacity: .7;
+        background: linear-gradient(90deg, var(--m-c), transparent 80%);
+    }
+    #page-dashboard.active > .fx-metrics .fx-metric:hover { border-color: color-mix(in srgb, var(--m-c) 40%, var(--border)); background-color: var(--bg-surface); transform: translateY(-2px); }
+    #page-dashboard.active > .fx-metrics .fx-metric-main b { font-size: clamp(1.9rem, 2.4vw, 2.4rem); letter-spacing: -.03em; }
+    #page-dashboard.active > .fx-metrics .fx-spark { height: 34px; }
+
+    /* Services: two columns; the health tile becomes a slim full-width status bar. */
+    #page-dashboard.active > .status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .status-grid > .fx-health {
+        grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 20px;
+        padding: 16px 22px; border-radius: 16px;
+        background-image: linear-gradient(100deg, rgba(139, 92, 246, .10), rgba(0, 245, 212, .03) 60%, transparent), var(--glass);
+    }
+    .fx-health .fx-health-top { display: flex; align-items: center; gap: 18px; min-width: 0; }
+    .fx-health .fx-reload { width: auto; margin: 0 0 0 auto; padding: 9px 16px; border-radius: 10px; flex: 0 0 auto; }
+}
+
+/* ── Disconnected = unknown, not "Offline": calm grey instead of seven red rows. ── */
+.main-content:has(#offline-banner:not(.hidden)) .status-grid > .status-box:not(.fx-health) {
+    border-color: var(--border); background-image: var(--glass); box-shadow: var(--edge);
+}
+.main-content:has(#offline-banner:not(.hidden)) .status-grid > .status-box:not(.fx-health) .badge {
+    font-size: 0; background: rgba(255, 255, 255, .04); border-color: var(--border);
+}
+.main-content:has(#offline-banner:not(.hidden)) .status-grid > .status-box:not(.fx-health) .badge::after {
+    content: "No data"; font: 500 .72rem var(--font-ui); color: var(--text-dim);
+}
+.main-content:has(#offline-banner:not(.hidden)) .status-grid > .status-box .status-icon { color: var(--text-dim) !important; animation: none !important; }
+.main-content:has(#offline-banner:not(.hidden)) .fx-metrics .fx-metric { opacity: .5; }
+
+/* ── Offline banner: one slim line instead of a loud block. ── */
+#offline-banner {
+    padding: 9px 16px; border-radius: 12px; font-size: .8rem; box-shadow: none;
+    background: rgba(243, 139, 168, .06); border: 1px solid rgba(243, 139, 168, .22);
+}
+#offline-banner::before, #offline-banner::after { display: none; }
+
+/* ── Top bar: fewer shouting colours. Rose "Simple view" → neutral; Phone → icon + amber dot. ── */
+#goldfish-btn { color: var(--text-muted) !important; background: transparent !important; border-color: var(--border) !important; }
+#goldfish-btn:hover { color: var(--text) !important; }
+#phone-access-btn { position: relative; padding-inline: 10px; }
+#phone-access-btn span { display: none; }
+#phone-access-btn::after { content: ""; position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: #fab387; box-shadow: 0 0 6px rgba(250, 179, 135, .7); }

@@ -278,7 +278,8 @@ function switchPage(pageId) {
         setTimeout(() => {
             old.classList.remove('leaving');
             old.style.animation = '';
-        }, 260);
+            old.style.top = '';
+        }, 400);
     } else {
         document.querySelectorAll('.page-section').forEach(p => {
             if (p !== target) { p.classList.remove('active', 'exiting', 'leaving'); p.style.animation = ''; }
@@ -292,9 +293,21 @@ function switchPage(pageId) {
     target.classList.add('active');
     if (navItem) navItem.classList.add('active');
 
-    // Start the new page from the top so the crossfade lines up
+    // Start the new page from the top so the crossfade lines up. The outgoing
+    // page is absolutely positioned, so pin it to the same y where in-flow
+    // pages begin (below the top bar/banner) — otherwise its heading would
+    // flash in the empty strip above the top bar while it fades out.
     const main = document.querySelector('.main-content');
-    if (current && !reduced && main && main.scrollTop) main.scrollTop = 0;
+    if (current && !reduced && main) {
+        if (current.classList.contains('leaving') && current.style.top === '') {
+            current.style.top = (target.offsetTop || 0) + 'px';
+        }
+        if (main.scrollTop) {
+            // 'instant': scrollTop= alone would honor the container's smooth
+            // scroll-behavior and glide while the crossfade is already running.
+            main.scrollTo({ top: 0, behavior: 'instant' });
+        }
+    }
 
     // Update breadcrumb
     updateBreadcrumb(pageTitle);
@@ -311,6 +324,7 @@ function switchPage(pageId) {
 }
 
 // Breadcrumb
+let _crumbSwapTimer = 0;
 function updateBreadcrumb(pageTitle, tabTitle) {
     const crumb = document.getElementById('breadcrumb-trail');
     if (!crumb) return;
@@ -319,7 +333,16 @@ function updateBreadcrumb(pageTitle, tabTitle) {
         html += '<svg class="breadcrumb-sep" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>';
         html += '<span class="breadcrumb-item active">' + tabTitle + '</span>';
     }
-    crumb.innerHTML = html;
+    // The old title slides out first, then the new one fades in (fxCrumb).
+    const swap = () => {
+        clearTimeout(_crumbSwapTimer);
+        crumb.innerHTML = html;
+        crumb.classList.remove('is-out');
+    };
+    if (document.documentElement.dataset.motion === 'reduce') { swap(); return; }
+    clearTimeout(_crumbSwapTimer);
+    crumb.classList.add('is-out');
+    _crumbSwapTimer = setTimeout(swap, 140);
 }
 
 // Tab Navigation inside Pages
@@ -1411,7 +1434,7 @@ document.addEventListener("DOMContentLoaded", () => {
         let collapsed = false;
         if (savedState === 'true') {
             collapsed = true;
-        } else if (savedState !== 'false' && window.innerWidth < 1024) {
+        } else if (savedState !== 'false' && window.innerWidth < 1024 && window.innerWidth >= 861) {
             collapsed = true;
         }
         if (collapsed) {
@@ -1435,7 +1458,7 @@ document.addEventListener("DOMContentLoaded", () => {
         syncSidebarUI();
 
         window.addEventListener('resize', () => {
-            if (window.innerWidth < 1024 && !localStorage.getItem('sidebar-collapsed')) {
+            if (window.innerWidth < 1024 && window.innerWidth >= 861 && !localStorage.getItem('sidebar-collapsed')) {
                 sidebar.classList.add('collapsed');
                 sidebar.style.overflow = 'hidden';
                 sidebar.addEventListener('transitionend', function onResizeEnd(e) {
@@ -1719,3 +1742,162 @@ function closeVideo() {
     video.pause();
     video.currentTime = 0;
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+//  WIP-PHONE-ACCESS: the "Connect from phone" feature is WORK IN PROGRESS
+//  and does NOT yet work from actual phones (paused 2026-11-13: the phone's
+//  packets never reach the server — router/AP-side block; debugging on hold
+//  at the user's request). The dialog still renders + shows a WIP banner;
+//  the backend returns "wip": true from /api/access.
+//  Search "WIP-PHONE-ACCESS" (also in zervermanager.py, index.html,
+//  style.css) to find every touchpoint when resuming.
+// ═══════════════════════════════════════════════════════════════════════
+//  Connect from phone — /api/access + QR (qr.js, MIT, no dependencies)
+//  Re-scans every time the dialog opens (cheap: one interface walk).
+// ═══════════════════════════════════════════════════════════════════════
+
+let _phoneData = null;
+
+// WIP-PHONE-ACCESS: dialog is functional but the feature itself is not
+// phone-verified — a static WIP banner (index.html) is always visible.
+async function openPhoneAccess() {
+    const ov = document.getElementById('phone-overlay');
+    if (!ov) return;
+    ov.classList.add('open');
+    const rows = document.getElementById('phone-rows');
+    rows.textContent = '';
+    const load = document.createElement('div');
+    load.className = 'phone-loading';
+    load.textContent = 'Scanning for ways in…';
+    rows.appendChild(load);
+    document.getElementById('phone-note').textContent = '';
+
+    let data = null;
+    try {
+        const res = await fetch('/api/access', { cache: 'no-store' });
+        if (res.ok) data = await res.json();
+    } catch (e) { /* dev server without the Python backend */ }
+
+    if (!data || !Array.isArray(data.hosts) || !data.hosts.length) {
+        data = {
+            hosts: [{ ip: location.hostname, iface: 'this host', kind: 'lan',
+                      url: location.origin, note: 'live scan needs the Zervermanager server' }],
+            port: location.port || 80, magic_dns: ''
+        };
+        document.getElementById('phone-note').textContent =
+            'Dev preview — the live scan runs only under the Zervermanager server itself.';
+    }
+    _phoneData = data;
+    _renderPhone(data, 0);
+}
+
+function _renderPhone(data, index) {
+    const rows = document.getElementById('phone-rows');
+    rows.textContent = '';
+    const pick = data.hosts[index] || data.hosts[0];
+
+    data.hosts.forEach((h, i) => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'phone-row' + (h === pick ? ' picked' : '');
+        row.onclick = () => _renderPhone(data, i);
+
+        const badge = document.createElement('span');
+        badge.className = 'phone-badge phone-badge--' + h.kind;
+        badge.textContent = h.kind;
+
+        const main = document.createElement('span');
+        main.className = 'phone-row-main';
+        const url = document.createElement('span');
+        url.className = 'phone-url mono';
+        url.textContent = h.url;
+        const meta = document.createElement('span');
+        meta.className = 'phone-meta';
+        meta.textContent = (h.iface && h.iface !== '?' ? h.iface + ' Â· ' : '') + (h.note || '');
+        main.appendChild(url);
+        main.appendChild(meta);
+
+        const copy = document.createElement('span');
+        copy.className = 'phone-copy';
+        copy.textContent = 'Copy';
+        copy.onclick = (e) => { e.stopPropagation(); phoneCopy(h.url, copy); };
+
+        row.appendChild(badge);
+        row.appendChild(main);
+        row.appendChild(copy);
+        rows.appendChild(row);
+    });
+
+    if (data.magic_dns) {
+        const dns = document.createElement('div');
+        dns.className = 'phone-dns mono';
+        dns.textContent = 'MagicDNS: http://' + data.magic_dns +
+            (data.port && data.port !== 80 ? ':' + data.port : '');
+        rows.appendChild(dns);
+    }
+
+    _drawPhoneQr(pick.url);
+}
+
+function _drawPhoneQr(url) {
+    const cv = document.getElementById('phone-qr');
+    if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const size = cv.width;
+    try {
+        const qr = qrcode(0, 'M');
+        qr.addData(url);
+        qr.make();
+        const n = qr.getModuleCount(), quiet = 3;
+        const cell = Math.max(1, Math.floor(size / (n + quiet * 2)));
+        const off = Math.floor((size - cell * n) / 2);
+        ctx.fillStyle = '#f2f0f8';
+        ctx.fillRect(0, 0, size, size);
+        ctx.fillStyle = '#0b0913';
+        for (let y = 0; y < n; y++) {
+            for (let x = 0; x < n; x++) {
+                if (qr.isDark(y, x)) ctx.fillRect(off + x * cell, off + y * cell, cell, cell);
+            }
+        }
+        document.getElementById('phone-qr-url').textContent = url;
+    } catch (e) {
+        ctx.fillStyle = '#f2f0f8';
+        ctx.fillRect(0, 0, size, size);
+        ctx.fillStyle = '#f38ba8';
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('QR failed for this URL', size / 2, size / 2);
+    }
+}
+
+function phoneCopy(url, btn) {
+    const done = () => {
+        if (!btn) return;
+        const old = btn.textContent;
+        btn.textContent = 'Copied';
+        setTimeout(() => { btn.textContent = old; }, 1200);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(done, () => _phoneCopyFallback(url, done));
+    } else {
+        _phoneCopyFallback(url, done);
+    }
+}
+
+function _phoneCopyFallback(url, done) {
+    const ta = document.createElement('textarea');
+    ta.value = url;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+    document.body.removeChild(ta);
+    done();
+}
+
+function closePhoneAccess() {
+    const ov = document.getElementById('phone-overlay');
+    if (ov) ov.classList.remove('open');
+}
+
