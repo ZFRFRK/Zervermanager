@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations   # PEP 604/585 backport: allows X | Y and list[X] on Python 3.7-3.9
 
-SCRIPT_VERSION = "1.3.27"
+SCRIPT_VERSION = "1.3.28"
 
 import os
 import re
@@ -11004,6 +11004,251 @@ class MockStdin:
         raise io.UnsupportedOperation("MockStdin has no fileno")
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Web terminal — a real shell (PTY) behind the Web UI.
+#  One shared shell per server process; its output is buffered, so opening the
+#  Terminal page (or reloading it) reconnects to the SAME session with the
+#  recent history still visible.
+#
+#  Endpoints
+#    GET  /api/terminal/stream?after=N   long-poll: output after buffer offset N
+#                                        (base64), waits up to 12s for new data
+#    GET  /api/terminal/state            is a shell alive? (+ host info)
+#    POST /api/terminal/input            {"data": "..."} keystrokes / pasted text
+#    POST /api/terminal/size             {"cols": n, "rows": n}  (SIGWINCH via ioctl)
+#    POST /api/terminal/start            spawn (or re-spawn) the shell
+#    POST /api/terminal/stop             kill the shell
+#
+#  Security: this is a FULL shell for anyone who can reach the Web UI. It is
+#  guarded like every other /api route (same origin/host checks) and safe mode
+#  blocks all write routes — but the Web UI itself currently has no login.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import base64
+
+_ZM_TERM_MAX_BUF = 300_000          # bytes of scrollback kept for reconnects
+_ZM_TERM_POLL_WAIT = 12.0           # seconds a /stream request may park
+
+
+class _TermSession:
+    """One long-lived PTY shell shared by all Web UI clients."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.cond = threading.Condition(self.lock)
+        self.proc = None
+        self.fd = None
+        self.buf = bytearray()
+        self.alive = False
+        self.cols = 80
+        self.rows = 24
+        self.spawn_error = ""
+
+    # ── lifecycle ──────────────────────────────────────────────────────────
+    def start(self):
+        with self.lock:
+            if self.alive:
+                return True
+            try:
+                import pty
+            except Exception as exc:
+                self.spawn_error = f"terminal needs a Unix host ({exc})"
+                return False
+            shell = os.environ.get("SHELL") or ""
+            if not shell or not shutil.which(shell):
+                shell = shutil.which("bash") or shutil.which("sh") or "/bin/sh"
+            # reap a previous zombie, if any
+            if self.proc:
+                try:
+                    os.waitpid(self.proc, os.WNOHANG)
+                except Exception:
+                    pass
+            pid, fd = pty.fork()
+            if pid == 0:                       # child: login shell on the pty
+                try:
+                    os.environ["TERM"] = "xterm-256color"
+                    os.execv(shell, [shell, "--login"])
+                except Exception:
+                    os._exit(1)
+            self.proc = pid
+            self.fd = fd
+            self.alive = True
+            self.spawn_error = ""
+            self.buf.clear()
+            self._apply_size_locked()
+            threading.Thread(target=self._reader, daemon=True).start()
+            return True
+
+    def _apply_size_locked(self):
+        if self.fd is None:
+            return
+        try:
+            import struct, termios, fcntl as _fcntl
+            winsize = struct.pack("HHHH", self.rows, self.cols, 0, 0)
+            _fcntl.ioctl(self.fd, termios.TIOCSWINSZ, winsize)
+        except Exception:
+            pass
+
+    def resize(self, cols, rows):
+        with self.lock:
+            try:
+                self.cols = max(20, min(500, int(cols or self.cols)))
+                self.rows = max(5, min(200, int(rows or self.rows)))
+            except Exception:
+                return
+            self._apply_size_locked()
+
+    def _reader(self):
+        """Drain the pty into the shared buffer until the shell exits."""
+        try:
+            while True:
+                try:
+                    chunk = os.read(self.fd, 65536)
+                except OSError:
+                    chunk = b""
+                with self.cond:
+                    if not chunk:
+                        self.alive = False
+                        try:
+                            os.close(self.fd)
+                        except Exception:
+                            pass
+                        self.fd = None
+                        self.cond.notify_all()
+                        return
+                    self.buf.extend(chunk)
+                    if len(self.buf) > _ZM_TERM_MAX_BUF:
+                        del self.buf[: len(self.buf) - _ZM_TERM_MAX_BUF]
+                    self.cond.notify_all()
+        except Exception:
+            with self.cond:
+                self.alive = False
+                self.cond.notify_all()
+
+    def read_new(self, after: int, timeout: float):
+        """Wait up to `timeout` for output past buffer offset `after`."""
+        with self.cond:
+            if after > len(self.buf):          # buffer was trimmed past cursor: resync
+                after = len(self.buf)
+            if after >= len(self.buf) and timeout > 0 and self.alive:
+                self.cond.wait(timeout)
+            data = bytes(self.buf[after:])
+            return data, len(self.buf), self.alive
+
+    def write(self, data: str):
+        if not data:
+            return
+        with self.lock:
+            fd = self.fd if self.alive else None
+        if fd is None:
+            if not self.start():
+                return
+            with self.lock:
+                fd = self.fd
+        try:
+            os.write(fd, data.encode("utf-8"))
+        except OSError:
+            pass
+
+    def stop(self):
+        with self.lock:
+            pid, fd = self.proc, self.fd
+            self.proc = None
+        if pid:
+            try:
+                os.kill(pid, signal.SIGHUP)
+            except Exception:
+                pass
+        if fd is not None:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+
+
+_ZM_TERM = _TermSession()
+
+
+def _handle_terminal_get(handler, parsed) -> bool:
+    """GET routes for the web terminal (streaming, so it bypasses handle_api_get)."""
+    if parsed.path == "/api/terminal/state":
+        _web_json(handler, {
+            "ok": True,
+            "alive": _ZM_TERM.alive,
+            "error": _ZM_TERM.spawn_error,
+            "cols": _ZM_TERM.cols,
+            "rows": _ZM_TERM.rows,
+        })
+        return True
+
+    if parsed.path == "/api/terminal/stream":
+        query = urllib.parse.parse_qs(parsed.query)
+        try:
+            after = int((query.get("after") or ["0"])[0] or 0)
+        except ValueError:
+            after = 0
+        wait = _ZM_TERM_POLL_WAIT if after >= 0 else 0.0
+        try:
+            data, nxt, alive = _ZM_TERM.read_new(after, wait)
+        except Exception:
+            data, nxt, alive = b"", after, _ZM_TERM.alive
+        payload = {
+            "ok": True,
+            "data": base64.b64encode(data).decode("ascii"),
+            "next": nxt,
+            "alive": alive,
+        }
+        body = json.dumps(payload).encode("utf-8")
+        handler.send_response(200)
+        handler.send_header("Content-Type", "application/json")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.send_header("Cache-Control", "no-store")
+        handler.end_headers()
+        handler.wfile.write(body)
+        return True
+
+    return False
+
+
+def _handle_terminal_post(handler, parsed) -> None:
+    body = {}
+    try:
+        body = _web_read_json(handler)
+    except Exception:
+        body = {}
+    path = parsed.path
+
+    if path == "/api/terminal/input":
+        data = str(body.get("data", ""))
+        if not _ZM_TERM.alive and not _ZM_TERM.start():
+            _web_json(handler, {"ok": False, "error": _ZM_TERM.spawn_error or "shell not running"}, 503)
+            return
+        _ZM_TERM.write(data)
+        _web_json(handler, {"ok": True})
+        return
+
+    if path == "/api/terminal/size":
+        _ZM_TERM.resize(body.get("cols"), body.get("rows"))
+        _web_json(handler, {"ok": True})
+        return
+
+    if path == "/api/terminal/start":
+        started = _ZM_TERM.start()
+        _web_json(handler, {
+            "ok": started,
+            "alive": _ZM_TERM.alive,
+            "error": "" if started else (_ZM_TERM.spawn_error or "could not start the shell"),
+        })
+        return
+
+    if path == "/api/terminal/stop":
+        _ZM_TERM.stop()
+        _web_json(handler, {"ok": True})
+        return
+
+    _web_json(handler, {"ok": False, "error": "unknown terminal endpoint"}, 404)
+
+
 class WebUIHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         # Serve static files from the web_config directory
@@ -11024,6 +11269,11 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
             # ── Phase 2–6: New API endpoints ───────────────────────────────────
             if web_handle_new_api(self, parsed.path):
                 return
+
+            # ── Web terminal: stream + state (streaming, handled here) ────────
+            if parsed.path.startswith("/api/terminal/"):
+                if _handle_terminal_get(self, parsed):
+                    return
 
             # ── Existing GET handler ───────────────────────────────────────────
             self.handle_api_get(parsed)
@@ -11197,6 +11447,11 @@ class WebUIHandler(http.server.SimpleHTTPRequestHandler):
 
         # ── Phase 2–6: New API endpoints ───────────────────────────────────
         if web_handle_new_api(self, parsed.path):
+            return
+
+        # ── Web terminal: input / size / start / stop ──────────────────────
+        if parsed.path.startswith("/api/terminal/"):
+            _handle_terminal_post(self, parsed)
             return
 
         # ── Existing POST routing ─────────────────────────────────────────

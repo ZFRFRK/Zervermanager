@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <script>try{var d=document.documentElement,t=localStorage.getItem("zm-theme2")||"hypr";d.dataset.theme=t;if(localStorage.getItem("zm-motion")==="reduce"){d.classList.add("zx-nosplash")}else{d.classList.add("zx-boot");setTimeout(function(){d.classList.remove("zx-boot")},3600)}}catch(e){}</script>
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
     <script>try{if(localStorage.getItem("zm-motion")==="reduce")document.documentElement.dataset.motion="reduce"}catch(e){}</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -8,9 +10,16 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=53">
+    <link rel="stylesheet" href="style.css?v=65">
 </head>
 <body>
+    <div id="zx-splash" role="status" aria-live="polite" aria-label="Loading Zervermanager">
+        <div class="zx-sp-glow" aria-hidden="true"></div>
+        <div class="zx-sp-mark" aria-hidden="true"><span class="zx-sp-ring"></span><span class="zx-sp-z">Z</span></div>
+        <div class="zx-sp-name">Zerver<em class="zx-serif">manager</em></div>
+        <div class="zx-sp-bar" aria-hidden="true"><i></i></div>
+        <div class="zx-sp-status" id="zx-sp-status">starting panel</div>
+    </div>
 
     <div class="app-container">
 
@@ -71,6 +80,10 @@
                     <button class="nav-item" data-page="server" data-title="Server control" onclick="switchPage('server')">
                         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm14 1a1 1 0 11-2 0 1 1 0 012 0zM2 13a2 2 0 012-2h12a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2v-2zm14 1a1 1 0 11-2 0 1 1 0 012 0z" clip-rule="evenodd"/></svg>
                         <span class="nav-label">Server control</span>
+                    </button>
+                    <button class="nav-item" data-page="terminal" data-title="Terminal" onclick="switchPage('terminal')">
+                        <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 4a2 2 0 012-2h10a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V4zm2.72 3.97a.75.75 0 011.06 0L8.31 9.5 6.78 11.03a.75.75 0 101.06 1.06l2.06-2.06a.75.75 0 000-1.06L7.84 6.91a.75.75 0 00-1.06 0v1.06zm4.28 3.28a.75.75 0 000 1.5h3a.75.75 0 000-1.5h-3z" clip-rule="evenodd"/></svg>
+                        <span class="nav-label">Terminal</span>
                     </button>
                     <button class="nav-item" data-page="network" data-title="Network" onclick="switchPage('network')">
                         <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M17.778 8.222c-4.296-4.296-11.26-4.296-15.556 0A1 1 0 01.808 6.808c5.076-5.077 13.308-5.077 18.384 0a1 1 0 01-1.414 1.414zM14.95 11.05a7 7 0 00-9.9 0 1 1 0 01-1.414-1.414 9 9 0 0112.728 0 1 1 0 01-1.414 1.414zM12.12 13.88a3 3 0 00-4.242 0 1 1 0 01-1.415-1.415 5 5 0 017.072 0 1 1 0 01-1.415 1.415zM9 16a1 1 0 112 0 1 1 0 01-2 0z" clip-rule="evenodd"/></svg>
@@ -1305,6 +1318,47 @@
                     <div id="network-term" class="terminal"></div>
                 </div>
             </section>
+
+            <!-- Terminal -->
+            <section id="page-terminal" class="page-section">
+                <div class="page-header">
+                    <h2>Terminal</h2>
+                    <p>A live shell on this server, straight from the browser.</p>
+                </div>
+
+                <div class="card zx-term-card">
+                    <div class="zx-term-bar">
+                        <span class="zx-term-dot" id="term-dot" aria-hidden="true"></span>
+                        <span class="zx-term-title" id="term-title">shell</span>
+                        <div class="zx-term-actions">
+                            <button type="button" class="btn-sm zx-term-btn" id="term-paste-btn" title="Paste from clipboard into the shell">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> Paste
+                            </button>
+                            <button type="button" class="btn-sm zx-term-btn" id="term-ctrlc-btn" title="Send Ctrl+C (interrupt)">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 11-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> ^C
+                            </button>
+                            <button type="button" class="btn-sm zx-term-btn" id="term-clear-btn" title="Clear the scrollback">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Clear
+                            </button>
+                            <button type="button" class="btn-sm zx-term-btn" id="term-restart-btn" title="Kill this shell and start a fresh one">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg> Restart
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="zx-term-scroll" id="term-scroll" tabindex="0" role="log" aria-label="Server terminal output">
+                        <div class="zx-term-out" id="term-out"></div>
+                        <div class="zx-term-caret" aria-hidden="true"></div>
+                    </div>
+                    <textarea id="term-input" class="zx-term-input" rows="1" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" aria-label="Terminal keyboard input"></textarea>
+
+                    <div class="zx-term-foot" id="term-foot">
+                        <span>Click the terminal and type — <kbd>Ctrl</kbd>+<kbd>V</kbd> or <b>Paste</b> to paste · <kbd>↑</kbd><kbd>↓</kbd> history · <kbd>Ctrl</kbd>+<kbd>C</kbd> interrupt</span>
+                        <span class="zx-term-state" id="term-state">connecting…</span>
+                    </div>
+                </div>
+            </section>
+
             <!-- Help Page -->
 
             <!-- ──────────────────────────────────────────
@@ -1477,6 +1531,7 @@
                         <li><strong>MariaDB</strong>: View databases and users, or drop them.</li>
                         <li><strong>Install services</strong>: Manage system packages and create mailboxes for Postfix and Dovecot.</li>
                         <li><strong>Server control</strong>: Start, stop and reload services, manage the firewall, or repair packages.</li>
+                        <li><strong>Terminal</strong>: A live shell on this server — type or paste commands straight from the browser.</li>
                         <li><strong>Network</strong>: View and apply static IP settings.</li>
                     </ul>
                     <p style="margin-bottom: 24px;">
@@ -1494,10 +1549,11 @@
         </main>
     </div>
     <script src="qr.js?v=1"></script>
-    <script src="app.js?v=20"></script>
-    <script src="fx.js?v=11"></script>
-    <script src="motion.js?v=8"></script>
-    <script src="makesite.js?v=1"></script>
+    <script src="app.js?v=21"></script>
+    <script src="fx.js?v=12"></script>
+    <script src="motion.js?v=17"></script>
+    <script src="makesite.js?v=4"></script>
+    <script src="term.js?v=4"></script>
 
     <!-- ── Keyboard Shortcuts Overlay ── -->
     <div class="kbd-overlay" id="kbd-overlay" onclick="closeKbdOverlay()">
@@ -1515,6 +1571,7 @@
                 <div class="kbd-row"><span class="kbd-desc">MariaDB</span><span class="kbd-keys"><kbd>g</kbd><kbd>b</kbd></span></div>
                 <div class="kbd-row"><span class="kbd-desc">Install services</span><span class="kbd-keys"><kbd>g</kbd><kbd>i</kbd></span></div>
                 <div class="kbd-row"><span class="kbd-desc">Server control</span><span class="kbd-keys"><kbd>g</kbd><kbd>v</kbd></span></div>
+                <div class="kbd-row"><span class="kbd-desc">Terminal</span><span class="kbd-keys"><kbd>g</kbd><kbd>t</kbd></span></div>
                 <div class="kbd-row"><span class="kbd-desc">Network</span><span class="kbd-keys"><kbd>g</kbd><kbd>n</kbd></span></div>
                 <div class="kbd-row"><span class="kbd-desc">Docker</span><span class="kbd-keys"><kbd>g</kbd><kbd>k</kbd></span></div>
                 <div class="kbd-row"><span class="kbd-desc">Help</span><span class="kbd-keys"><kbd>g</kbd><kbd>h</kbd></span></div>
@@ -1573,7 +1630,7 @@
                     <span>Work in progress — this does <strong>not</strong> work from phones yet. Debugging is paused; the scan and QR below are shown for testing only.</span>
                 </div>
                 <div class="phone-qr-wrap">
-                    <canvas id="phone-qr" width="240" height="240" aria-label="QR code of the Web UI address"></canvas>
+                    <div class="phone-qr-paper"><canvas id="phone-qr" width="240" height="240" aria-label="QR code of the Web UI address"></canvas></div>
                     <div class="phone-qr-url mono" id="phone-qr-url">—</div>
                 </div>
                 <div class="phone-rows" id="phone-rows"></div>

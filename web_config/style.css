@@ -2759,21 +2759,24 @@ kbd {
     position: fixed;
     inset: 0;
     background: rgba(10, 10, 18, 0.85);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
     z-index: 10000;
-    display: flex;
+    display: none;                      /* PERF: was display:flex + opacity:0 — that kept a full-screen
+                                           blur(16px) layer alive 24/7 and made every animation stutter */
     align-items: center;
     justify-content: center;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.4s ease;
+    transition: opacity 0.35s ease, display 0.35s allow-discrete, overlay 0.35s allow-discrete;
 }
 
 .video-overlay.open {
+    display: flex;
     opacity: 1;
     pointer-events: auto;
 }
+/* fade-in works despite the display switch (the container is opaque black anyway,
+   so the old backdrop blur added cost but nothing visible — removed) */
+@starting-style { .video-overlay.open { opacity: 0; } }
 
 .video-container {
     position: relative;
@@ -4134,7 +4137,8 @@ body.goldfish-mode .tab-desc.active {
 }
 .card:focus-within::after {
     opacity: 0.95;
-    animation: hyprBorderSpin 6s linear infinite;
+    animation: none;   /* PERF: the infinite spin re-painted this large gradient every frame
+                          for as long as a field was focused — stutter while typing */
 }
 
 /* ──────────────────────────────────────────────
@@ -7748,8 +7752,11 @@ a:hover { color: #fff; text-decoration-color: currentColor; }
 .sites-table td, .sites-table th { padding: 12px 16px; }
 .sites-table tbody tr + tr { border-top: 1px solid rgba(255,255,255,.04); }
 
-/* Dialogs, modals, menus, toasts: one glass language. */
-#dialog-overlay, .modal-overlay { -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+/* Dialogs, modals, menus, toasts: one glass language.
+   PERF: no backdrop blur on full-screen scrims — the dashboard keeps animating
+   behind an open modal, and a screen-sized blur re-rastering every frame is a
+   major stutter source. The dark scrim alone reads as glass. */
+#dialog-overlay, .modal-overlay { -webkit-backdrop-filter: none; backdrop-filter: none; }
 #dialog-box, .modal-box, .modal-content { border-radius: 18px; border: 1px solid rgba(167,139,250,.25); background-image: var(--glass); box-shadow: 0 30px 80px rgba(0,0,0,.6), var(--edge); }
 .fx-select-menu { -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); box-shadow: 0 16px 40px rgba(0,0,0,.55); }
 .toast { border-radius: 12px; background-image: var(--glass); box-shadow: 0 12px 32px rgba(0,0,0,.5), var(--edge); }
@@ -8959,3 +8966,778 @@ html[data-motion="reduce"] .sites-table tbody tr { animation: none; }
 #phone-access-btn { position: relative; padding-inline: 10px; }
 #phone-access-btn span { display: none; }
 #phone-access-btn::after { content: ""; position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: #fab387; box-shadow: 0 0 6px rgba(250, 179, 135, .7); }
+
+/* ═════════════════════════════════════════════════════════════════════
+   v54 — WORKSPACE PAGES (phase 2): captioned tab cards · action-aware buttons · empty states
+═════════════════════════════════════════════════════════════════════ */
+.page-section:not(#page-makesite):not(#page-dashboard) .content-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; padding: 6px; }
+.page-section:not(#page-makesite):not(#page-dashboard) .content-tab-btn {
+    display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 3px;
+    padding: 12px 14px; min-height: 60px; text-align: left; border-radius: 11px;
+}
+.page-section:not(#page-makesite):not(#page-dashboard) .content-tab-btn[data-sub]::after {
+    content: attr(data-sub); font: 400 .68rem var(--font-mono); letter-spacing: 0; color: var(--text-dim);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+.page-section:not(#page-makesite):not(#page-dashboard) .content-tab-btn.active::after { color: var(--accent2); }
+/* tabs that carry an icon keep the icon beside the two lines */
+.page-section:not(#page-makesite):not(#page-dashboard) .content-tab-btn:has(> svg) { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 12px; align-items: center; }
+.page-section:not(#page-makesite):not(#page-dashboard) .content-tab-btn:has(> svg) > svg { grid-row: 1 / span 2; }
+.page-section:not(#page-makesite):not(#page-dashboard) .content-tab-btn:has(> svg)[data-sub]::after { grid-column: 2; }
+
+/* Run button names the action; destructive ones turn rose. */
+.tab-pane form > .btn-primary { min-height: 44px; padding-inline: 24px; margin-top: 4px; transition: background-position .45s var(--ease-out), box-shadow .25s var(--ease-out), filter .2s, transform .12s var(--ease-out); }
+.btn.is-danger, .btn-primary.is-danger {
+    background: linear-gradient(110deg, #e11d48 0%, #f43f5e 55%, #fb7185 130%) !important; background-size: 170% 100%;
+    border-color: rgba(251, 113, 133, .55) !important; box-shadow: 0 6px 22px rgba(244, 63, 94, .38), inset 0 1px 0 rgba(255, 255, 255, .22) !important;
+}
+.btn.is-danger:hover { box-shadow: 0 8px 30px rgba(244, 63, 94, .55), inset 0 1px 0 rgba(255, 255, 255, .28) !important; }
+form.zx-danger .form-group:has(select[name="action"]) .form-control { border-color: rgba(244, 63, 94, .35); }
+
+/* Docker: the "not installed" state gets a proper empty-state look. */
+#docker-install-card {
+    border-radius: 20px !important; border: 1px solid rgba(167, 139, 250, .2) !important;
+    background: radial-gradient(420px 220px at 50% 0%, rgba(139, 92, 246, .18), transparent 70%), var(--glass), var(--bg-surface) !important;
+}
+#docker-install-card > svg { width: 56px; height: 56px; padding: 14px; margin-bottom: 14px; border-radius: 18px; color: var(--accent2); background: rgba(0, 245, 212, .08); border: 1px solid rgba(0, 245, 212, .2); }
+#page-docker .hy-toolbar { border-bottom: 1px solid var(--border); }
+
+/* ═════════════════════════════════════════════════════════════════════
+   v55 — CRAFT PASS (ten rules)
+   1 concentric radii · 2 alpha borders · 3 OKLCH palette · 4 OKLCH gradients · 5 icon weight
+   6 masked edges · 7 blurred icon swaps · 8 dark-mode elevation · 9 dynamic viewport · 10 multiply
+═════════════════════════════════════════════════════════════════════ */
+:root {
+    /* 3 — palette in OKLCH: same perceived lightness per role, so no hue looks louder than another. */
+    --zx-cyan:   oklch(.90 .14 182);
+    --zx-purple: oklch(.72 .17 295);
+    --zx-rose:   oklch(.76 .13 8);
+    --zx-green:  oklch(.84 .14 150);
+    --zx-amber:  oklch(.89 .11 88);
+    --hypr-cyan: var(--zx-cyan); --hypr-magenta: var(--zx-rose);
+    --success: var(--zx-green); --warning: var(--zx-amber); --danger: var(--zx-rose);
+
+    /* 2 — borders are translucent white: they pick up whatever surface they sit on. */
+    --border:       rgb(255 255 255 / .075);
+    --border-light: rgb(255 255 255 / .135);
+
+    /* 8 — dark-mode depth by lightness, not shadow: page < card < raised < floating. */
+    --bg-base:     oklch(.135 .018 295);
+    --bg-surface:  oklch(.175 .022 295);
+    --bg-elevated: oklch(.215 .026 295);
+    --bg-float:    oklch(.265 .030 295);
+    --bg-input:    oklch(.120 .018 295);
+
+    /* 4 — gradients interpolate in OKLCH: no grey midpoints between cyan, purple and rose. */
+    --hy-border: linear-gradient(135deg in oklch, var(--zx-cyan), var(--zx-purple) 55%, var(--zx-rose));
+    --hypr-active-border: var(--hy-border);
+
+    /* 9 — dynamic viewport units (they follow Safari's collapsing bars). */
+    --vh1: calc(1dvh / var(--ui-zoom));
+}
+@supports not (height: 1dvh) { :root { --vh1: calc(1vh / var(--ui-zoom)); } }
+
+/* 8 — floating layers are the lightest surface and get a top highlight instead of relying on shadow. */
+html body :is(.fx-select-menu, #dialog-box, .modal-box, .modal-content, .toast, .hy-tip, .fx-pal, .kbd-panel) {
+    background-color: color-mix(in oklch, var(--bg-float) 94%, transparent);
+    box-shadow: inset 0 1px 0 oklch(1 0 0 / .07), 0 24px 60px oklch(0 0 0 / .55);
+}
+html body .top-bar { background-color: color-mix(in oklch, var(--bg-elevated) 82%, transparent); }
+
+/* 4 — OKLCH gradients on the main accents. */
+html body .btn-primary:not(.is-danger) {
+    background-image: linear-gradient(110deg in oklch, oklch(.54 .24 293) 0%, oklch(.63 .21 292) 45%, oklch(.72 .13 215) 130%);
+    background-size: 170% 100%;
+}
+html body .page-header h2 { background-image: linear-gradient(100deg in oklch, #fff 30%, oklch(.84 .09 300) 72%, var(--zx-cyan) 120%); }
+.hy-pill--tab, .hy-seg button.on { background-image: linear-gradient(135deg in oklch, rgb(139 92 246 / .30), rgb(0 245 212 / .10)); }
+.hy-pill--nav::before { background: linear-gradient(180deg in oklch, var(--zx-cyan), var(--zx-purple)); }
+
+/* 1 — concentric radii: inner = outer − padding. */
+.content-tabs { --r: 14px; --p: 6px; border-radius: var(--r) !important; padding: var(--p); }
+:is(#page-makesite, .page-section) .content-tabs .content-tab-btn { border-radius: calc(var(--r) - var(--p)) !important; }
+.hy-pill--tab { border-radius: calc(14px - 6px); }
+.hy-seg { --r: 12px; --p: 4px; border-radius: var(--r); padding: var(--p); }
+.hy-seg button { border-radius: calc(var(--r) - var(--p)); }
+.fx-select-menu .fx-select-opt { border-radius: calc(14px - 6px); }
+
+/* 5 — icon stroke matches the weight of the type beside it. */
+.nav-item svg, .sidebar-search svg, .hy-key svg, .hy-search svg, .hy-copy svg, .ms-tool svg, .status-icon svg, .fx-metric svg { stroke-width: 1.75; }
+.nav-item svg *, .sidebar-search svg *, .hy-key svg *, .hy-search svg *, .hy-copy svg *, .ms-tool svg *, .status-icon svg *, .fx-metric svg * { stroke-width: inherit; }
+.nav-item.active svg, .btn svg, .btn-sm svg, .top-bar-btn svg, .content-tab-btn svg { stroke-width: 2; }
+.nav-item.active svg *, .btn svg *, .btn-sm svg *, .top-bar-btn svg *, .content-tab-btn svg * { stroke-width: inherit; }
+
+/* 6 — edges fade only while a strip is actually scrollable (scroll-driven; no JS). */
+@property --mk-l { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@property --mk-r { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@keyframes zxEdge { 0% { --mk-l: 0px; --mk-r: 32px; } 8% { --mk-l: 32px; --mk-r: 32px; } 92% { --mk-l: 32px; --mk-r: 32px; } 100% { --mk-l: 32px; --mk-r: 0px; } }
+.hy-launch, .sites-table-wrap {
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--mk-l), #000 calc(100% - var(--mk-r)), transparent 100%);
+            mask-image: linear-gradient(90deg, transparent 0, #000 var(--mk-l), #000 calc(100% - var(--mk-r)), transparent 100%);
+    animation: zxEdge linear both; animation-timeline: scroll(self inline);
+}
+
+/* 7 — two icons stacked; the swap cross-fades with a slight blur and scale. */
+.hy-copy, .ms-tool { position: relative; }
+.hy-copy .ic, .ms-tool .ic {
+    position: absolute; inset: 0; margin: auto; width: 14px; height: 14px;
+    transition: opacity .28s var(--ease-out), filter .28s var(--ease-out), transform .28s var(--ease-out);
+}
+.ms-tool .ic { width: 16px; height: 16px; }
+.hy-copy .ic-b, .ms-tool .ic-b { opacity: 0; filter: blur(4px); transform: scale(.55); }
+.hy-copy.done .ic-a, .ms-tool.on .ic-a { opacity: 0; filter: blur(4px); transform: scale(.55); }
+.hy-copy.done .ic-b, .ms-tool.on .ic-b { opacity: 1; filter: none; transform: none; }
+
+/* 10 — QR: the canvas multiplies onto a tinted paper frame, so its light ground melts into the frame (no hard white box). */
+.phone-qr-paper {
+    flex: 0 0 auto; padding: 10px; border-radius: 16px; isolation: isolate;
+    background: oklch(.955 .02 295); box-shadow: 0 8px 24px oklch(0 0 0 / .4), inset 0 0 0 1px oklch(1 0 0 / .5);
+}
+.phone-qr-paper canvas { display: block; mix-blend-mode: multiply; border-radius: calc(16px - 10px); box-shadow: none; }
+
+/* ═════════════════════════════════════════════════════════════════════
+   v56 — FROM YOUR SCREENSHOTS: crisp text · dashboard status bar · calm offline states · Help launchpad
+═════════════════════════════════════════════════════════════════════ */
+/* Text: grayscale antialiasing (the orange/blue fringes were ClearType subpixel rendering). */
+html body { opacity: .999; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+/* Dashboard status bar: the base .status-box is a column flexbox, so it also needs flex-direction: row. */
+@media (min-width: 1000px) {
+    #page-dashboard .status-grid > .fx-health { flex-direction: row; align-items: center; }
+    #page-dashboard .fx-health .fx-health-top { flex: 1 1 auto; min-height: 0; }
+    #page-dashboard .fx-health .fx-reload { width: auto; }
+}
+
+/* Offline: tiles keep only what carries information (name, value, meter) instead of empty rows of dashes. */
+.main-content:has(#offline-banner:not(.hidden)) #page-dashboard .fx-metric .fx-spark,
+.main-content:has(#offline-banner:not(.hidden)) #page-dashboard .fx-metric .fx-metric-foot,
+.main-content:has(#offline-banner:not(.hidden)) #page-dashboard .fx-metric .metric-state-pill { display: none; }
+.main-content:has(#offline-banner:not(.hidden)) #page-dashboard .fx-metric { min-height: 0; }
+
+/* Large cards don't get the loud rainbow "active window" ring; small tiles keep it. */
+.page-section > .card:focus-within::after, .page-section > .card:focus-within { opacity: 1; }
+.page-section > .card:focus-within::after { opacity: .38; }
+
+/* Help works offline, so the connection banner stays away from it. */
+.main-content:has(#page-help.active) #offline-banner { display: none; }
+
+/* Sites: the "disconnected" row becomes a real empty state (icon, calm text, no stray header). */
+.sites-table td[colspan][style*="var(--danger)"] { padding: 56px 24px !important; color: var(--text-muted) !important; font: 400 .88rem var(--font-ui); }
+.sites-table td[colspan][style*="var(--danger)"]::before {
+    content: ""; display: block; width: 52px; height: 52px; margin: 0 auto 16px; border-radius: 16px;
+    border: 1px solid color-mix(in oklch, var(--danger) 30%, transparent);
+    background:
+        url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f38ba8' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'><path d='M1 1l22 22'/><path d='M16.72 11.06A10.94 10.94 0 0 1 19 12.55'/><path d='M5 12.55a10.94 10.94 0 0 1 5.17-2.39'/><path d='M10.71 5.05A16 16 0 0 1 22.58 9'/><path d='M1.42 9a15.91 15.91 0 0 1 4.7-2.88'/><path d='M8.53 16.11a6 6 0 0 1 6.95 0'/><path d='M12 20h.01'/></svg>") center / 24px no-repeat,
+        color-mix(in oklch, var(--danger) 10%, transparent);
+}
+.sites-table:has(td[colspan][style*="var(--danger)"]) thead { display: none; }
+
+/* Two-pane pages: tabs in a tidy 2-column grid; the terminal lines up with the top of the card. */
+.page-section:not(#page-makesite):not(#page-dashboard) .card-split-form .content-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.page-section:not(#page-makesite):not(#page-dashboard) .card-split-terminal { grid-column: 2; grid-row: 1 / span 3; align-self: start; margin-top: 0; padding-top: 0; }
+
+/* Help: a launchpad of page cards + a shortcut strip instead of a text list. */
+.hy-help-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; margin: 18px 0 26px; }
+.hy-help-card {
+    position: relative; display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 3px 14px; align-items: start; text-align: left;
+    padding: 16px 16px 16px 16px; border: 1px solid var(--border); border-radius: 16px; color: inherit; cursor: pointer;
+    background-color: var(--bg-surface); background-image: var(--glass); box-shadow: var(--edge);
+    transition: border-color .25s var(--ease-out), background-color .25s var(--ease-out), transform .25s var(--ease-out);
+    animation: hyRise .55s var(--ease-out) both;
+}
+.hy-help-card:hover { border-color: var(--border-light); background-color: var(--bg-elevated); transform: translateY(-2px); }
+.hy-help-card:active { transform: scale(.985); }
+.hy-help-ico { grid-row: 1 / span 2; width: 42px; height: 42px; display: grid; place-items: center; border-radius: calc(16px - 6px); color: var(--zx-cyan); background: rgb(0 245 212 / .07); border: 1px solid rgb(0 245 212 / .16); }
+.hy-help-ico svg { width: 20px; height: 20px; stroke-width: 1.75; }
+.hy-help-card b { font: 600 .92rem var(--font-ui); color: var(--text); padding-right: 44px; }
+.hy-help-card .d { font: 400 .8rem/1.5 var(--font-ui); color: var(--text-muted); }
+.hy-help-card kbd { position: absolute; top: 14px; right: 14px; display: inline-flex; gap: 3px; background: none; border: 0; box-shadow: none; padding: 0; }
+.hy-help-card kbd i { font: 500 .66rem var(--font-mono); font-style: normal; color: var(--text-dim); padding: 1px 6px; border-radius: 6px; border: 1px solid var(--border-light); background: rgb(255 255 255 / .04); }
+.hy-shortcuts { display: flex; flex-wrap: wrap; gap: 12px 26px; padding-top: 18px; border-top: 1px solid var(--border); }
+.hy-sc { display: inline-flex; align-items: center; gap: 6px; font: 400 .8rem var(--font-ui); color: var(--text-muted); }
+.hy-sc kbd { font: 500 .68rem var(--font-mono); }
+
+/* ═════════════════════════════════════════════════════════════════════
+   v58 — GLASS THEME in Hyprland colours (default; theme button in the top bar switches to flat dark)
+   Frosted translucent panels · purple/cyan/pink backdrop · lavender pill selection · serif accent · blur/iris motion
+═════════════════════════════════════════════════════════════════════ */
+@keyframes zxIris { 0% { clip-path: circle(0% at 50% 40%); filter: blur(20px); transform: scale(1.05); opacity: 0; } 35% { opacity: 1; } 100% { clip-path: circle(150% at 50% 40%); filter: blur(0); transform: none; opacity: 1; } }
+@keyframes zxPage { from { opacity: 0; filter: blur(14px); transform: translate3d(calc(var(--fx-dir, 1) * 24px), 0, 0) scale(.985); } to { opacity: 1; filter: blur(0); transform: none; } }
+.zx-serif { font-family: 'Instrument Serif', 'Iowan Old Style', Georgia, serif; font-style: italic; font-weight: 400; letter-spacing: -.01em; font-size: 1.12em; }
+
+html[data-theme="glass"] {
+    /* text and accents stay exactly as in the Hyprland theme; only surfaces become translucent */
+    --bg-void: transparent; --bg-base: rgb(255 255 255 / .03); --bg-surface: rgb(255 255 255 / .06);
+    --bg-elevated: rgb(255 255 255 / .10); --bg-float: oklch(.27 .03 295 / .95); --bg-input: rgb(0 0 0 / .28);
+    --bg-glass: rgb(255 255 255 / .05); --bg-darker: rgb(0 0 0 / .2); --bg-lighter: rgb(255 255 255 / .08);
+    --panel: rgb(255 255 255 / .06); --line: rgb(255 255 255 / .10); --line-strong: rgb(255 255 255 / .16);
+    --border: rgb(255 255 255 / .10); --border-light: rgb(255 255 255 / .18);
+    --glass: linear-gradient(180deg, rgb(255 255 255 / .09), rgb(255 255 255 / .02));
+    --edge: inset 0 1px 0 rgb(255 255 255 / .12), inset 0 0 0 1px rgb(255 255 255 / .03);
+    --gl-pill: oklch(.95 .03 295);          /* lavender "selected" pill */
+    --gl-pill-ink: oklch(.26 .09 295);
+
+    /* backdrop: Hyprland purple / cyan / pink light with soft discs for the frosting to blur */
+    background:
+        radial-gradient(circle at 80% 18%, oklch(.72 .16 335 / .32) 0 140px, transparent 142px),
+        radial-gradient(circle at 14% 82%, oklch(.8 .12 200 / .26) 0 200px, transparent 202px),
+        radial-gradient(circle at 62% 90%, oklch(.62 .2 295 / .32) 0 100px, transparent 102px),
+        radial-gradient(1100px 700px at 8% 0%, oklch(.42 .18 295 / .85), transparent 62%),
+        radial-gradient(900px 800px at 100% 100%, oklch(.4 .12 215 / .6), transparent 62%),
+        radial-gradient(700px 600px at 70% 40%, oklch(.36 .16 335 / .4), transparent 65%),
+        linear-gradient(160deg in oklch, oklch(.2 .045 290), oklch(.14 .03 285)) fixed;
+
+    & body { background: transparent; opacity: 1; }
+    & body::before { background: none; }
+    & body::after { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); background-color: transparent; opacity: .04; }
+
+    /* frosted panels */
+    & .sidebar, & .main-content {
+        background: linear-gradient(180deg, rgb(255 255 255 / .08), rgb(255 255 255 / .03)) !important; background-attachment: scroll !important;
+        border: 1px solid rgb(255 255 255 / .13);
+        box-shadow: 0 30px 80px rgb(0 0 0 / .45), inset 0 1px 0 rgb(255 255 255 / .14) !important;
+        -webkit-backdrop-filter: blur(26px) saturate(1.4); backdrop-filter: blur(26px) saturate(1.4);
+    }
+    & .card, & .status-box, & .fx-metric, & .hy-key, & .hy-help-card, & .ms-plan, & .form-details, & .fx-health, & .hy-toolbar {
+        background-color: rgb(255 255 255 / .05); background-image: var(--glass);
+        border-color: rgb(255 255 255 / .11); box-shadow: 0 12px 34px rgb(0 0 0 / .28), inset 0 1px 0 rgb(255 255 255 / .12);
+    }
+    & .hy-key { box-shadow: none; }
+    & .top-bar { background: rgb(255 255 255 / .06) !important; border-color: rgb(255 255 255 / .13) !important; box-shadow: 0 12px 32px rgb(0 0 0 / .35), inset 0 1px 0 rgb(255 255 255 / .12) !important; }
+    & .fx-actionbar { background: rgb(20 16 34 / .6) !important; border-color: rgb(255 255 255 / .14); }
+    & .sidebar-search { background: rgb(255 255 255 / .06); border: 1px solid rgb(255 255 255 / .1); }
+
+    /* selected = lavender pill with dark ink (sidebar, tabs, filters) */
+    & .nav-menu .nav-item.active { color: var(--gl-pill-ink) !important; font-weight: 600; }
+    & .nav-menu .nav-item.active svg { color: oklch(.5 .22 293); }
+    & .hy-pill--nav { background: var(--gl-pill) !important; box-shadow: 0 8px 22px rgb(0 0 0 / .4), inset 0 -1px 0 oklch(.8 .06 295 / .4) !important; }
+    & .hy-pill--tab, & .hy-seg button.on { background: var(--gl-pill) !important; box-shadow: 0 6px 18px rgb(0 0 0 / .35) !important; }
+    & .content-tab-btn.active, & .hy-seg button.on { color: var(--gl-pill-ink) !important; }
+    & .content-tab-btn.active::after { color: oklch(.5 .2 293); }
+    & .content-tab-btn.active > svg { color: oklch(.5 .22 293); }
+    & .hy-seg button.on b { color: var(--gl-pill-ink); background: rgb(80 40 140 / .12); }
+
+    /* dashboard: purple → pink hero, one matching accent tile */
+    & #page-dashboard .dashboard-header {
+        background: radial-gradient(520px 260px at 90% 0%, oklch(.8 .13 200 / .42), transparent 70%), linear-gradient(135deg in oklch, oklch(.5 .23 290), oklch(.58 .23 335));
+        border-color: rgb(255 255 255 / .22); box-shadow: 0 28px 64px oklch(.35 .2 300 / .5), inset 0 1px 0 rgb(255 255 255 / .28);
+    }
+    & #page-dashboard .dashboard-header h2, & #page-dashboard .dashboard-header h2 .zx-serif {
+        background: none !important; -webkit-background-clip: border-box !important; background-clip: border-box !important;
+        -webkit-text-fill-color: currentColor; color: #fff !important; font-size: clamp(2.3rem, 3.2vw, 3.2rem); line-height: 1.04; letter-spacing: -.035em;
+    }
+    & #page-dashboard .dashboard-header p { color: rgb(255 255 255 / .85) !important; }
+    & #page-dashboard .dashboard-header .hy-eyebrow { color: rgb(255 255 255 / .9); }
+    & #page-dashboard .dashboard-header .hy-eyebrow::before { background: #fff; }
+    & .hdr-phone { background: rgb(255 255 255 / .94); color: var(--gl-pill-ink); border: 0; box-shadow: 0 8px 22px rgb(0 0 0 / .3); }
+    & #fx-m-cpu { background: linear-gradient(135deg in oklch, oklch(.5 .23 290), oklch(.58 .23 335)); border-color: rgb(255 255 255 / .25); box-shadow: 0 18px 44px oklch(.35 .2 300 / .5), inset 0 1px 0 rgb(255 255 255 / .28); }
+    & #fx-m-cpu :is(.fx-metric-name, .fx-metric-main b, .fx-unit, .fx-metric-foot span, .fx-metric-ico, .metric-state-pill) { color: #fff !important; }
+    & #fx-m-cpu .fx-meter { background: rgb(255 255 255 / .28); } & #fx-m-cpu .fx-meter i { background: #fff; }
+
+    /* motion: blur + iris */
+    & .main-content .page-section.active { animation: zxPage .65s var(--ease-out) both; }
+    &.zx-intro .app-container { animation: zxIris 1.4s var(--ease-out) both; }
+}
+
+/* ═════════════════════════════════════════════════════════════════════
+   v59 — REFINE (from your screenshot + the two rule lists; exceptions kept: serif accents, mono labels, lavender pill)
+═════════════════════════════════════════════════════════════════════ */
+@keyframes zxTitle { from { opacity: 0; filter: blur(8px); transform: translate3d(0, 6px, 0); } to { opacity: 1; filter: blur(0); transform: none; } }
+.page-header h2.zx-swap { animation: zxTitle .45s var(--ease-out) both; }
+
+/* Glass: soft glows instead of hard-edged discs (rule 13: remove embellishments). */
+html[data-theme="glass"] {
+    --text-muted: #c9cde2; --text-dim: #aab0c9;                               /* rule 15: contrast on translucent surfaces */
+    background:
+        radial-gradient(560px 560px at 80% 18%, oklch(.72 .16 335 / .22), transparent 70%),
+        radial-gradient(680px 680px at 14% 82%, oklch(.8 .12 200 / .18), transparent 70%),
+        radial-gradient(460px 460px at 62% 90%, oklch(.62 .2 295 / .22), transparent 70%),
+        radial-gradient(1100px 700px at 8% 0%, oklch(.42 .18 295 / .85), transparent 62%),
+        radial-gradient(900px 800px at 100% 100%, oklch(.4 .12 215 / .6), transparent 62%),
+        radial-gradient(700px 600px at 70% 40%, oklch(.36 .16 335 / .4), transparent 65%),
+        linear-gradient(160deg in oklch, oklch(.2 .045 290), oklch(.14 .03 285)) fixed;
+}
+html[data-theme="glass"] .main-content > .top-bar::before { background: none; }   /* no dark strip above the bar */
+html[data-theme="glass"] #page-dashboard.active > .fx-metrics #fx-m-cpu {
+    background-color: transparent !important;
+    background-image: linear-gradient(135deg in oklch, oklch(.5 .23 290), oklch(.58 .23 335)) !important;
+    border-color: rgb(255 255 255 / .25);
+}
+
+/* Theme button: two icons cross-fade with a slight blur (animation rule 18). */
+#zx-theme-btn { position: relative; width: 34px; padding: 0; }
+#zx-theme-btn .ic { position: absolute; inset: 0; margin: auto; width: 15px; height: 15px; transition: opacity .25s var(--ease-out), filter .25s var(--ease-out), transform .25s var(--ease-out); }
+#zx-theme-btn .ic-b { opacity: 0; filter: blur(4px); transform: scale(.55); }
+#zx-theme-btn[aria-pressed="false"] .ic-a { opacity: 0; filter: blur(4px); transform: scale(.55); }
+#zx-theme-btn[aria-pressed="false"] .ic-b { opacity: 1; filter: none; transform: none; }
+
+/* Rules 1 + 2: when disconnected the panel said "can't connect" four times. Keep the banner, drop the echoes. */
+.main-content:has(#offline-banner:not(.hidden)) #page-dashboard .status-grid > .fx-health,
+.main-content:has(#offline-banner:not(.hidden)) #page-dashboard .fx-updated,
+.main-content:has(#offline-banner:not(.hidden)) #page-dashboard .status-grid > .status-box .badge,
+.main-content:has(#offline-banner:not(.hidden)) #page-dashboard .status-grid > .status-box .status-box-actions { display: none; }
+
+/* Rule 13: no scanlines, no glow on the clock. */
+.terminal, .terminal.visible { background-image: none !important; }
+.waybar-clock { text-shadow: none; }
+
+/* Animation rules: 3 stagger rows by 30 ms · 2/10 dropdowns 150–250 ms, popovers start at .95 · 14 no tween while held · 15 exits shorter. */
+.status-grid > :nth-child(1) { animation-delay: .10s; } .status-grid > :nth-child(2) { animation-delay: .13s; }
+.status-grid > :nth-child(3) { animation-delay: .16s; } .status-grid > :nth-child(4) { animation-delay: .19s; }
+.status-grid > :nth-child(5) { animation-delay: .22s; } .status-grid > :nth-child(6) { animation-delay: .25s; }
+.status-grid > :nth-child(7) { animation-delay: .28s; } .status-grid > :nth-child(8) { animation-delay: .31s; }
+.fx-metrics > :nth-child(1) { animation-delay: .12s; } .fx-metrics > :nth-child(2) { animation-delay: .15s; }
+.fx-metrics > :nth-child(3) { animation-delay: .18s; } .fx-metrics > :nth-child(4) { animation-delay: .21s; }
+.hy-launch > :nth-child(1) { animation-delay: .06s; } .hy-launch > :nth-child(2) { animation-delay: .09s; } .hy-launch > :nth-child(3) { animation-delay: .12s; }
+.hy-launch > :nth-child(4) { animation-delay: .15s; } .hy-launch > :nth-child(5) { animation-delay: .18s; } .hy-launch > :nth-child(6) { animation-delay: .21s; }
+.sites-table tbody tr:nth-child(2) { animation-delay: .03s; } .sites-table tbody tr:nth-child(3) { animation-delay: .06s; }
+.sites-table tbody tr:nth-child(4) { animation-delay: .09s; } .sites-table tbody tr:nth-child(n+5) { animation-delay: .12s; }
+.fx-select-menu { transform: translateY(-6px) scale(.95); transition: opacity .18s var(--ease-out), transform .18s var(--ease-out), visibility 0s linear .18s; }
+.fx-select-menu[data-side="top"] { transform: translateY(6px) scale(.95); }
+.fx-select-menu.open { transition: opacity .22s var(--ease-out), transform .22s var(--ease-out), visibility 0s; }
+.btn:active, .btn-sm:active, .nav-item:active, .hy-key:active, .content-tab-btn:active, .top-bar-btn:active { transition-duration: .05s !important; }
+
+/* ═════════════════════════════════════════════════════════════════════
+   v60 — SIDEBAR + BOXES like the video (both themes) · premium motion · intro loading screen
+═════════════════════════════════════════════════════════════════════ */
+:root { --gl-pill: oklch(.95 .03 295); --gl-pill-ink: oklch(.26 .09 295); --r-box: 22px; }
+@keyframes zxPage { from { opacity: 0; filter: blur(8px); transform: translate3d(calc(var(--fx-dir, 1) * 26px), 0, 0) scale(.988); } to { opacity: 1; filter: blur(0); transform: none; } }
+@keyframes zxCard { from { opacity: 0; filter: blur(8px); transform: translate3d(0, 16px, 0) scale(.98); } to { opacity: 1; filter: blur(0); transform: none; } }
+@keyframes zxNav  { from { opacity: 0; transform: translate3d(-12px, 0, 0); } to { opacity: 1; transform: none; } }
+@keyframes zxPop  { 0% { transform: scale(.82); } 100% { transform: scale(1); } }
+
+/* ── Sidebar ── */
+.sidebar { border-radius: 28px; overflow: visible; }
+.sidebar-header { position: static; }
+.sidebar-toggle-btn, .sidebar.collapsed .sidebar-toggle-btn {
+    position: absolute; top: 26px; right: -13px; left: auto; margin: 0; transform: none; z-index: 6;
+    width: 26px; height: 26px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%;
+    background: var(--gl-pill); color: var(--gl-pill-ink); box-shadow: 0 6px 18px rgb(0 0 0 / .45);
+    transition: transform .3s var(--ease-out), box-shadow .3s var(--ease-out);
+}
+.sidebar-toggle-btn:hover { transform: scale(1.1); }
+.sidebar-toggle-btn svg { width: 13px; height: 13px; stroke-width: 2.4; }
+.nav-section-title::after, .nav-section-title::before { display: none !important; }      /* decorative rules removed */
+.nav-menu .nav-item { min-height: 42px; border-radius: 14px; gap: 12px; }
+.nav-menu .nav-item.active { color: var(--gl-pill-ink) !important; font-weight: 600; }
+.nav-menu .nav-item.active svg { color: oklch(.5 .22 293); animation: zxPop .4s var(--ease-out); }
+.hy-pill--nav { border-radius: 14px; background: var(--gl-pill) !important; box-shadow: 0 8px 22px rgb(0 0 0 / .4), inset 0 -1px 0 oklch(.8 .06 295 / .4) !important; }
+.hy-pill--nav::before { display: none; }
+.hy-pill--tab, .hy-seg button.on { background: var(--gl-pill) !important; box-shadow: 0 6px 18px rgb(0 0 0 / .35) !important; }
+.content-tab-btn.active, .hy-seg button.on { color: var(--gl-pill-ink) !important; }
+.content-tab-btn.active::after, .content-tab-btn.active > svg { color: oklch(.5 .2 293); }
+.hy-seg button.on b { color: var(--gl-pill-ink); background: rgb(80 40 140 / .12); }
+.sidebar-search { height: 42px; border-radius: 14px; }
+.sidebar-footer {
+    display: flex; align-items: center; gap: 10px; margin: 10px 12px 12px; padding: 10px 14px; border-radius: 16px;
+    background: rgb(255 255 255 / .05); border: 1px solid rgb(255 255 255 / .09); box-shadow: inset 0 1px 0 rgb(255 255 255 / .06);
+}
+.sidebar.collapsed .sidebar-footer { padding: 10px; justify-content: center; margin-inline: 10px; }
+
+/* nav items arrive one after another (30 ms apart) behind the splash */
+html.zx-boot .nav-menu .nav-item { animation: zxNav .55s var(--ease-out) both; animation-delay: calc(1.4s + var(--i, 0) * 30ms); }
+
+/* ── Boxes: bigger radius, icon chips, light that follows the cursor ── */
+.card { border-radius: var(--r-box); }
+#page-dashboard.active > .fx-metrics .fx-metric { border-radius: var(--r-box); padding: 20px 22px 18px; }
+#page-dashboard.active > .fx-metrics .fx-metric-main b { font-size: clamp(2rem, 2.6vw, 2.7rem); }
+.status-grid > .status-box:not(.fx-health) { border-radius: 18px; }
+.status-grid > .fx-health, .hy-help-card, .ms-plan { border-radius: var(--r-box); }
+#page-dashboard .dashboard-header { border-radius: 26px; }
+.fx-metric-ico, .status-icon {
+    display: grid; place-items: center; width: 40px; height: 40px; border-radius: 13px; color: var(--text);
+    background: rgb(255 255 255 / .07); border: 1px solid rgb(255 255 255 / .11); box-shadow: inset 0 1px 0 rgb(255 255 255 / .12);
+}
+.zx-sheen { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0; transition: opacity .35s var(--ease-out); background: radial-gradient(280px circle at var(--mx, 50%) var(--my, 50%), rgb(255 255 255 / .10), transparent 62%); }
+:hover > .zx-sheen { opacity: 1; }
+.fx-metric, .status-box, .hy-help-card, .hy-key, .ms-plan { position: relative; }
+.status-grid > .status-box:not(.fx-health):hover { transform: translateY(-1px); }
+
+/* ── Motion: pages and cards arrive with a soft blur-in ── */
+.main-content .page-section.active { animation: zxPage .6s var(--ease-out) both; }
+#page-dashboard.active > .fx-metrics .fx-metric, .hy-help-card { animation: zxCard .65s var(--ease-out) both; }
+
+/* ── Intro loading screen ── */
+@keyframes zxSplashOut { 0% { clip-path: circle(150% at 50% 50%); visibility: visible; } 99% { visibility: visible; } 100% { clip-path: circle(0% at 50% 50%); visibility: hidden; } }
+@keyframes zxAppIn { from { opacity: 0; filter: blur(8px); transform: scale(.975); } to { opacity: 1; filter: blur(0); transform: none; } }
+@keyframes zxBar { from { width: 0; } to { width: 100%; } }
+@keyframes zxRise { from { opacity: 0; filter: blur(8px); transform: translate3d(0, 10px, 0); } to { opacity: 1; filter: blur(0); transform: none; } }
+@keyframes zxBreath { 0%, 100% { transform: scale(1); box-shadow: 0 16px 50px oklch(.5 .23 293 / .45); } 50% { transform: scale(1.04); box-shadow: 0 20px 70px oklch(.6 .22 320 / .55); } }
+#zx-splash {
+    position: fixed; inset: 0; z-index: 2147483600; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+    background:
+        radial-gradient(700px 520px at 20% 15%, oklch(.4 .18 295 / .7), transparent 65%),
+        radial-gradient(640px 520px at 85% 90%, oklch(.42 .12 205 / .5), transparent 65%),
+        radial-gradient(520px 420px at 80% 20%, oklch(.38 .17 335 / .4), transparent 65%),
+        oklch(.135 .028 288);
+    animation: zxSplashOut .75s cubic-bezier(.65, 0, .35, 1) 5s forwards;          /* failsafe if the script never runs */
+    cursor: pointer;
+}
+#zx-splash.out { animation: zxSplashOut .75s cubic-bezier(.65, 0, .35, 1) forwards; }
+html.zx-nosplash #zx-splash { display: none; }
+.zx-sp-glow { position: absolute; width: 420px; height: 420px; border-radius: 50%; background: radial-gradient(circle, oklch(.55 .22 295 / .35), transparent 70%); filter: blur(10px); }
+.zx-sp-mark { position: relative; width: 92px; height: 92px; display: grid; place-items: center; }
+.zx-sp-ring { position: absolute; inset: 0; border-radius: 50%; animation: hyAng 1.5s linear infinite;
+    background: conic-gradient(from var(--hy-ang), transparent 0 50%, oklch(.9 .14 182), oklch(.72 .17 295), oklch(.76 .13 8));
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px)); mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px)); }
+.zx-sp-z { width: 64px; height: 64px; display: grid; place-items: center; border-radius: 20px; font: 700 1.9rem var(--font-ui); color: #fff;
+    background: linear-gradient(135deg in oklch, oklch(.56 .24 293), oklch(.62 .22 330)); animation: zxBreath 2.4s ease-in-out infinite; }
+.zx-sp-name { font: 650 1.7rem var(--font-ui); letter-spacing: -.03em; color: #fff; animation: zxRise .8s var(--ease-out) .2s both; }
+.zx-sp-bar { width: 190px; height: 3px; border-radius: 3px; background: rgb(255 255 255 / .1); overflow: hidden; animation: zxRise .8s var(--ease-out) .35s both; }
+.zx-sp-bar i { display: block; height: 100%; width: 0; border-radius: 3px; background: linear-gradient(90deg in oklch, oklch(.9 .14 182), oklch(.72 .17 295), oklch(.76 .13 8)); animation: zxBar 1.9s cubic-bezier(.65, 0, .35, 1) .2s forwards; box-shadow: 0 0 14px oklch(.72 .17 295 / .7); }
+.zx-sp-status { font: 400 .74rem var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--text-dim); animation: zxRise .8s var(--ease-out) .5s both; min-height: 1em; }
+html.zx-reveal .app-container { animation: zxAppIn .9s var(--ease-out) both; }
+html[data-motion="reduce"] #zx-splash { display: none; }
+
+/* ═════════════════════════════════════════════════════════════════════
+   v61 — CREATE SITE: grouped form, aligned fields, switch, preview, rolling facts while waiting
+═════════════════════════════════════════════════════════════════════ */
+@keyframes msIndet { 0% { transform: translateX(-110%); } 100% { transform: translateX(260%); } }
+
+/* Sections: small labelled groups instead of one long list. */
+#page-makesite .ms-sec { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; margin-top: 10px; font: 500 .68rem var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--text-dim); }
+#page-makesite .ms-sec::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+#page-makesite .tab-pane form { row-gap: 18px; }
+#page-makesite .form-group:has(> input[name="domain"]), #page-makesite .form-group:has(select[name="server"]) { order: 0; }
+
+/* Hints live under the field, so every input in a row lines up. */
+.ms-help { margin-top: 7px; font: 400 .72rem/1.45 var(--font-ui); color: var(--text-dim); }
+#page-makesite .form-group > label { display: block; }
+
+/* Description line: a quiet info note, not a quote bar. */
+#page-makesite .tab-desc.active { display: flex; align-items: center; gap: 10px; padding: 2px 0; font-size: .8rem; color: var(--text-dim); }
+#page-makesite .tab-desc.active::before { content: "i"; position: static; flex: none; width: 17px; height: 17px; border-radius: 50%; border: 1px solid currentColor; background: none; display: grid; place-items: center; font: italic 600 .66rem Georgia, serif; }
+
+/* Checkboxes in this page become switches (knob stretches slightly while pressed). */
+#page-makesite .checkbox-label { display: flex; align-items: center; gap: 14px; padding: 13px 16px; border-radius: 14px; cursor: pointer; transition: background-color .2s var(--ease-out); }
+#page-makesite .checkbox-label:hover { background: rgb(255 255 255 / .04); }
+#page-makesite .checkbox-label input[type="checkbox"] {
+    appearance: none; -webkit-appearance: none; flex: none; position: relative; width: 40px; height: 24px; margin: 0; border-radius: 999px;
+    background: rgb(255 255 255 / .12); border: 1px solid var(--border-light); transition: background-color .25s var(--ease-out), border-color .25s var(--ease-out);
+}
+#page-makesite .checkbox-label input[type="checkbox"]::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; margin: 0; border: 0; border-radius: 999px; background: #fff;
+    transform: none !important; box-shadow: 0 2px 6px rgb(0 0 0 / .35); transition: transform .3s var(--ease-out), width .2s var(--ease-out);
+}
+#page-makesite .checkbox-label input[type="checkbox"]:checked { background: linear-gradient(110deg in oklch, oklch(.54 .24 293), oklch(.62 .21 330)); border-color: transparent; }
+#page-makesite .checkbox-label input[type="checkbox"]:checked::after { transform: translateX(16px) !important; }
+#page-makesite .checkbox-label input[type="checkbox"]:active::after { width: 21px; }
+#page-makesite .checkbox-label input[type="checkbox"]:checked:active::after { transform: translateX(13px) !important; }
+
+/* Plan card: working state. */
+.ms-plan.is-running .ms-meter { position: relative; overflow: hidden; }
+.ms-plan.is-running .ms-meter i { width: 38% !important; animation: msIndet 1.3s var(--ease-move) infinite; }
+.ms-plan.is-running .ms-ready { color: var(--accent2); }
+
+/* Action bar: Ctrl+Enter hint, and the rolling-facts line while a site is being created. */
+.fx-actionbar { flex-wrap: wrap; }
+.ms-kbd { margin-left: auto; display: inline-flex; gap: 4px; }
+.ms-kbd kbd { font: 500 .66rem var(--font-mono); }
+.ms-reset { margin-left: 8px; }
+.zx-fact { display: none; flex: 1 1 100%; min-width: 0; align-items: baseline; gap: 10px; padding-top: 2px; transition: opacity .26s var(--ease-out), filter .26s var(--ease-out), transform .26s var(--ease-out); }
+form.is-running .fx-actionbar .zx-fact { display: flex; }
+form.is-running .fx-actionbar :is(.fx-hint, .ms-kbd, .ms-reset) { display: none; }
+.zx-fact.swap { opacity: 0; filter: blur(6px); transform: translateY(4px); }
+.zx-fact-ic { flex: none; color: var(--accent2); font-size: .7rem; }
+.zx-fact-tag { flex: none; padding: 2px 9px; border-radius: 999px; font: 500 .62rem var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--text); background: rgb(255 255 255 / .08); border: 1px solid var(--border-light); }
+.zx-fact-tag[data-t="Fangyi"] { color: oklch(.9 .14 182); border-color: oklch(.9 .14 182 / .35); background: oklch(.9 .14 182 / .08); }
+.zx-fact-tag[data-t="Endfield"] { color: oklch(.8 .14 295); border-color: oklch(.72 .17 295 / .4); background: oklch(.72 .17 295 / .1); }
+.zx-fact-tag[data-t="Arknights"] { color: oklch(.84 .11 8); border-color: oklch(.76 .13 8 / .4); background: oklch(.76 .13 8 / .1); }
+.zx-fact-txt { min-width: 0; font: 400 .78rem/1.45 var(--font-ui); color: var(--text-muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+html[data-motion="reduce"] .ms-plan.is-running .ms-meter i { animation: none; }
+
+/* ═════════════════════════════════════════════════════════════════════
+   v62 — smooth facts reveal + honest hit targets for top-bar buttons
+   Note: html zoom is .8 (compact density), so a 30px CSS button paints
+   only 24 physical px — sizes below are chosen so the *physical* target
+   stays ≥ 30px.
+   ═════════════════════════════════════════════════════════════════════ */
+
+/* Facts ticker: no display:none flip — collapse to 0 and grow smoothly,
+   so the action bar never jumps when the first fact appears. */
+.zx-fact {
+    display: flex;
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    filter: blur(4px);
+    transform: translateY(3px);
+    padding-top: 0;
+    transition: max-height .42s var(--ease-out), padding-top .42s var(--ease-out),
+                opacity .32s var(--ease-out), filter .32s var(--ease-out),
+                transform .32s var(--ease-out);
+}
+form.is-running .fx-actionbar .zx-fact {
+    max-height: 3.6em;
+    padding-top: 2px;
+    opacity: 1;
+    filter: blur(0);
+    transform: none;
+}
+/* the blur-swap must beat the running-state reveal, so it restates it at higher specificity */
+form.is-running .fx-actionbar .zx-fact.swap { opacity: 0; filter: blur(6px); transform: translateY(4px); }
+html[data-motion="reduce"] .zx-fact { transition: none; }
+
+/* Top-bar buttons: icon buttons get a square ~30px physical target,
+   text buttons get a taller one — same visual language, real hit area. */
+.top-bar-btn { min-height: 38px; padding: 0 12px; }
+#top-bar .top-bar-btn:has(svg):not(:has(span)) { min-width: 38px; justify-content: center; }
+
+/* ═════════════════════════════════════════════════════════════════════
+   v63 — FULL PALETTE REVAMP (plan.md §2)
+   Charcoal-slate foundation (hue ~262) replaces the purple-tinted base;
+   blue = primary interactive accent, violet = secondary, cyan demoted to
+   small highlights/status; gradients restrained to the hero, selection
+   and thin active-border lines; solid surface/border tokens for reliable
+   contrast. Both themes share the accent system — Glass keeps its frosted
+   identity but its light becomes cooler, softer and more even.
+   ═════════════════════════════════════════════════════════════════════ */
+:root {
+    /* foundation — depth by lightness: page < card < raised < float */
+    --bg-void:     #090b10;
+    --bg-base:     #0b0d12;
+    --bg-surface:  #121722;
+    --bg-elevated: #1a2230;
+    --bg-float:    #232c3d;
+    --bg-input:    #0e1118;
+    --bg-glass:    rgb(26 34 48 / .60);
+    --bg-darker:   rgb(9 11 16 / .96);
+    --bg-lighter:  #1e2634;
+    --panel:       #121722;
+
+    /* hairlines — solid slate; alpha only where the ground varies */
+    --line:        #1d2432;
+    --line-strong: #2c3850;
+    --border:      #293345;
+    --border-light:#3a4a63;
+    --border-glow: rgb(51 166 255 / .50);
+    --border-focus:rgb(51 166 255 / .70);
+
+    /* type */
+    --text:        #e8edf5;
+    --text-muted:  #98a4b5;
+    --text-dim:    #6d7a8d;
+
+    /* accents — blue primary · violet secondary · cyan small highlights */
+    --zx-blue:   #33a6ff;
+    --zx-violet: #8b72f8;
+    --zx-cyan:   #55d6e8;
+    --zx-purple: #8b72f8;                     /* legacy name → violet */
+    --zx-rose:   #f07885;
+    --zx-green:  #8bd49c;
+    --zx-amber:  #f2c879;
+    --hypr-cyan: var(--zx-cyan);
+    --hypr-purple: var(--zx-violet);
+    --hypr-magenta: var(--zx-rose);
+    --accent:       var(--zx-blue);
+    --accent2:      var(--zx-violet);
+    --accent-hover: #5db5ff;
+    --accent-dim:   rgb(51 166 255 / .12);
+    --accent-glow:  rgb(51 166 255 / .30);
+
+    /* states */
+    --success:      var(--zx-green);
+    --success-glow: rgb(139 212 156 / .30);
+    --warning:      var(--zx-amber);
+    --warning-glow: rgb(242 200 121 / .30);
+    --danger:       var(--zx-rose);
+    --danger-glow:  rgb(240 120 133 / .30);
+
+    /* the one accent gradient — thin active lines + selected pills only */
+    --hy-border: linear-gradient(135deg in oklch, var(--zx-cyan), var(--zx-violet) 55%, var(--zx-blue));
+    --hypr-active-border: var(--hy-border);
+
+    /* glows follow the accent */
+    --shadow-glow: 0 0 25px rgb(51 166 255 / .14);
+    --shadow-btn:  0 4px 18px rgb(51 166 255 / .22), 0 0 0 1px rgb(139 114 248 / .18);
+}
+::selection { background: rgb(51 166 255 / .32); }
+
+/* Primary action: solid blue — gradients belong to the hero, not buttons. */
+html body .btn-primary:not(.is-danger) {
+    background-image: none;
+    background-color: var(--zx-blue);
+    border-color: rgb(51 166 255 / .45);
+    box-shadow: 0 4px 16px rgb(51 166 255 / .25), inset 0 1px 0 rgb(255 255 255 / .22);
+}
+html body .btn-primary:not(.is-danger):hover { background-color: #4ab1ff; }
+
+/* Title: same idea, quieter tail. */
+html body .page-header h2 {
+    background-image: linear-gradient(100deg in oklch, #fff 45%, #c6dcff 82%, var(--zx-cyan) 128%);
+}
+
+/* Active-border gradient (cards, palette, dialogs): re-hued, same weight. */
+.card::after { background: linear-gradient(135deg, #55d6e8, #8b72f8 55%, #33a6ff); }
+.fx-pal {
+    background:
+        linear-gradient(rgb(9 11 16 / .98), rgb(9 11 16 / .98)) padding-box,
+        linear-gradient(135deg, #55d6e8, #8b72f8 55%, #33a6ff) border-box;
+}
+
+/* Meters: cyan→violet fill; danger keeps its own ramp. */
+.fx-meter i { background: linear-gradient(90deg, #55d6e8, #8b72f8); }
+.fx-meter i.is-danger { background: linear-gradient(90deg, #f2c879, #f07885); }
+
+/* Status tints that were hardcoded rose. */
+.status-box:has(.badge.inactive) { --tint-c: #f07885; }
+.fx-health[data-state="down"]    { --tint-c: #f07885; }
+.res-pill[data-state="danger"]   { --pill-c: #f07885; }
+.fx-metric[data-state="danger"]  { --m-c: #f07885; }
+
+/* Selection state: blue wash; the sliding pill's edge stops hue-cycling
+   (plan §interaction: no repeated motion that distracts from reading). */
+.nav-item.active { background-image: linear-gradient(90deg, rgb(51 166 255 / .16), rgb(51 166 255 / .03)); }
+.nav-item.active .nav-icon, .nav-item.active svg { color: var(--zx-blue); }
+.hy-pill--nav::before {
+    background: linear-gradient(180deg, var(--zx-cyan), var(--zx-violet));
+    box-shadow: 0 0 10px rgb(85 214 232 / .40);
+    animation: none;
+}
+.hy-pill--tab, .hy-seg button.on { background-image: linear-gradient(135deg in oklch, rgb(139 114 248 / .30), rgb(51 166 255 / .08)); }
+
+/* Brand + eyebrow: violet→blue. */
+.brand-mark {
+    background: linear-gradient(135deg, #8b72f8, #33a6ff);
+    box-shadow: 0 6px 18px rgb(139 114 248 / .40), 0 0 0 1px rgb(139 114 248 / .35), inset 0 1px 0 rgb(255 255 255 / .25);
+}
+.hy-eyebrow::before { background: linear-gradient(90deg, var(--zx-cyan), var(--zx-violet)); }
+
+/* Inputs: blue focus ring. */
+.form-control:focus { border-color: var(--zx-blue); box-shadow: 0 0 0 3px rgb(51 166 255 / .14), 0 0 20px rgb(51 166 255 / .10); }
+
+/* Sidebar rail on the new slate. */
+.sidebar { background: linear-gradient(180deg, #141927, #0d1017); border-color: #293345; }
+
+/* Splash: follows the family. */
+#zx-splash {
+    background:
+        radial-gradient(700px 520px at 20% 15%, oklch(.40 .14 265 / .65), transparent 65%),
+        radial-gradient(640px 520px at 85% 90%, oklch(.42 .10 230 / .45), transparent 65%),
+        radial-gradient(520px 420px at 80% 20%, oklch(.38 .12 290 / .35), transparent 65%),
+        oklch(.13 .02 262);
+}
+.zx-sp-glow { background: radial-gradient(circle, oklch(.55 .16 265 / .30), transparent 70%); }
+.zx-sp-ring {
+    background: conic-gradient(from var(--hy-ang), transparent 0 50%, #55d6e8, #8b72f8, #33a6ff, transparent 90%);
+}
+.zx-sp-z { background: linear-gradient(135deg in oklch, oklch(.55 .16 265), oklch(.60 .15 285)); }
+.zx-sp-bar i {
+    background: linear-gradient(90deg in oklch, #55d6e8, #8b72f8, #33a6ff);
+    box-shadow: 0 0 14px rgb(139 114 248 / .55);
+}
+
+/* ═══ Glass theme — same frosted identity, a calmer and cooler light ═══
+   The magenta/pink discs go; light comes from a blue aurora, a cyan wash
+   and one violet accent — softer chroma, smoother falloff, deeper rest
+   state so the frosting reads. */
+html[data-theme="glass"] {
+    --bg-float: oklch(.24 .03 262 / .96);
+    --gl-pill: oklch(.93 .045 275);
+    --gl-pill-ink: oklch(.24 .08 280);
+    background:
+        radial-gradient(620px 620px at 82% 14%, oklch(.74 .11 240 / .15), transparent 70%),
+        radial-gradient(720px 720px at 10% 86%, oklch(.82 .09 210 / .12), transparent 70%),
+        radial-gradient(520px 520px at 66% 94%, oklch(.60 .14 290 / .14), transparent 70%),
+        radial-gradient(1150px 760px at 6% 0%, oklch(.40 .12 268 / .78), transparent 60%),
+        radial-gradient(1000px 900px at 100% 104%, oklch(.36 .10 235 / .55), transparent 62%),
+        radial-gradient(760px 640px at 70% 40%, oklch(.30 .10 300 / .28), transparent 65%),
+        linear-gradient(160deg in oklch, oklch(.175 .035 268), oklch(.12 .025 262)) fixed;
+}
+html[data-theme="glass"] .nav-menu .nav-item.active svg { color: oklch(.45 .18 275); }
+html[data-theme="glass"] .content-tab-btn.active::after { color: oklch(.42 .16 275); }
+html[data-theme="glass"] .content-tab-btn.active > svg { color: oklch(.45 .18 275); }
+html[data-theme="glass"] .fx-actionbar { background: rgb(14 18 28 / .6) !important; }
+
+/* Hero + CPU tile: blue→violet (plan's accent pair), cyan glint top-right. */
+html[data-theme="glass"] #page-dashboard .dashboard-header {
+    background:
+        radial-gradient(520px 260px at 90% 0%, oklch(.82 .10 210 / .30), transparent 70%),
+        linear-gradient(135deg in oklch, oklch(.50 .17 255), oklch(.54 .16 290)) !important;
+    box-shadow: 0 28px 64px oklch(.28 .10 265 / .45), inset 0 1px 0 rgb(255 255 255 / .28);
+}
+html[data-theme="glass"] #page-dashboard.active > .fx-metrics #fx-m-cpu {
+    background-color: transparent !important;
+    background-image: linear-gradient(135deg in oklch, oklch(.50 .17 255), oklch(.54 .16 290)) !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════════
+   v64 — WEB TERMINAL (page-terminal)
+   Token-driven so both themes come along; the pane is a recessed input
+   well (like form fields), the caret blinks only while the page is open.
+   ═════════════════════════════════════════════════════════════════════ */
+.zx-term-card { padding: 0; overflow: hidden; }
+.zx-term-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in oklch, var(--bg-surface) 55%, transparent);
+}
+.zx-term-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--text-dim); box-shadow: 0 0 0 3px rgb(255 255 255 / .04); transition: background .3s, box-shadow .3s; }
+.zx-term-dot.ok  { background: var(--success); box-shadow: 0 0 10px var(--success-glow); }
+.zx-term-dot.err { background: var(--danger);  box-shadow: 0 0 10px var(--danger-glow); }
+.zx-term-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 .74rem var(--font-mono); letter-spacing: .04em; color: var(--text-muted); }
+.zx-term-actions { flex: none; margin-left: auto; display: flex; gap: 8px; }
+.zx-term-scroll {
+    position: relative;
+    height: clamp(320px, 56vh, 560px);
+    overflow: auto;
+    padding: 14px 16px 18px;
+    background: var(--bg-input);
+    border-radius: calc(var(--hy-round) - 2px);
+    cursor: text;
+    outline: none;
+    font: 13px/1.5 var(--font-mono);
+    color: var(--text);
+    tab-size: 4;
+}
+.zx-term-scroll:focus-visible { box-shadow: 0 0 0 2px var(--border-focus); }
+.zx-term-line { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.5em; }
+.zx-term-caret {
+    display: inline-block;
+    width: 8px; height: 15px;
+    margin: 2px 0 -2px 1px;
+    border-radius: 1px;
+    vertical-align: text-bottom;
+    background: var(--zx-cyan);
+    opacity: .85;
+    animation: zxCaretBlink 1.1s steps(1) infinite;
+}
+@keyframes zxCaretBlink { 0%, 55% { opacity: .85; } 56%, 100% { opacity: .15; } }
+html[data-motion="reduce"] .zx-term-caret { animation: none; }
+/* hidden but focusable: typing, Ctrl+V and right-click-paste all land here */
+.zx-term-input {
+    position: fixed; top: -60px; left: 8px;
+    width: 220px; height: 28px;
+    opacity: 0; border: 0; padding: 0; resize: none;
+    pointer-events: none;
+    white-space: pre;
+}
+.zx-term-foot {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 14px;
+    border-top: 1px solid var(--border);
+    font: 400 .72rem var(--font-ui);
+    color: var(--text-dim);
+}
+.zx-term-foot kbd {
+    font: 500 .62rem var(--font-mono);
+    padding: 1px 5px; border-radius: 5px;
+    border: 1px solid var(--border-light);
+    background: rgb(255 255 255 / .04);
+}
+.zx-term-state { font: 500 .68rem var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim); }
+.zx-term-state.ok  { color: var(--success); }
+.zx-term-state.err { color: var(--danger); }
+.zx-term-devnote { font-style: italic; color: var(--text-muted); }
+.zx-term-note { width: 100%; color: var(--warning); }
+.zx-term-scroll ::selection { background: rgb(51 166 255 / .35); }
+
+/* glass: the pane frosts like everything else */
+html[data-theme="glass"] .zx-term-scroll { background: rgb(0 0 0 / .30); }
+html[data-theme="glass"] .zx-term-bar { background: rgb(255 255 255 / .04); }
+html[data-theme="glass"] .zx-term-foot kbd { background: rgb(255 255 255 / .06); }
+html[data-theme="glass"] .zx-term-card {
+    background-color: rgb(255 255 255 / .05);
+    -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4);
+}

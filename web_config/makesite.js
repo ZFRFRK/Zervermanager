@@ -36,6 +36,79 @@
         grp.dataset.state = r[0]; msg.textContent = r[1];
     };
 
+
+    /* ── Running state + rolling facts while a site is being created ── */
+    const isRunning = (form) => { const b = form && form.querySelector('button[type="submit"]'); return !!b && (!!b.querySelector('.btn-spinner') || b.disabled); };
+    const FACTS = [
+        ['Fangyi', 'Zhuang Fangyi is the Viceroy of Wuling in Arknights: Endfield.'],
+        ['Fangyi', 'She is also one of the Tianshi of the Hongshan Academy of Sciences.'],
+        ['Fangyi', 'Fangyi was an NPC at Endfield’s launch, then became playable on April 17, 2026.'],
+        ['Fangyi', 'She plays as a 6★ Electric Striker who wields an Arts Unit.'],
+        ['Fangyi', 'Fans keep noticing how much she resembles Dusk from Arknights; nothing is confirmed.'],
+        ['Fangyi', 'Her debut came with Update 1.2, ‘At the Wake of Spring’.'],
+        ['Fangyi', 'Guides pair Fangyi with Perlica because her Combo Skill has a long cooldown.'],
+        ['Endfield', 'Arknights: Endfield launched worldwide on January 22, 2026.'],
+        ['Endfield', 'It arrived on PlayStation 5, PC and mobile at the same time.'],
+        ['Endfield', 'Over 35 million people pre-registered before Endfield launched.'],
+        ['Endfield', 'Endfield is set on Talos-II, far from Arknights’ world of Terra.'],
+        ['Endfield', 'You play the Endministrator, working for Endfield Industries.'],
+        ['Endfield', 'Its factory system is called the Automated Industrial Complex, or AIC.'],
+        ['Endfield', 'You control four operators at once and can swap between them mid-fight.'],
+        ['Endfield', 'Hypergryph develops Endfield; Gryphline publishes it worldwide.'],
+        ['Endfield', 'Endfield aims for a roughly even split between combat and factory-building.'],
+        ['Endfield', 'Endfield was first shown in 2022, with a PC technical test in January 2024.'],
+        ['Arknights', 'Arknights launched in China on May 1, 2019 and worldwide on January 16, 2020.'],
+        ['Arknights', 'In Arknights, your operators act as the towers in a tower defense game.'],
+        ['Arknights', 'You play the Doctor, an amnesiac strategist who leads Rhodes Island.'],
+        ['Arknights', 'Rhodes Island’s logo looks like a chess rook.'],
+        ['Arknights', 'Arknights’ Chinese title, 明日方舟, means “Ark of Tomorrow”.'],
+        ['Arknights', 'Oripathy, a disease caused by Originium, drives much of Arknights’ story.'],
+        ['Arknights', 'Arknights is developed by Hypergryph together with Studio Montagne.']
+    ];
+    let bag = [], lastFact = -1, tickIv = 0, tickForm = null;
+    const nextFact = () => {
+        if (!bag.length) {
+            bag = FACTS.map((_, i) => i);
+            for (let i = bag.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [bag[i], bag[j]] = [bag[j], bag[i]]; }
+            if (bag[bag.length - 1] === lastFact) bag.reverse();
+        }
+        lastFact = bag.pop(); return FACTS[lastFact];
+    };
+    const showFact = (el, first) => {
+        const f = nextFact(), tag = $('.zx-fact-tag', el), txt = $('.zx-fact-txt', el);
+        const apply = () => { tag.textContent = f[0] === 'Fangyi' ? 'Zhuang Fangyi' : f[0]; tag.dataset.t = f[0]; txt.textContent = f[1]; el.classList.remove('swap'); };
+        if (first) { apply(); return; }
+        el.classList.add('swap'); setTimeout(apply, 260);
+    };
+    const syncTicker = (form, running) => {
+        if (running && tickForm !== form) {
+            const el = $('.zx-fact', form); if (!el) return;
+            form.classList.add('is-running');   // CSS gate: form.is-running .zx-fact
+            clearInterval(tickIv); tickForm = form; showFact(el, true);
+            tickIv = setInterval(() => showFact(el, false), 4800);
+        } else if (!running && tickForm === form) { clearInterval(tickIv); tickIv = 0; tickForm = null; form.classList.remove('is-running'); }
+    };
+
+    /* ── Group the form: Site → Database → Server → Files, headings between, DOM order = visual order ── */
+    const organise = (form) => {
+        if (form.dataset.msOrg) return; form.dataset.msOrg = '1';
+        const RANK = { site: 10, database: 20, server: 30, files: 40 };
+        const CAT = { domain: 'site', backend: 'site', db_pass: 'database', db_name: 'database', db_user: 'database', server: 'server', ip: 'server', ssl: 'server', le_email: 'server', docroot: 'files' };
+        const TITLE = { database: 'Database', server: 'Server', files: 'Files' };
+        const groups = Array.from(form.children).filter(c => c.classList && c.classList.contains('form-group'));
+        if (groups.length < 2) return;
+        const info = groups.map((g, i) => { const n = g.querySelector('[name]'); const cat = (n && CAT[n.name]) || 'other'; return { g, i, cat, r: RANK[cat] || 50 }; });
+        info.sort((a, b) => a.r - b.r || a.i - b.i);
+        const anchor = Array.from(form.children).find(c => !(c.classList && c.classList.contains('form-group')) && c.tagName !== 'INPUT');
+        let prev = '';
+        info.forEach(x => {
+            if (TITLE[x.cat] && x.cat !== prev) { const h = document.createElement('div'); h.className = 'ms-sec'; h.textContent = TITLE[x.cat]; form.insertBefore(h, anchor || null); }
+            prev = x.cat; form.insertBefore(x.g, anchor || null);
+        });
+    };
+    $$('#page-makesite form').forEach(f => safe(() => organise(f)));
+
+
     /* ── Plan card ──────────────────────────────────────────────────── */
     const plan = document.getElementById('ms-plan');
     let lastKey = '', last = {};
@@ -43,6 +116,8 @@
         const d = val(f, 'domain').toLowerCase();
         const pre = (d.split('.')[0] || '').replace(/[^a-z0-9_]/g, '_');
         const R = [['Domain', d || null, 1]];
+        const sslText = f.elements.ssl ? sel(f, 'ssl') : '';
+        R.push(['URL', d ? (/http only|none/i.test(sslText) || !sslText ? 'http://' : 'https://') + d : null, 1]);
         R.push(['Web server', tab === 'lamp' ? 'Apache' : tab === 'lemp' ? 'Nginx' : (sel(f, 'server') || null)]);
         if (tab === 'proxy') R.push(['Backend', val(f, 'backend') || null, 1]);
         else R.push(['Doc root', val(f, 'docroot') || (d ? '/var/www/' + d : null), 1]);
@@ -70,9 +145,12 @@
         const fresh = lastKey !== tab; lastKey = tab;
         plan.innerHTML = '';
         const head = document.createElement('div'); head.className = 'ms-plan-head';
-        const t = document.createElement('span'); t.className = 'ms-eyebrow'; t.textContent = 'Plan';
-        const rd = document.createElement('span'); rd.className = 'ms-ready' + (ready ? ' is-ready' : '');
-        rd.textContent = ready ? 'Ready to create' : `${req.length - done} required left`;
+        const running = isRunning(form);
+        plan.classList.toggle('is-running', running);
+        const t = document.createElement('span'); t.className = 'ms-eyebrow'; t.textContent = running ? 'Creating' : 'Plan';
+        const rd = document.createElement('span'); rd.className = 'ms-ready' + (ready || running ? ' is-ready' : '');
+        rd.textContent = running ? 'Working…' : ready ? 'Ready to create' : `${req.length - done} required left`;
+        syncTicker(form, running);
         head.append(t, rd);
         const meter = document.createElement('div'); meter.className = 'ms-meter';
         const bar = document.createElement('i'); bar.style.width = (req.length ? Math.round(done / req.length * 100) : 100) + '%'; meter.appendChild(bar);
@@ -110,7 +188,12 @@
     /* ── One-time enhancements ──────────────────────────────────────── */
     safe(() => {
         // hints: drop the leading dash, keep the full text as a tooltip
-        $$('.label-hint', page).forEach(h => { const t = h.textContent.replace(/^\s*[—–-]\s*/, ''); h.title = t; h.textContent = t; });
+        $$('.label-hint', page).forEach(h => {
+            const t = h.textContent.replace(/^\s*[—–-]\s*/, '').trim();
+            const grp = h.closest('.form-group');
+            h.remove();
+            if (grp && t && !$('.ms-help', grp)) { const d = document.createElement('div'); d.className = 'ms-help'; d.textContent = t; grp.appendChild(d); }
+        });
         // domain: example placeholder
         $$('input[name="domain"]', page).forEach(i => { if (!i.placeholder) i.placeholder = 'example.com'; i.autocomplete = 'off'; i.spellcheck = false; });
     });
@@ -123,7 +206,7 @@
             inp.parentNode.insertBefore(wrap, inp); wrap.appendChild(inp);
             const tools = document.createElement('div'); tools.className = 'ms-tools';
             const mk = (label, svg) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'ms-tool'; b.title = label; b.setAttribute('aria-label', label); b.innerHTML = svg; return b; };
-            const eye = mk('Show password', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>');
+            const eye = mk('Show password', '<svg class="ic ic-a" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg><svg class="ic ic-b" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20C5 20 1 12 1 12a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>');
             const gen = mk('Generate a strong password', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>');
             tools.append(eye, gen); wrap.appendChild(tools);
             const st = document.createElement('div'); st.className = 'ms-strength'; st.innerHTML = '<i></i>'; wrap.after(st);
@@ -203,7 +286,14 @@
             $$('input[name="db_pass"]', f).forEach(i => { i.type = 'password'; fire(i, 'input'); });
             schedule();
         });
-        bar.appendChild(b);
+        const hint = bar.querySelector('.fx-hint');
+        const fact = document.createElement('div'); fact.className = 'zx-fact'; fact.setAttribute('aria-hidden', 'true');
+        fact.innerHTML = '<span class="zx-fact-ic">✦</span><span class="zx-fact-tag"></span><span class="zx-fact-txt"></span>';
+        if (hint) hint.after(fact); else bar.appendChild(fact);
+        const kb = document.createElement('span'); kb.className = 'ms-kbd'; kb.innerHTML = '<kbd>Ctrl</kbd><kbd>↵</kbd>';
+        bar.appendChild(kb); bar.appendChild(b);
+        const sb = bar.querySelector('button[type="submit"]');
+        if (sb) new MutationObserver(schedule).observe(sb, { childList: true, attributes: true, attributeFilter: ['disabled'] });
     });
     setTimeout(addReset, 700); setTimeout(addReset, 2000);
     render();

@@ -55,7 +55,7 @@
     };
 
     // page → "g + key" (mirrors the sequence map in app.js)
-    const PAGE_KEYS = { dashboard: 'd', managesites: 'm', makesite: 's', dns: 'z', mariadb: 'b', services: 'i', server: 'v', network: 'n', docker: 'k', help: 'h' };
+    const PAGE_KEYS = { dashboard: 'd', managesites: 'm', makesite: 's', dns: 'z', mariadb: 'b', services: 'i', server: 'v', terminal: 't', network: 'n', docker: 'k', help: 'h' };
 
     /* ═══════════════════════════════════════════════
        1. SPLASH — skippable

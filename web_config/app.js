@@ -1613,6 +1613,7 @@ document.addEventListener('keydown', (e) => {
             'b': 'mariadb',
             'i': 'services',
             'v': 'server',
+            't': 'terminal',
             'n': 'network',
             'k': 'docker',
             'h': 'help'
