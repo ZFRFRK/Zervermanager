@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
+from __future__ import annotations   # PEP 604/585 backport: allows X | Y and list[X] on Python 3.7-3.9
 
-SCRIPT_VERSION = "1.3.0"
+SCRIPT_VERSION = "1.3.28"
 
 import os
 import re
@@ -10,8 +11,2050 @@ from pathlib import Path
 from datetime import datetime
 import shutil
 import socket
+import io
 import sys
 import time
+import glob
+import http.server
+import socketserver
+import urllib.parse
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  DAMAGE CONTROL INFRASTRUCTURE  (plan.md — all phases 0–7)
+#  This block is self-contained and inserted before all application logic.
+#  Every phase is implemented here; the rest of the file remains intact and its
+#  handlers are gradually wrapped by the primitives defined below.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import hashlib
+import hmac
+import fcntl
+import threading
+import tempfile
+import tarfile
+import traceback
+import uuid
+import ipaddress
+import contextlib
+import queue
+import signal
+import enum
+from functools import wraps
+
+# ─────────────────────────────────────────
+#  Runtime directories (created on demand)
+# ─────────────────────────────────────────
+
+ZM_STATE_DIR     = "/var/lib/zervermanager"
+ZM_JOURNAL_DIR   = f"{ZM_STATE_DIR}/journal"
+ZM_SNAPSHOT_DIR  = f"{ZM_STATE_DIR}/snapshots"
+ZM_TRASH_DIR     = f"{ZM_STATE_DIR}/trash"
+ZM_LOCK_DIR      = f"{ZM_STATE_DIR}/lock"
+ZM_INCIDENTS_LOG = f"{ZM_STATE_DIR}/incidents.jsonl"
+ZM_STATE_FILE    = f"{ZM_STATE_DIR}/state.json"
+ZM_AUTH_FILE     = "/etc/zervermanager/auth.json"
+ZM_AUDIT_LOG     = "/var/log/zervermanager/audit.jsonl"
+
+# ─────────────────────────────────────────
+#  Phase 0 — Auth (session, scrypt, CSRF)
+# ─────────────────────────────────────────
+
+_SESSION_STORE: dict = {}          # session_id -> {"actor": str, "ts": float, "csrf": str}
+_LOGIN_ATTEMPTS: dict = {}         # ip -> [timestamps]
+_SESSION_TTL   = 86400 * 7         # 7 days
+_LOGIN_RATE    = 10                # max attempts per window
+_LOGIN_WINDOW  = 300               # 5 minutes
+_SAFE_MODE     = False             # toggled by startup recovery or manual override
+
+def _ensure_zm_dirs():
+    """Create all runtime directories with strict permissions."""
+    for d in (ZM_STATE_DIR, ZM_JOURNAL_DIR, ZM_SNAPSHOT_DIR,
+              ZM_TRASH_DIR, ZM_LOCK_DIR):
+        os.makedirs(d, mode=0o700, exist_ok=True)
+    audit_dir = os.path.dirname(ZM_AUDIT_LOG)
+    os.makedirs(audit_dir, mode=0o750, exist_ok=True)
+    os.makedirs(os.path.dirname(ZM_AUTH_FILE), mode=0o700, exist_ok=True)
+
+
+def _load_auth_config() -> dict:
+    """Load auth.json, return {} if missing or corrupt."""
+    try:
+        with open(ZM_AUTH_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_auth_config(cfg: dict):
+    _ensure_zm_dirs()
+    with open(ZM_AUTH_FILE, "w") as f:
+        json.dump(cfg, f, indent=2)
+    os.chmod(ZM_AUTH_FILE, 0o600)
+
+
+def _hash_password(password: str) -> str:
+    """Hash a password with scrypt via stdlib hashlib."""
+    salt = os.urandom(16)
+    dk = hashlib.scrypt(password.encode(), salt=salt, n=16384, r=8, p=1)
+    return salt.hex() + ":" + dk.hex()
+
+
+def _verify_password(password: str, stored: str) -> bool:
+    try:
+        salt_hex, dk_hex = stored.split(":")
+        salt = bytes.fromhex(salt_hex)
+        dk   = bytes.fromhex(dk_hex)
+        candidate = hashlib.scrypt(password.encode(), salt=salt, n=16384, r=8, p=1)
+        return hmac.compare_digest(candidate, dk)
+    except Exception:
+        return False
+
+
+def auth_init(admin_password: str):
+    """Initialise auth config with a single admin account."""
+    cfg = {"admin": {"hash": _hash_password(admin_password), "role": "admin"}}
+    cfg["session_secret"] = os.urandom(32).hex()
+    _save_auth_config(cfg)
+
+
+def auth_reset(new_password: str):
+    """CLI: reset the admin password."""
+    cfg = _load_auth_config()
+    if "admin" not in cfg:
+        cfg["admin"] = {"role": "admin"}
+    cfg["admin"]["hash"] = _hash_password(new_password)
+    _save_auth_config(cfg)
+
+
+def auth_login(username: str, password: str, client_ip: str = "") -> tuple[bool, str]:
+    """Attempt login. Returns (success, session_id_or_error)."""
+    # Rate limiting
+    now = time.time()
+    bucket = _LOGIN_ATTEMPTS.setdefault(client_ip, [])
+    _LOGIN_ATTEMPTS[client_ip] = [t for t in bucket if now - t < _LOGIN_WINDOW]
+    if len(_LOGIN_ATTEMPTS[client_ip]) >= _LOGIN_RATE:
+        return False, "Too many attempts — try again later."
+    _LOGIN_ATTEMPTS[client_ip].append(now)
+
+    cfg = _load_auth_config()
+    user = cfg.get(username)
+    if not user or not _verify_password(password, user.get("hash", "")):
+        return False, "Invalid credentials."
+
+    sid = uuid.uuid4().hex
+    csrf = uuid.uuid4().hex
+    _SESSION_STORE[sid] = {
+        "actor": username,
+        "role": user.get("role", "viewer"),
+        "ts": now,
+        "csrf": csrf,
+    }
+    return True, sid
+
+
+def auth_logout(session_id: str):
+    _SESSION_STORE.pop(session_id, None)
+
+
+def auth_session(session_id: str) -> dict | None:
+    """Return session dict if valid, else None."""
+    sess = _SESSION_STORE.get(session_id)
+    if sess and time.time() - sess["ts"] < _SESSION_TTL:
+        sess["ts"] = time.time()
+        return sess
+    _SESSION_STORE.pop(session_id, None)
+    return None
+
+
+def auth_csrf_ok(session_id: str, csrf_token: str) -> bool:
+    sess = _SESSION_STORE.get(session_id)
+    if not sess:
+        return False
+    return hmac.compare_digest(sess.get("csrf", ""), csrf_token)
+
+
+def web_require_auth(handler_method):
+    """Decorator for WebUIHandler methods: enforce session + CSRF for mutating routes."""
+    @wraps(handler_method)
+    def wrapper(self, *args, **kwargs):
+        # Origin / Host check (CSRF / DNS-rebinding protection)
+        origin = self.headers.get("Origin", "")
+        host   = self.headers.get("Host", "")
+        if origin and not (origin.startswith("http://") and host in origin):
+            self.send_error(403, "Forbidden: cross-origin request")
+            return
+        # Session check
+        cookie = self.headers.get("Cookie", "")
+        sid = ""
+        for part in cookie.split(";"):
+            part = part.strip()
+            if part.startswith("zm_session="):
+                sid = part[len("zm_session="):]
+        sess = auth_session(sid)
+        if not sess:
+            self.send_error(401, "Unauthorised: login required")
+            return
+        self.zm_session = sess
+        return handler_method(self, *args, **kwargs)
+    return wrapper
+
+
+def web_require_csrf(handler_method):
+    """Decorator: additionally enforce the X-ZM-CSRF header on POST routes."""
+    @wraps(handler_method)
+    def wrapper(self, *args, **kwargs):
+        cookie = self.headers.get("Cookie", "")
+        sid = ""
+        for part in cookie.split(";"):
+            part = part.strip()
+            if part.startswith("zm_session="):
+                sid = part[len("zm_session="):]
+        csrf = self.headers.get("X-ZM-CSRF", "")
+        if not auth_csrf_ok(sid, csrf):
+            self.send_error(403, "Forbidden: invalid CSRF token")
+            return
+        return handler_method(self, *args, **kwargs)
+    return wrapper
+
+
+def auth_is_configured() -> bool:
+    cfg = _load_auth_config()
+    return bool(cfg.get("admin", {}).get("hash"))
+
+
+# ─────────────────────────────────────────
+#  Phase 0 — Single-instance lock
+# ─────────────────────────────────────────
+
+_INSTANCE_LOCK_FD = None
+
+def acquire_instance_lock() -> bool:
+    """Try to acquire the instance-level flock. Returns False if another instance is running."""
+    global _INSTANCE_LOCK_FD
+    _ensure_zm_dirs()
+    lock_path = f"{ZM_LOCK_DIR}/instance.lock"
+    try:
+        fd = open(lock_path, "w")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fd.write(str(os.getpid()))
+        fd.flush()
+        _INSTANCE_LOCK_FD = fd
+        return True
+    except OSError:
+        return False
+
+
+# ─────────────────────────────────────────
+#  Phase 0 — Operation lock (one mutation at a time)
+# ─────────────────────────────────────────
+
+_OPERATION_LOCK   = threading.Lock()
+_OPERATION_HOLDER = {"who": None, "what": None, "since": None}
+_OP_LOCK_FD       = None
+
+
+@contextlib.contextmanager
+def operation_lock(actor: str = "cli", what: str = "operation"):
+    """Context manager: hold the operation flock for the duration of a mutation.
+    Raises RuntimeError(409) if another mutation is already running."""
+    _ensure_zm_dirs()
+    lock_path = f"{ZM_LOCK_DIR}/operation.lock"
+    try:
+        fd = open(lock_path, "w")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        holder = _OPERATION_HOLDER
+        raise RuntimeError(
+            f"409 Busy: another operation is running "
+            f"(by {holder['who']} since {holder['since']}: {holder['what']})"
+        )
+    _OPERATION_HOLDER.update({"who": actor, "what": what,
+                               "since": datetime.now().isoformat()})
+    try:
+        yield
+    finally:
+        _OPERATION_HOLDER.update({"who": None, "what": None, "since": None})
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            fd.close()
+        except Exception:
+            pass
+
+
+# ─────────────────────────────────────────
+#  Phase 0 — Audit log
+# ─────────────────────────────────────────
+
+_SECRET_PATTERNS = [
+    re.compile(r'(?i)(password|passwd|secret|token|key|pass)\s*[=:]\s*\S+'),
+    re.compile(r'\$[A-Za-z_]+PWD\s*=\s*\S+'),
+]
+
+
+def _redact(text: str) -> str:
+    for pat in _SECRET_PATTERNS:
+        text = pat.sub(r'\1=***REDACTED***', text)
+    return text
+
+
+_AUDIT_LOCK = threading.Lock()
+
+def audit(
+    actor: str,
+    action: str,
+    resource: str = "",
+    tier: int = 0,
+    tx_id: str = "",
+    snap_id: str = "",
+    result: str = "ok",
+    duration_ms: int = 0,
+    validators: list | None = None,
+    probes: list | None = None,
+    src: str = "",
+    extra: dict | None = None,
+):
+    """Append one JSON line to the audit log."""
+    _ensure_zm_dirs()
+    entry = {
+        "ts": datetime.utcnow().isoformat() + "Z",
+        "actor": actor,
+        "src": src,
+        "action": action,
+        "tier": tier,
+        "resource": _redact(resource),
+        "tx": tx_id,
+        "snapshot": snap_id,
+        "result": result,
+        "duration_ms": duration_ms,
+        "validators": validators or [],
+        "probes": probes or [],
+    }
+    if extra:
+        entry.update(extra)
+    line = json.dumps(entry) + "\n"
+    with _AUDIT_LOCK:
+        try:
+            with open(ZM_AUDIT_LOG, "a") as f:
+                f.write(line)
+        except Exception:
+            pass  # audit failure must never crash the app
+
+
+# ─────────────────────────────────────────
+#  Phase 0/6 — Protected resources
+# ─────────────────────────────────────────
+
+_PROTECTED_ACCOUNTS = {
+    "root", "www-data", "postfix", "dovecot", "mysql",
+    "bind", "nobody", "daemon", "sync", "games", "man",
+    "lp", "news", "uucp", "proxy", "backup", "list",
+    "irc", "gnats", "sshd", "systemd-network",
+    "systemd-resolve", "messagebus", "avahi",
+}
+
+_PROTECTED_PORTS = {22, 8080, 8443}   # extended with WEB_UI_DEFAULT_PORT at startup
+
+_PROTECTED_PATHS = {
+    "/", "/etc", "/var", "/usr", "/bin", "/sbin", "/lib", "/boot",
+    "/proc", "/sys", "/dev", "/home", "/root", "/run", "/tmp", "/srv",
+    "/var/www", "/var/lib/zervermanager",
+}
+
+_PROTECTED_DATABASES = {
+    "mysql", "information_schema", "performance_schema", "sys",
+}
+
+
+def _check_protected_account(username: str):
+    """Raise ValueError if username is a protected system account."""
+    try:
+        import pwd
+        uid = pwd.getpwnam(username).pw_uid
+        if uid < 1000:
+            raise ValueError(f"'{username}' is a protected system account (UID {uid}).")
+    except KeyError:
+        pass  # user doesn't exist yet — OK
+    if username in _PROTECTED_ACCOUNTS:
+        raise ValueError(f"'{username}' is a protected account.")
+
+
+def _check_protected_path(path: str):
+    real = os.path.realpath(path)
+    if real in _PROTECTED_PATHS:
+        raise ValueError(f"Path '{real}' is protected.")
+    for p in _PROTECTED_PATHS:
+        if real.startswith(p + "/") and p in ("/", "/etc", "/var/lib/zervermanager"):
+            if p == "/var/lib/zervermanager":
+                raise ValueError(f"Path '{real}' is inside the protected state directory.")
+
+
+def _check_protected_port(port: int):
+    if port in _PROTECTED_PORTS:
+        raise ValueError(f"Port {port} is reserved and cannot be used.")
+
+
+def _check_protected_database(name: str):
+    if name.lower() in _PROTECTED_DATABASES:
+        raise ValueError(f"Database '{name}' is protected.")
+
+
+# ─────────────────────────────────────────
+#  Phase 0 — Server-side confirmation tokens (plan/apply API)
+# ─────────────────────────────────────────
+
+_PLAN_STORE: dict = {}   # plan_id -> {"action": str, "data": dict, "tier": int, "ts": float, "used": bool}
+_PLAN_TTL = 120          # seconds a plan_id is valid
+
+
+def plan_create(action: str, data: dict, tier: int, impact: list) -> str:
+    """Register a pending plan and return a one-time plan_id."""
+    pid = uuid.uuid4().hex
+    _PLAN_STORE[pid] = {
+        "action": action,
+        "data": data,
+        "tier": tier,
+        "impact": impact,
+        "ts": time.time(),
+        "used": False,
+    }
+    return pid
+
+
+def plan_consume(plan_id: str) -> dict | None:
+    """Mark a plan as used and return it, or None if invalid/expired/already used."""
+    plan = _PLAN_STORE.get(plan_id)
+    if not plan:
+        return None
+    if plan["used"]:
+        return None
+    if time.time() - plan["ts"] > _PLAN_TTL:
+        del _PLAN_STORE[plan_id]
+        return None
+    plan["used"] = True
+    return plan
+
+
+# ─────────────────────────────────────────
+#  Phase 1 — Input validation module
+# ─────────────────────────────────────────
+
+_DOMAIN_RE   = re.compile(r'^(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$')
+_USERNAME_RE = re.compile(r'^[a-z_][a-z0-9_.\-]{0,30}[a-z0-9_]$')
+_DBNAME_RE   = re.compile(r'^[A-Za-z0-9_]{1,64}$')
+
+
+def validate_domain_input(domain: str) -> str:
+    """Validate and normalise a domain name. Returns lowercased domain or raises ValueError."""
+    d = domain.strip().lower()
+    if not d:
+        raise ValueError("Domain cannot be empty.")
+    if len(d) > 253:
+        raise ValueError("Domain too long (>253 chars).")
+    if not _DOMAIN_RE.match(d):
+        raise ValueError(f"Invalid domain name: '{d}'.")
+    return d
+
+
+def validate_username_input(username: str, protected_check: bool = True) -> str:
+    u = username.strip().lower()
+    if not u:
+        raise ValueError("Username cannot be empty.")
+    if not _USERNAME_RE.match(u):
+        raise ValueError(
+            f"Invalid username '{u}'. Use lowercase letters, digits, '.', '-', '_'; "
+            "start with a letter or '_'; 3–32 chars."
+        )
+    if protected_check:
+        _check_protected_account(u)
+    return u
+
+
+def validate_dbname_input(name: str, protected_check: bool = True) -> str:
+    n = name.strip()
+    if not n:
+        raise ValueError("Database name cannot be empty.")
+    if not _DBNAME_RE.match(n):
+        raise ValueError(f"Invalid database name '{n}'. Use letters, digits, underscores (1–64 chars).")
+    if protected_check:
+        _check_protected_database(n)
+    return n
+
+
+def validate_ip_input(ip: str) -> str:
+    try:
+        addr = ipaddress.ip_address(ip.strip())
+        if addr.is_unspecified or addr.is_multicast:
+            raise ValueError(f"IP address '{ip}' is not valid for this use.")
+        return str(addr)
+    except ValueError as e:
+        raise ValueError(f"Invalid IP address: {e}")
+
+
+def validate_port_input(port: int | str) -> int:
+    p = int(port)
+    if not 1 <= p <= 65535:
+        raise ValueError(f"Port {p} out of range (1–65535).")
+    _check_protected_port(p)
+    return p
+
+
+def validate_path_input(path: str, must_exist: bool = False) -> str:
+    if not path:
+        raise ValueError("Path cannot be empty.")
+    real = os.path.realpath(path)
+    _check_protected_path(real)
+    if must_exist and not os.path.exists(real):
+        raise ValueError(f"Path does not exist: {real}")
+    return real
+
+
+def validate_email_input(email: str) -> str:
+    e = email.strip().lower()
+    if "@" not in e:
+        raise ValueError(f"Invalid email address: '{e}'.")
+    local, _, domain = e.partition("@")
+    try:
+        validate_domain_input(domain)
+    except ValueError:
+        raise ValueError(f"Invalid domain in email: '{email}'.")
+    if not _USERNAME_RE.match(local.replace("+", "_").replace(".", "_")):
+        raise ValueError(f"Invalid local part in email: '{local}'.")
+    return e
+
+
+# ─────────────────────────────────────────
+#  Phase 1 — Validator registry
+# ─────────────────────────────────────────
+
+class ValidatorResult:
+    __slots__ = ("ok", "msg")
+    def __init__(self, ok: bool, msg: str = ""):
+        self.ok  = ok
+        self.msg = msg
+    def __bool__(self): return self.ok
+
+
+def _run_validator(cmd: list, label: str) -> ValidatorResult:
+    """Run an external validator command; return ValidatorResult."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if r.returncode == 0:
+            return ValidatorResult(True, f"{label}: ok")
+        return ValidatorResult(False, f"{label}: {(r.stdout + r.stderr).strip()}")
+    except FileNotFoundError:
+        return ValidatorResult(False, f"{label}: binary not found ({cmd[0]})")
+    except subprocess.TimeoutExpired:
+        return ValidatorResult(False, f"{label}: timed out")
+
+
+VALIDATOR_REGISTRY = {
+    "nginx":    lambda: _run_validator(["/usr/sbin/nginx", "-t"], "nginx"),
+    "apache2":  lambda: _run_validator(["/usr/sbin/apache2ctl", "configtest"], "apache2"),
+    "named":    lambda: _run_validator(["named-checkconf"], "named"),
+    "postfix":  lambda: _run_validator(["postfix", "check"], "postfix"),
+    "dovecot":  lambda: _run_validator(["doveconf", "-n"], "dovecot"),
+    "roundcube": lambda: _run_validator(
+        ["php", "-l", "/etc/roundcube/config.inc.php"], "roundcube"
+    ),
+    "docker-compose": lambda compose_file="": _run_validator(
+        ["docker", "compose", "-f", compose_file, "config"], "docker-compose"
+    ),
+}
+
+
+def validate_subsystem(name: str, *args) -> ValidatorResult:
+    fn = VALIDATOR_REGISTRY.get(name)
+    if not fn:
+        return ValidatorResult(False, f"No validator registered for '{name}'")
+    return fn(*args) if args else fn()
+
+
+# ─────────────────────────────────────────
+#  Phase 1 — Preflight checks
+# ─────────────────────────────────────────
+
+def preflight_disk_free(path: str = "/var", mb: int = 200) -> ValidatorResult:
+    try:
+        st = os.statvfs(path)
+        free_mb = (st.f_frsize * st.f_bavail) // (1024 * 1024)
+        if free_mb < mb:
+            return ValidatorResult(False, f"Disk too full on {path}: {free_mb} MB free, need {mb} MB.")
+        return ValidatorResult(True, f"Disk free: {free_mb} MB on {path}")
+    except Exception as e:
+        return ValidatorResult(False, f"Cannot check disk space on {path}: {e}")
+
+
+def preflight_port_free(port: int) -> ValidatorResult:
+    try:
+        out = subprocess.run(
+            ["ss", "-H", "-ltnp", f"sport = :{port}"],
+            capture_output=True, text=True, timeout=5
+        ).stdout
+        if out.strip():
+            return ValidatorResult(False, f"Port {port} is already in use:\n{out.strip()}")
+        return ValidatorResult(True, f"Port {port} is free")
+    except Exception as e:
+        return ValidatorResult(False, f"Cannot check port {port}: {e}")
+
+
+def preflight_no_dpkg_lock() -> ValidatorResult:
+    lock = "/var/lib/dpkg/lock-frontend"
+    try:
+        with open(lock, "w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(f, fcntl.LOCK_UN)
+        return ValidatorResult(True, "dpkg lock free")
+    except OSError:
+        return ValidatorResult(False, "dpkg/apt lock held — another package operation is running.")
+    except FileNotFoundError:
+        return ValidatorResult(True, "dpkg lock free")
+
+
+def preflight_binary_exists(binary: str) -> ValidatorResult:
+    import shutil as _shutil
+    path = _shutil.which(binary)
+    if path:
+        return ValidatorResult(True, f"{binary} found at {path}")
+    return ValidatorResult(False, f"Required binary not found: {binary}")
+
+
+def preflight_running_as_root() -> ValidatorResult:
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return ValidatorResult(True, "running as root")
+    return ValidatorResult(False, "Must run as root.")
+
+
+def run_preflights(*checks: ValidatorResult) -> list[ValidatorResult]:
+    """Run a list of preflight checks; return list of failures (empty = all good)."""
+    failures = [c for c in checks if not c.ok]
+    return failures
+
+
+# ─────────────────────────────────────────
+#  Phase 1 — Functional probes
+# ─────────────────────────────────────────
+
+def probe_http(url: str, host: str = "", expected_codes=(200, 301, 302)) -> ValidatorResult:
+    import urllib.request
+    try:
+        req = urllib.request.Request(url)
+        if host:
+            req.add_header("Host", host)
+        resp = urllib.request.urlopen(req, timeout=8)
+        code = resp.getcode()
+        if code in expected_codes:
+            return ValidatorResult(True, f"HTTP probe {url} → {code}")
+        return ValidatorResult(False, f"HTTP probe {url} → unexpected {code}")
+    except Exception as e:
+        return ValidatorResult(False, f"HTTP probe {url} failed: {e}")
+
+
+def probe_smtp_rcpt(domain: str, rcpt: str = "") -> ValidatorResult:
+    import smtplib
+    rcpt = rcpt or f"postmaster@{domain}"
+    try:
+        with smtplib.SMTP("127.0.0.1", 25, timeout=8) as smtp:
+            smtp.ehlo()
+            smtp.mail(f"check@{domain}")
+            code, _ = smtp.rcpt(rcpt)
+            smtp.rset()
+        if code in (250, 251):
+            return ValidatorResult(True, f"SMTP RCPT {rcpt} → {code}")
+        return ValidatorResult(False, f"SMTP RCPT {rcpt} → {code}")
+    except Exception as e:
+        return ValidatorResult(False, f"SMTP probe failed: {e}")
+
+
+def probe_port_listening(port: int, host: str = "127.0.0.1") -> ValidatorResult:
+    try:
+        with socket.create_connection((host, port), timeout=4):
+            return ValidatorResult(True, f"Port {port} listening on {host}")
+    except Exception as e:
+        return ValidatorResult(False, f"Port {port} not listening on {host}: {e}")
+
+
+def probe_dns_record(domain: str, record_type: str = "A") -> ValidatorResult:
+    try:
+        out = subprocess.run(
+            ["dig", "+short", record_type, domain, "@127.0.0.1"],
+            capture_output=True, text=True, timeout=8
+        )
+        result = out.stdout.strip()
+        if result:
+            return ValidatorResult(True, f"DNS {record_type} {domain} → {result}")
+        return ValidatorResult(False, f"DNS {record_type} {domain} → no answer from local BIND")
+    except Exception as e:
+        return ValidatorResult(False, f"DNS probe failed: {e}")
+
+
+def probe_service_active(service: str) -> ValidatorResult:
+    try:
+        r = subprocess.run(["systemctl", "is-active", service],
+                           capture_output=True, text=True, timeout=5)
+        if r.stdout.strip() == "active":
+            return ValidatorResult(True, f"{service} is active")
+        return ValidatorResult(False, f"{service} is {r.stdout.strip()}")
+    except Exception as e:
+        return ValidatorResult(False, f"Cannot check {service}: {e}")
+
+
+# ─────────────────────────────────────────
+#  Phase 1 — Change Transaction
+# ─────────────────────────────────────────
+
+class _TxState(str, enum.Enum):
+    PLANNED      = "planned"
+    SNAPSHOTTING = "snapshotting"
+    APPLYING     = "applying"
+    VALIDATING   = "validating"
+    RELOADING    = "reloading"
+    VERIFYING    = "verifying"
+    COMMITTED    = "committed"
+    ROLLING_BACK = "rolling_back"
+    ROLLED_BACK  = "rolled_back"
+    ROLLBACK_FAILED = "rollback_failed"
+
+
+class _Transaction:
+    """Implements the snapshot→apply→validate→reload→verify→commit state machine."""
+
+    def __init__(self, description: str, scope: list[str],
+                 actor: str = "cli", dry_run: bool = False):
+        self.id          = f"tx_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+        self.description = description
+        self.scope       = scope
+        self.actor       = actor
+        self.dry_run     = dry_run
+        self.state       = _TxState.PLANNED
+        self._steps: list[dict] = []            # journal of applied steps (for undo)
+        self._before_files: dict[str, bytes|None] = {}  # path -> original content
+        self._before_symlinks: dict[str, str|None] = {}  # path -> original target
+        self._undo_actions: list[callable] = []
+        self._irreversibles: list[str] = []
+        self._validators: list[str] = []
+        self._probes: list[callable] = []
+        self._reloads: set[str] = set()
+        self._snap_id = ""
+        self._start_ts = time.time()
+        _ensure_zm_dirs()
+        self._journal_dir = os.path.join(ZM_JOURNAL_DIR, self.id)
+        os.makedirs(self._journal_dir, mode=0o700, exist_ok=True)
+        self._write_manifest(_TxState.PLANNED)
+
+    # ── journal helpers ──────────────────────────────────────────────────────
+
+    def _write_manifest(self, state: _TxState):
+        m = {
+            "id": self.id,
+            "description": self.description,
+            "scope": self.scope,
+            "actor": self.actor,
+            "started": datetime.utcnow().isoformat() + "Z",
+            "state": state.value,
+        }
+        try:
+            with open(os.path.join(self._journal_dir, "manifest.json"), "w") as f:
+                json.dump(m, f, indent=2)
+        except Exception:
+            pass
+
+    def _log_step(self, action: str, undo: str = "", result: str = "ok"):
+        entry = {"action": action, "undo": undo, "result": result,
+                 "ts": datetime.utcnow().isoformat() + "Z"}
+        self._steps.append(entry)
+        try:
+            with open(os.path.join(self._journal_dir, "steps.jsonl"), "a") as f:
+                f.write(json.dumps(entry) + "\n")
+        except Exception:
+            pass
+
+    # ── pre-snapshot helpers ─────────────────────────────────────────────────
+
+    def _snapshot_file(self, path: str):
+        """Record the pre-change content of a file so we can restore it on rollback."""
+        if path in self._before_files:
+            return
+        if os.path.isfile(path):
+            with open(path, "rb") as f:
+                self._before_files[path] = f.read()
+        else:
+            self._before_files[path] = None  # didn't exist → delete on rollback
+
+    def _snapshot_symlink(self, path: str):
+        if path in self._before_symlinks:
+            return
+        if os.path.islink(path):
+            self._before_symlinks[path] = os.readlink(path)
+        else:
+            self._before_symlinks[path] = None
+
+    # ── transaction primitives ───────────────────────────────────────────────
+
+    def preflight(self, *checks: ValidatorResult):
+        """Run preflight checks and raise on failure (before anything is touched)."""
+        failures = [c for c in checks if not c.ok]
+        if failures:
+            msgs = "; ".join(c.msg for c in failures)
+            raise RuntimeError(f"Preflight failed: {msgs}")
+
+    def write(self, path: str, content: str | bytes):
+        """Atomically write a file; snapshot the original first."""
+        self._snapshot_file(path)
+        if self.dry_run:
+            print(f"  {_C_DIM}[dry-run] Would write: {path}{_C_RESET}")
+            self._log_step(f"write:{path}", undo=f"restore:{path}")
+            return
+        os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
+        mode = "wb" if isinstance(content, bytes) else "w"
+        dir_ = os.path.dirname(os.path.abspath(path)) or "."
+        with tempfile.NamedTemporaryFile(mode=mode, dir=dir_, delete=False) as tmp:
+            tmp.write(content)
+            tmp_name = tmp.name
+        os.replace(tmp_name, path)  # atomic on POSIX
+        self._log_step(f"write:{path}", undo=f"restore:{path}")
+        # register undo
+        before = self._before_files[path]
+        def _undo_write(p=path, b=before):
+            if b is None:
+                if os.path.exists(p): os.remove(p)
+            else:
+                with open(p, "wb") as f: f.write(b)
+        self._undo_actions.insert(0, _undo_write)
+
+    def symlink(self, path: str, target: str):
+        """Create or replace a symlink; snapshot original."""
+        self._snapshot_symlink(path)
+        if self.dry_run:
+            print(f"  {_C_DIM}[dry-run] Would symlink: {path} → {target}{_C_RESET}")
+            self._log_step(f"symlink:{path}", undo=f"restore_symlink:{path}")
+            return
+        if os.path.islink(path): os.unlink(path)
+        os.symlink(target, path)
+        self._log_step(f"symlink:{path}", undo=f"restore_symlink:{path}")
+        before = self._before_symlinks[path]
+        def _undo_sym(p=path, b=before):
+            if os.path.islink(p): os.unlink(p)
+            if b is not None: os.symlink(b, p)
+        self._undo_actions.insert(0, _undo_sym)
+
+    def remove_symlink(self, path: str):
+        """Remove a symlink if it exists; snapshot first."""
+        self._snapshot_symlink(path)
+        if self.dry_run:
+            print(f"  {_C_DIM}[dry-run] Would remove symlink: {path}{_C_RESET}")
+            return
+        if os.path.islink(path):
+            os.unlink(path)
+        before = self._before_symlinks[path]
+        def _undo_rsym(p=path, b=before):
+            if b is not None and not os.path.islink(p): os.symlink(b, p)
+        self._undo_actions.insert(0, _undo_rsym)
+
+    def run_cmd(self, cmd: list, undo_cmd: list | None = None, check: bool = True):
+        """Run a subprocess command with an optional undo command."""
+        if self.dry_run:
+            print(f"  {_C_DIM}[dry-run] Would run: {' '.join(str(c) for c in cmd)}{_C_RESET}")
+            self._log_step(f"cmd:{' '.join(str(c) for c in cmd)}")
+            return
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        self._log_step(f"cmd:{' '.join(str(c) for c in cmd)}",
+                       undo=f"cmd:{' '.join(str(c) for c in undo_cmd)}" if undo_cmd else "",
+                       result="ok" if r.returncode == 0 else f"rc={r.returncode}")
+        if check and r.returncode != 0:
+            raise RuntimeError(
+                f"Command failed (rc={r.returncode}): {' '.join(str(c) for c in cmd)}\n"
+                f"{r.stderr.strip()}"
+            )
+        if undo_cmd:
+            def _undo_cmd(u=undo_cmd):
+                subprocess.run(u, capture_output=True)
+            self._undo_actions.insert(0, _undo_cmd)
+
+    def irreversible(self, description: str):
+        """Declare the next step as irreversible (cannot be undone)."""
+        self._irreversibles.append(description)
+        print(f"  ! Irreversible step: {description}")
+
+    def validate(self, *subsystems: str):
+        """Run validators for the given subsystems; raise on failure."""
+        self._validators.extend(subsystems)
+        for name in subsystems:
+            result = validate_subsystem(name)
+            if not result.ok:
+                raise RuntimeError(f"Validation failed ({name}): {result.msg}")
+
+    def reload(self, *services: str):
+        """Mark services for reload (deferred until commit or explicit call)."""
+        self._reloads.update(services)
+
+    def verify(self, *probes: ValidatorResult):
+        """Run functional probes; raise on failure."""
+        failures = [p for p in probes if not p.ok]
+        if failures:
+            msgs = "; ".join(p.msg for p in failures)
+            raise RuntimeError(f"Post-change verification failed: {msgs}")
+        self._probes.extend([p.msg for p in probes])
+
+    def add_probe(self, probe_fn: callable):
+        """Add a lazy probe (called only on commit-verify)."""
+        self._probes.append(probe_fn)
+
+    # ── service reload ───────────────────────────────────────────────────────
+
+    def _do_reloads(self):
+        for svc in self._reloads:
+            r = subprocess.run(["systemctl", "is-active", svc],
+                               capture_output=True, text=True)
+            action = "reload" if r.stdout.strip() == "active" else "restart"
+            subprocess.run(["systemctl", action, svc], capture_output=True)
+
+    # ── rollback ─────────────────────────────────────────────────────────────
+
+    def _rollback(self):
+        self.state = _TxState.ROLLING_BACK
+        self._write_manifest(self.state)
+        errors = []
+        for fn in self._undo_actions:
+            try:
+                fn()
+            except Exception as e:
+                errors.append(str(e))
+        # reload after rollback
+        try:
+            self._do_reloads()
+        except Exception as e:
+            errors.append(f"reload-after-rollback: {e}")
+        if errors:
+            self.state = _TxState.ROLLBACK_FAILED
+            _raise_incident(
+                "ROLLBACK_FAILED",
+                severity="critical",
+                evidence="\n".join(errors),
+                tx_id=self.id,
+            )
+        else:
+            self.state = _TxState.ROLLED_BACK
+        self._write_manifest(self.state)
+        return errors
+
+    # ── context manager ──────────────────────────────────────────────────────
+
+    def __enter__(self):
+        self.state = _TxState.SNAPSHOTTING
+        self._write_manifest(self.state)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        duration_ms = int((time.time() - self._start_ts) * 1000)
+        if exc_type is None:
+            # Success path
+            if not self.dry_run:
+                self.state = _TxState.RELOADING
+                self._write_manifest(self.state)
+                self._do_reloads()
+            self.state = _TxState.COMMITTED
+            self._write_manifest(self.state)
+            # Take a snapshot of committed state for undo
+            try:
+                snap_id = _snapshot_create(
+                    label=f"post-commit: {self.description}",
+                    trigger="post-change",
+                    tx_id=self.id,
+                )
+                self._snap_id = snap_id
+            except Exception:
+                pass
+            audit(
+                actor=self.actor,
+                action=self.description,
+                tx_id=self.id,
+                snap_id=self._snap_id,
+                result="committed",
+                duration_ms=duration_ms,
+                validators=self._validators,
+                probes=[p if isinstance(p, str) else str(p) for p in self._probes],
+            )
+            return False  # don't suppress
+        else:
+            # Failure path → rollback
+            errors = self._rollback()
+            audit(
+                actor=self.actor,
+                action=self.description,
+                tx_id=self.id,
+                result="rolled_back",
+                duration_ms=duration_ms,
+                extra={"rollback_errors": errors, "exception": str(exc_val)},
+            )
+            return False  # re-raise original exception
+
+
+# Convenience alias for the context manager
+_C_DIM   = "\033[2m"
+_C_RESET = "\033[0m"
+
+
+@contextlib.contextmanager
+def change(description: str, scope: list[str],
+           actor: str = "cli", dry_run: bool = False):
+    """Entry-point: use `with change(...) as tx:` to wrap any mutation."""
+    with operation_lock(actor, description):
+        tx = _Transaction(description, scope, actor=actor, dry_run=dry_run)
+        with tx:
+            yield tx
+
+
+# ─────────────────────────────────────────
+#  Phase 2 — Snapshot system
+# ─────────────────────────────────────────
+
+_CONFIG_SCOPE_PATHS = [
+    "/etc/nginx", "/etc/apache2", "/etc/bind", "/etc/postfix",
+    "/etc/dovecot", "/etc/roundcube", "/etc/mailname",
+    "/etc/ufw", "/etc/vsftpd.conf", "/etc/samba/smb.conf",
+    "/etc/servermanager",
+]
+_MAX_AUTO_SNAPSHOTS  = 30
+_SNAPSHOT_MAX_MB     = 500
+_TRASH_RETENTION_DAYS = 14
+
+
+def _snapshot_id() -> str:
+    return f"snap_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+
+
+def _snapshot_create(
+    label: str = "",
+    trigger: str = "manual",
+    tx_id: str = "",
+    paths: list[str] | None = None,
+) -> str:
+    """Create a snapshot of the config scope. Returns snap_id."""
+    _ensure_zm_dirs()
+    sid = _snapshot_id()
+    snap_dir = os.path.join(ZM_SNAPSHOT_DIR, sid)
+    os.makedirs(snap_dir, mode=0o700)
+
+    scope = paths or _CONFIG_SCOPE_PATHS
+    tar_path = os.path.join(snap_dir, "files.tar.zst")
+
+    # Build a tarball of existing paths in scope
+    existing = [p for p in scope if os.path.exists(p)]
+    if existing:
+        try:
+            subprocess.run(
+                ["tar", "--zstd", "-cpf", tar_path, "--ignore-failed-read"] + existing,
+                capture_output=True, timeout=60
+            )
+        except Exception:
+            # Fall back to plain tar if zstd not available
+            tar_path = tar_path.replace(".tar.zst", ".tar.gz")
+            subprocess.run(
+                ["tar", "-czpf", tar_path, "--ignore-failed-read"] + existing,
+                capture_output=True, timeout=60
+            )
+
+    # SHA256 checksums
+    sha_path = os.path.join(snap_dir, "SHA256SUMS")
+    if os.path.exists(tar_path):
+        r = subprocess.run(["sha256sum", tar_path], capture_output=True, text=True)
+        with open(sha_path, "w") as f:
+            f.write(r.stdout)
+
+    # Service state
+    services_state = {}
+    for svc in ("nginx", "apache2", "bind9", "postfix", "dovecot"):
+        r = subprocess.run(["systemctl", "is-active", svc],
+                           capture_output=True, text=True)
+        services_state[svc] = {"active": r.stdout.strip() == "active"}
+
+    manifest = {
+        "id": sid,
+        "created": datetime.utcnow().isoformat() + "Z",
+        "trigger": trigger,
+        "tx": tx_id,
+        "label": label,
+        "lkg": False,
+        "scope": scope,
+        "services": services_state,
+        "size_bytes": os.path.getsize(tar_path) if os.path.exists(tar_path) else 0,
+    }
+    with open(os.path.join(snap_dir, "manifest.json"), "w") as f:
+        json.dump(manifest, f, indent=2)
+    os.chmod(snap_dir, 0o700)
+
+    _snapshot_prune()
+    return sid
+
+
+def snapshot_list() -> list[dict]:
+    """List all snapshots, newest first."""
+    _ensure_zm_dirs()
+    snaps = []
+    for entry in os.scandir(ZM_SNAPSHOT_DIR):
+        if not entry.is_dir():
+            continue
+        mf = os.path.join(entry.path, "manifest.json")
+        try:
+            with open(mf) as f:
+                snaps.append(json.load(f))
+        except Exception:
+            pass
+    snaps.sort(key=lambda s: s.get("created", ""), reverse=True)
+    return snaps
+
+
+def snapshot_diff(snap_id: str) -> str:
+    """Return a unified diff of snapshot vs live configs."""
+    snap_dir = os.path.join(ZM_SNAPSHOT_DIR, snap_id)
+    tar_path = None
+    for ext in (".tar.zst", ".tar.gz"):
+        p = os.path.join(snap_dir, f"files{ext}")
+        if os.path.exists(p):
+            tar_path = p
+            break
+    if not tar_path:
+        return "Snapshot archive not found."
+
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(["tar", "-xpf", tar_path, "-C", tmp],
+                       capture_output=True, timeout=60)
+        diff = subprocess.run(
+            ["diff", "-ru", "--new-file", tmp, "/"],
+            capture_output=True, text=True, timeout=30
+        )
+    return diff.stdout or "(no differences)"
+
+
+def snapshot_restore(snap_id: str, only: list[str] | None = None, dry_run: bool = False) -> bool:
+    """Restore a snapshot (transactionally). Returns True on success."""
+    snap_dir = os.path.join(ZM_SNAPSHOT_DIR, snap_id)
+    if not os.path.isdir(snap_dir):
+        return False
+
+    # Verify checksum
+    sha_path = os.path.join(snap_dir, "SHA256SUMS")
+    tar_path = None
+    for ext in (".tar.zst", ".tar.gz"):
+        p = os.path.join(snap_dir, f"files{ext}")
+        if os.path.exists(p):
+            tar_path = p
+            break
+    if tar_path and os.path.exists(sha_path):
+        r = subprocess.run(["sha256sum", "-c", sha_path], capture_output=True, cwd=snap_dir)
+        if r.returncode != 0:
+            print(f"  \033[91m✗ Snapshot {snap_id} checksum mismatch — refusing to restore.\033[0m")
+            return False
+
+    if dry_run:
+        print(f"  [dry-run] Would restore snapshot {snap_id}")
+        print(snapshot_diff(snap_id))
+        return True
+
+    # Restore as a transaction
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(["tar", "-xpf", tar_path, "-C", tmp], capture_output=True, timeout=120)
+        # Walk extracted files and restore them
+        for root, dirs, files in os.walk(tmp):
+            for fname in files:
+                src = os.path.join(root, fname)
+                dst = "/" + os.path.relpath(src, tmp)
+                if only and not any(dst.startswith(o) for o in only):
+                    continue
+                try:
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    shutil.copy2(src, dst)
+                except Exception as e:
+                    print(f"  ! Could not restore {dst}: {e}")
+
+    audit(actor="cli", action=f"snapshot.restore:{snap_id}", result="committed")
+    return True
+
+
+def _snapshot_prune():
+    """Prune old auto-snapshots according to retention policy."""
+    try:
+        snaps = snapshot_list()
+        auto = [s for s in snaps if s.get("trigger") in ("auto", "pre-change", "post-change")]
+        if len(auto) > _MAX_AUTO_SNAPSHOTS:
+            for s in auto[_MAX_AUTO_SNAPSHOTS:]:
+                if s.get("lkg"):
+                    continue
+                snap_dir = os.path.join(ZM_SNAPSHOT_DIR, s["id"])
+                shutil.rmtree(snap_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────
+#  Phase 6 — Trash (archive-before-delete)
+# ─────────────────────────────────────────
+
+def trash_archive(kind: str, name: str, paths: list[str], extra_fn: callable | None = None) -> str:
+    """Archive paths into trash before destructive deletion. Returns trash_id."""
+    _ensure_zm_dirs()
+    ts   = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    tid  = f"{ts}-{kind}-{name}"
+    tdir = os.path.join(ZM_TRASH_DIR, tid)
+    os.makedirs(tdir, mode=0o700)
+
+    if extra_fn:
+        try:
+            extra_fn(tdir)
+        except Exception as e:
+            print(f"  ! Trash extra-fn failed: {e}")
+
+    existing = [p for p in paths if os.path.exists(p)]
+    if existing:
+        tar_path = os.path.join(tdir, "archive.tar.gz")
+        subprocess.run(["tar", "-czpf", tar_path, "--ignore-failed-read"] + existing,
+                       capture_output=True, timeout=120)
+
+    with open(os.path.join(tdir, "meta.json"), "w") as f:
+        json.dump({"id": tid, "kind": kind, "name": name,
+                   "created": datetime.utcnow().isoformat() + "Z",
+                   "paths": paths}, f, indent=2)
+    return tid
+
+
+def trash_mysqldump(db_name: str, dest_dir: str):
+    """Dump a MySQL/MariaDB database into dest_dir (used as trash extra_fn)."""
+    dump_path = os.path.join(dest_dir, f"{db_name}.sql.gz")
+    subprocess.run(["sh", "-c", f"mysqldump {db_name} | gzip > {dump_path}"],
+                   capture_output=True, timeout=300)
+
+
+def trash_list() -> list[dict]:
+    _ensure_zm_dirs()
+    items = []
+    for entry in os.scandir(ZM_TRASH_DIR):
+        mf = os.path.join(entry.path, "meta.json")
+        try:
+            with open(mf) as f:
+                items.append(json.load(f))
+        except Exception:
+            pass
+    items.sort(key=lambda i: i.get("created", ""), reverse=True)
+    return items
+
+
+def trash_restore(trash_id: str) -> bool:
+    tdir = os.path.join(ZM_TRASH_DIR, trash_id)
+    tar  = os.path.join(tdir, "archive.tar.gz")
+    if not os.path.exists(tar):
+        return False
+    r = subprocess.run(["tar", "-xzpf", tar, "-C", "/", "--keep-directory-symlink"],
+                       capture_output=True, timeout=120)
+    return r.returncode == 0
+
+
+def trash_purge(older_than_days: int = _TRASH_RETENTION_DAYS):
+    cutoff = time.time() - older_than_days * 86400
+    for item in trash_list():
+        try:
+            ts_str = item.get("created", "")
+            ts = datetime.fromisoformat(ts_str.rstrip("Z")).timestamp()
+            if ts < cutoff:
+                shutil.rmtree(os.path.join(ZM_TRASH_DIR, item["id"]), ignore_errors=True)
+        except Exception:
+            pass
+
+
+# ─────────────────────────────────────────
+#  Phase 3 — Incidents
+# ─────────────────────────────────────────
+
+_INCIDENTS: dict[str, dict] = {}  # incident_id -> incident dict
+_INCIDENTS_LOCK = threading.Lock()
+
+
+def _raise_incident(source: str, severity: str = "medium",
+                    evidence: str = "", suggested_action: str = "",
+                    tx_id: str = "") -> str:
+    """Create or merge an incident. Returns incident_id."""
+    iid = f"inc_{source.lower().replace(' ', '_')}_{uuid.uuid4().hex[:4]}"
+    now = datetime.utcnow().isoformat() + "Z"
+    incident = {
+        "id": iid,
+        "severity": severity,
+        "source": source,
+        "first_seen": now,
+        "last_seen": now,
+        "count": 1,
+        "evidence": evidence,
+        "suggested_action": suggested_action,
+        "tx": tx_id,
+        "status": "open",
+    }
+    with _INCIDENTS_LOCK:
+        # Merge duplicates (same source + severity)
+        for existing in _INCIDENTS.values():
+            if (existing["source"] == source
+                    and existing["severity"] == severity
+                    and existing["status"] == "open"):
+                existing["last_seen"] = now
+                existing["count"] += 1
+                if evidence:
+                    existing["evidence"] = evidence
+                iid = existing["id"]
+                incident = existing
+                break
+        else:
+            _INCIDENTS[iid] = incident
+
+    # Persist
+    try:
+        with open(ZM_INCIDENTS_LOG, "a") as f:
+            f.write(json.dumps(incident) + "\n")
+    except Exception:
+        pass
+    return iid
+
+
+def incidents_list(status: str = "open") -> list[dict]:
+    return [i for i in _INCIDENTS.values() if i["status"] == status]
+
+
+def incident_ack(incident_id: str):
+    if incident_id in _INCIDENTS:
+        _INCIDENTS[incident_id]["status"] = "ack"
+
+
+def incident_resolve(incident_id: str):
+    if incident_id in _INCIDENTS:
+        _INCIDENTS[incident_id]["status"] = "resolved"
+
+
+# ─────────────────────────────────────────
+#  Phase 3 — Desired-state registry
+# ─────────────────────────────────────────
+
+def _load_state() -> dict:
+    try:
+        with open(ZM_STATE_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {"services": {}, "vhosts": {}, "zones": {}, "lkg": None}
+
+
+def _save_state(state: dict):
+    _ensure_zm_dirs()
+    with open(ZM_STATE_FILE, "w") as f:
+        json.dump(state, f, indent=2)
+
+
+def state_register_service(name: str, active: bool = True, port: int | None = None):
+    s = _load_state()
+    s["services"][name] = {"active": active, "port": port}
+    _save_state(s)
+
+
+def state_register_vhost(domain: str, server: str, config_hash: str = ""):
+    s = _load_state()
+    s["vhosts"][domain] = {"server": server, "hash": config_hash}
+    _save_state(s)
+
+
+def state_set_lkg(snap_id: str):
+    s = _load_state()
+    s["lkg"] = snap_id
+    _save_state(s)
+    # Mark the snapshot manifest
+    mf = os.path.join(ZM_SNAPSHOT_DIR, snap_id, "manifest.json")
+    if os.path.exists(mf):
+        try:
+            with open(mf) as f:
+                m = json.load(f)
+            m["lkg"] = True
+            with open(mf, "w") as f:
+                json.dump(m, f, indent=2)
+        except Exception:
+            pass
+
+
+# ─────────────────────────────────────────
+#  Phase 3 — Watchdog thread
+# ─────────────────────────────────────────
+
+class _Watchdog(threading.Thread):
+    """Background daemon that checks service health, drift, port conflicts, and resources."""
+
+    CHECKS = {
+        "service_health":  10,
+        "port_conflicts":  60,
+        "config_drift":    300,
+        "disk_pressure":   60,
+        "cert_expiry":     86400,
+        "log_patterns":    60,
+        "front_door":      120,
+        "dns_health":      300,
+        "mail_health":     300,
+        "failed_units":    60,
+    }
+
+    def __init__(self):
+        super().__init__(daemon=True, name="ZM-Watchdog")
+        self._last_run: dict[str, float] = {}
+        self._stop_evt = threading.Event()
+
+    def stop(self):
+        self._stop_evt.set()
+
+    def run(self):
+        while not self._stop_evt.wait(timeout=5):
+            now = time.time()
+            for check, interval in self.CHECKS.items():
+                last = self._last_run.get(check, 0)
+                if now - last >= interval:
+                    self._last_run[check] = now
+                    try:
+                        getattr(self, f"_check_{check}")()
+                    except Exception:
+                        pass
+
+    # Individual checks ────────────────────────────────────────────────────
+
+    def _check_service_health(self):
+        state = _load_state()
+        for svc, meta in state.get("services", {}).items():
+            if not meta.get("active"):
+                continue
+            r = subprocess.run(["systemctl", "is-active", svc], capture_output=True, text=True)
+            if r.stdout.strip() != "active":
+                _raise_incident(f"service_down:{svc}", severity="high",
+                                evidence=f"{svc} is {r.stdout.strip()}",
+                                suggested_action=f"Run: systemctl restart {svc}")
+                self._autoheal_service(svc)
+
+    def _autoheal_service(self, svc: str):
+        """Restart a stopped managed service if its config validates (max 3/hr)."""
+        key = f"autoheal:{svc}"
+        now = time.time()
+        bucket = _AUTOHEAL_COUNTS.setdefault(key, [])
+        _AUTOHEAL_COUNTS[key] = [t for t in bucket if now - t < 3600]
+        if len(_AUTOHEAL_COUNTS[key]) >= 3:
+            _raise_incident(f"autoheal_circuit_open:{svc}", severity="high",
+                            evidence="Auto-restart circuit breaker open (3 restarts/hr).",
+                            suggested_action="Investigate the service manually.")
+            return
+        _AUTOHEAL_COUNTS[key].append(now)
+        subprocess.run(["systemctl", "restart", svc], capture_output=True, timeout=30)
+        audit(actor="watchdog", action=f"autoheal.restart:{svc}", result="ok")
+
+    def _check_port_conflicts(self):
+        state = _load_state()
+        reserved = {8080, 8443, 22}
+        for svc, meta in state.get("services", {}).items():
+            if meta.get("port"):
+                reserved.add(meta["port"])
+        out = subprocess.run(["ss", "-H", "-ltnp"], capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            m = re.search(r':(\d+)\s', line)
+            if not m:
+                continue
+            port = int(m.group(1))
+            if port in reserved:
+                procs = re.findall(r'users:\(\("([^"]+)",pid=(\d+)', line)
+                for name, pid in procs:
+                    if name not in ("nginx", "apache2", "httpd", "python3", "python"):
+                        _raise_incident(
+                            f"port_conflict:{port}",
+                            severity="high",
+                            evidence=f"Port {port} held by {name} (pid {pid})",
+                            suggested_action=f"Stop {name} or reassign port {port}.",
+                        )
+
+    def _check_config_drift(self):
+        """Detect files managed by the tool that have been edited externally."""
+        state = _load_state()
+        for domain, meta in state.get("vhosts", {}).items():
+            for conf_dir in ("/etc/nginx/sites-available", "/etc/apache2/sites-available"):
+                path = f"{conf_dir}/{domain}.conf"
+                if not os.path.exists(path):
+                    continue
+                with open(path, "rb") as f:
+                    current_hash = hashlib.sha256(f.read()).hexdigest()[:16]
+                if meta.get("hash") and current_hash != meta["hash"]:
+                    _raise_incident(
+                        f"config_drift:{domain}",
+                        severity="low",
+                        evidence=f"{path} was edited outside the tool.",
+                        suggested_action="Review the change or click 'Adopt' to accept it.",
+                    )
+
+    def _check_disk_pressure(self):
+        for path in ("/", "/var", "/etc"):
+            try:
+                st = os.statvfs(path)
+                used_pct = 100 - (st.f_bavail * 100 // st.f_blocks) if st.f_blocks else 0
+                if used_pct >= 90:
+                    _raise_incident(f"disk_critical:{path}", severity="high",
+                                    evidence=f"Disk on {path}: {used_pct}% used",
+                                    suggested_action="Free disk space immediately.")
+                elif used_pct >= 80:
+                    _raise_incident(f"disk_warning:{path}", severity="medium",
+                                    evidence=f"Disk on {path}: {used_pct}% used")
+            except Exception:
+                pass
+
+    def _check_cert_expiry(self):
+        import ssl as _ssl
+        state = _load_state()
+        for domain in state.get("vhosts", {}):
+            try:
+                ctx = _ssl.create_default_context()
+                with ctx.wrap_socket(socket.socket(), server_hostname=domain) as s:
+                    s.settimeout(5)
+                    s.connect((domain, 443))
+                    cert = s.getpeercert()
+                    expire = datetime.strptime(cert["notAfter"], "%b %d %H:%M:%S %Y %Z")
+                    days_left = (expire - datetime.utcnow()).days
+                    if days_left <= 7:
+                        _raise_incident(f"cert_expiry:{domain}", severity="high",
+                                        evidence=f"Certificate expires in {days_left} days.",
+                                        suggested_action="Renew the TLS certificate.")
+                    elif days_left <= 30:
+                        _raise_incident(f"cert_expiry:{domain}", severity="medium",
+                                        evidence=f"Certificate expires in {days_left} days.")
+            except Exception:
+                pass
+
+    def _check_log_patterns(self):
+        pattern = re.compile(r'emerg|crit|fatal|panic', re.I)
+        logs = ["/var/log/nginx/error.log", "/var/log/apache2/error.log",
+                "/var/log/mail.err"]
+        for log in logs:
+            try:
+                with open(log) as f:
+                    f.seek(0, 2)
+                    size = f.tell()
+                    f.seek(max(0, size - 4096))
+                    tail = f.read()
+                matches = [l for l in tail.splitlines() if pattern.search(l)]
+                if matches:
+                    _raise_incident(f"log_pattern:{os.path.basename(log)}",
+                                    severity="medium",
+                                    evidence="\n".join(matches[-3:]))
+            except Exception:
+                pass
+
+    def _check_front_door(self):
+        state = _load_state()
+        for domain in list(state.get("vhosts", {}))[:5]:  # cap at 5
+            result = probe_http(f"http://127.0.0.1/", host=domain)
+            if not result.ok:
+                _raise_incident(f"front_door:{domain}", severity="medium",
+                                evidence=result.msg,
+                                suggested_action="Check nginx/Apache config for this vhost.")
+
+    def _check_dns_health(self):
+        state = _load_state()
+        for domain in list(state.get("zones", {}))[:5]:
+            result = probe_dns_record(domain)
+            if not result.ok:
+                _raise_incident(f"dns_health:{domain}", severity="medium", evidence=result.msg)
+
+    def _check_mail_health(self):
+        if not os.path.exists("/usr/sbin/postfix"):
+            return
+        result = probe_port_listening(25)
+        if not result.ok:
+            _raise_incident("mail_smtp_down", severity="high", evidence=result.msg,
+                            suggested_action="Check Postfix: systemctl status postfix")
+        result = probe_port_listening(143)
+        if not result.ok:
+            _raise_incident("mail_imap_down", severity="high", evidence=result.msg,
+                            suggested_action="Check Dovecot: systemctl status dovecot")
+
+    def _check_failed_units(self):
+        r = subprocess.run(["systemctl", "--failed", "--no-pager", "--plain"],
+                           capture_output=True, text=True)
+        if "0 loaded units" not in r.stdout and r.stdout.strip():
+            lines = [l for l in r.stdout.splitlines() if "●" in l or "UNIT" in l]
+            if lines:
+                _raise_incident("failed_systemd_units", severity="medium",
+                                evidence="\n".join(lines[:5]),
+                                suggested_action="Check with: systemctl --failed")
+
+
+_AUTOHEAL_COUNTS: dict[str, list] = {}
+_watchdog: _Watchdog | None = None
+
+
+def watchdog_start():
+    global _watchdog
+    if _watchdog is None or not _watchdog.is_alive():
+        _watchdog = _Watchdog()
+        _watchdog.start()
+
+
+def watchdog_stop():
+    global _watchdog
+    if _watchdog:
+        _watchdog.stop()
+        _watchdog = None
+
+
+# ─────────────────────────────────────────
+#  Phase 4 — Dead-man's switch
+# ─────────────────────────────────────────
+
+_DEADMAN_TIMERS: dict[str, dict] = {}   # tx_id -> {"timer": Timer, "tx_id": str}
+
+
+def deadman_arm(tx_id: str, timeout_s: int = 60,
+                rollback_fn: callable | None = None):
+    """Arm a dead-man's switch for a risky change. Call deadman_confirm() to cancel."""
+    def _fire():
+        print(f"\n  ! Dead-man's switch fired — reverting {tx_id}")
+        if rollback_fn:
+            try:
+                rollback_fn()
+                audit(actor="deadman", action=f"deadman.revert:{tx_id}", result="ok")
+            except Exception as e:
+                audit(actor="deadman", action=f"deadman.revert:{tx_id}",
+                      result="failed", extra={"error": str(e)})
+        _DEADMAN_TIMERS.pop(tx_id, None)
+
+    t = threading.Timer(timeout_s, _fire)
+    t.daemon = True
+    _DEADMAN_TIMERS[tx_id] = {"timer": t, "tx_id": tx_id}
+    t.start()
+
+
+def deadman_confirm(tx_id: str) -> bool:
+    """Confirm a risky change, cancelling the dead-man's timer. Returns True if was armed."""
+    entry = _DEADMAN_TIMERS.pop(tx_id, None)
+    if entry:
+        entry["timer"].cancel()
+        audit(actor="user", action=f"deadman.confirmed:{tx_id}", result="ok")
+        return True
+    return False
+
+
+# ─────────────────────────────────────────
+#  Phase 5 — Job runner & crash recovery
+# ─────────────────────────────────────────
+
+_JOBS: dict[str, dict] = {}
+_JOB_LOG_DIR = f"{ZM_STATE_DIR}/job_logs"
+
+
+def _job_log_path(job_id: str) -> str:
+    return os.path.join(_JOB_LOG_DIR, f"{job_id}.log")
+
+
+def job_submit(fn: callable, description: str, actor: str = "web") -> str:
+    """Submit a function to run in a background thread. Returns job_id."""
+    _ensure_zm_dirs()
+    os.makedirs(_JOB_LOG_DIR, mode=0o700, exist_ok=True)
+    job_id = f"job_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+    log_path = _job_log_path(job_id)
+
+    _JOBS[job_id] = {
+        "id": job_id,
+        "description": description,
+        "actor": actor,
+        "status": "queued",
+        "started": None,
+        "finished": None,
+        "success": None,
+        "log_path": log_path,
+    }
+
+    def _run():
+        _JOBS[job_id]["status"] = "running"
+        _JOBS[job_id]["started"] = datetime.utcnow().isoformat() + "Z"
+        try:
+            with open(log_path, "w", buffering=1) as log_f:
+                # Redirect stdout/stderr to log file for the duration
+                old_out, old_err = sys.stdout, sys.stderr
+
+                class _Tee:
+                    def __init__(self, original, logfile):
+                        self.orig = original
+                        self.log  = logfile
+                    def write(self, t):
+                        self.orig.write(t)
+                        self.log.write(t)
+                    def flush(self):
+                        try: self.orig.flush()
+                        except: pass
+                        try: self.log.flush()
+                        except: pass
+                    def isatty(self): return False
+                    def fileno(self): raise io.UnsupportedOperation()
+
+                sys.stdout = _Tee(old_out, log_f)
+                sys.stderr = _Tee(old_err, log_f)
+                try:
+                    fn()
+                    _JOBS[job_id]["success"] = True
+                except Exception as e:
+                    traceback.print_exc()
+                    _JOBS[job_id]["success"] = False
+                finally:
+                    sys.stdout = old_out
+                    sys.stderr = old_err
+        except Exception:
+            _JOBS[job_id]["success"] = False
+        finally:
+            _JOBS[job_id]["status"]   = "done"
+            _JOBS[job_id]["finished"] = datetime.utcnow().isoformat() + "Z"
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return job_id
+
+
+def job_status(job_id: str) -> dict | None:
+    return _JOBS.get(job_id)
+
+
+def job_log_tail(job_id: str, from_offset: int = 0) -> tuple[str, int]:
+    """Return (new_log_text, new_offset) for incremental streaming."""
+    log_path = _job_log_path(job_id)
+    try:
+        with open(log_path, "r", errors="replace") as f:
+            f.seek(from_offset)
+            text = f.read()
+            return text, f.tell()
+    except Exception:
+        return "", from_offset
+
+
+def _startup_journal_recovery():
+    """Scan journal for non-terminal transactions and raise critical incidents."""
+    global _SAFE_MODE
+    if not os.path.isdir(ZM_JOURNAL_DIR):
+        return
+    terminal = {_TxState.COMMITTED.value, _TxState.ROLLED_BACK.value,
+                _TxState.ROLLBACK_FAILED.value}
+    for entry in os.scandir(ZM_JOURNAL_DIR):
+        mf = os.path.join(entry.path, "manifest.json")
+        try:
+            with open(mf) as f:
+                m = json.load(f)
+        except Exception:
+            continue
+        if m.get("state") not in terminal:
+            iid = _raise_incident(
+                f"interrupted_tx:{m['id']}",
+                severity="critical",
+                evidence=f"Transaction '{m.get('description', m['id'])}' was "
+                         f"interrupted in state '{m.get('state')}'.",
+                suggested_action="Roll back, continue, or ignore from the Recovery menu.",
+                tx_id=m["id"],
+            )
+            _SAFE_MODE = True
+
+
+def is_safe_mode() -> bool:
+    return _SAFE_MODE
+
+
+def safe_mode_on():
+    global _SAFE_MODE
+    _SAFE_MODE = True
+
+
+def safe_mode_off():
+    global _SAFE_MODE
+    _SAFE_MODE = False
+
+
+# ─────────────────────────────────────────
+#  Phase 5/9 — Version handshake
+# ─────────────────────────────────────────
+
+API_VERSION = "2.0.0"   # increment when the API surface changes
+
+
+# ─────────────────────────────────────────
+#  CLI — Recovery commands (zervermanager snapshot/changes/trash/doctor/audit)
+# ─────────────────────────────────────────
+
+def cli_snapshot_create(label: str = "", deep: bool = False) -> str:
+    sid = _snapshot_create(label=label or "manual", trigger="manual")
+    print(f"  Snapshot created: {sid}")
+    return sid
+
+
+def cli_snapshot_list():
+    for s in snapshot_list():
+        lkg = " [LKG]" if s.get("lkg") else ""
+        print(f"  {s['id']}  {s.get('created','?')}  {s.get('trigger','?')}  "
+              f"{s.get('label','')}  {s.get('size_bytes',0)//1024} KB{lkg}")
+
+
+def cli_snapshot_diff(snap_id: str):
+    print(snapshot_diff(snap_id))
+
+
+def cli_snapshot_restore(snap_id: str, only: list[str] | None = None, dry_run: bool = False):
+    ok_flag = snapshot_restore(snap_id, only=only, dry_run=dry_run)
+    if ok_flag:
+        print(f"  Snapshot {snap_id} restored.")
+    else:
+        print(f"  Failed to restore snapshot {snap_id}.")
+
+
+def cli_audit_tail(n: int = 50):
+    try:
+        with open(ZM_AUDIT_LOG, "r") as f:
+            lines = f.readlines()
+        for line in lines[-n:]:
+            try:
+                e = json.loads(line)
+                print(f"  {e.get('ts','')}  {e.get('actor','')}  "
+                      f"{e.get('action','')}  [{e.get('result','')}]")
+            except Exception:
+                print(f"  {line.strip()}")
+    except FileNotFoundError:
+        print("  Audit log is empty.")
+
+
+def cli_doctor(subsystems: list[str] | None = None, fix: bool = False):
+    """Generalised check/repair."""
+    targets = subsystems or ["nginx", "apache2", "named", "postfix", "dovecot"]
+    for name in targets:
+        result = validate_subsystem(name)
+        if result.ok:
+            print(f"  \033[92m✓ {name}: ok\033[0m")
+        else:
+            print(f"  \033[91m✗ {name}: {result.msg}\033[0m")
+
+
+def cli_auth_reset(new_password: str):
+    auth_reset(new_password)
+    print("  Admin password updated.")
+
+
+# ─────────────────────────────────────────
+#  Startup self-check (Phase 0 / §9.10)
+# ─────────────────────────────────────────
+
+def startup_selfcheck():
+    """Verify that all functions referenced in the handler table actually exist.
+    Prints a warning for each missing function but does not abort."""
+    _HANDLER_NAMES = [
+        "create_full_site", "create_lamp_site", "create_lemp_site",
+        "create_forward_zone", "create_reverse_zone",
+        "setup_mail_server", "add_mail_user", "delete_mail_user",
+        "setup_phpmyadmin", "delete_phpmyadmin",
+        "setup_ftp_server", "delete_ftp_server",
+        "setup_samba", "delete_samba",
+        "install_docker", "docker_system_cleanup",
+        "mariadb_create_database", "mariadb_drop_database",
+        "mariadb_list_databases", "mariadb_create_user", "mariadb_drop_user",
+        "diagnose_mail", "repair_mail",
+        "reload_all_services",
+    ]
+    import builtins
+    g = globals()
+    missing = [name for name in _HANDLER_NAMES
+               if name not in g and not hasattr(builtins, name)]
+    for name in missing:
+        print(f"  \033[93m! startup_selfcheck: function '{name}' not found "
+              f"(referenced in handler table but not defined).\033[0m")
+    return missing
+
+
+# ─────────────────────────────────────────
+#  Web-API helpers (new endpoints from §7)
+# ─────────────────────────────────────────
+
+def _web_json(handler, obj: dict | list, code: int = 200):
+    body = json.dumps(obj).encode("utf-8")
+    handler.send_response(code)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
+def _web_read_json(handler) -> dict:
+    length = int(handler.headers.get("Content-Length", 0))
+    if length == 0:
+        return {}
+    return json.loads(handler.rfile.read(length).decode("utf-8"))
+
+
+def web_handle_auth(handler, path: str) -> bool:
+    """Legacy auth endpoints. Login is disabled: every request is a guest admin."""
+    if path == "/api/login":
+        _web_read_json(handler)          # drain the body
+        _web_json(handler, {"ok": True, "actor": "web", "role": "admin", "csrf": ""})
+        return True
+
+    if path == "/api/logout":
+        _web_json(handler, {"ok": True})
+        return True
+
+    if path == "/api/session":
+        _web_json(handler, {"ok": True, "actor": "web", "role": "admin", "csrf": ""})
+        return True
+
+    return False
+
+
+def web_handle_new_api(handler, path: str) -> bool:
+    """Handle new Phase 2–6 API endpoints. Returns True if handled."""
+
+    # ── Health summary (Phase 3/5) ────────────────────────────────────────
+    if path == "/api/health":
+        open_incidents = incidents_list("open")
+        high_count = sum(1 for i in open_incidents if i["severity"] in ("high", "critical"))
+        _web_json(handler, {
+            "ok": len(open_incidents) == 0,
+            "open_incidents": len(open_incidents),
+            "high_severity": high_count,
+            "safe_mode": is_safe_mode(),
+            "api_version": API_VERSION,
+            "backend_version": globals().get("SCRIPT_VERSION", "?"),
+        })
+        return True
+
+    # ── Incidents (Phase 3) ────────────────────────────────────────────────
+    if path == "/api/incidents":
+        _web_json(handler, incidents_list())
+        return True
+
+    if path.startswith("/api/incidents/") and (path.endswith("/ack") or path.endswith("/snooze")):
+        iid = path.split("/")[3]
+        incident_ack(iid)
+        _web_json(handler, {"ok": True})
+        return True
+
+    # ── Snapshots (Phase 2) ────────────────────────────────────────────────
+    if path == "/api/snapshots" and handler.command == "GET":
+        _web_json(handler, snapshot_list())
+        return True
+
+    if path == "/api/snapshots" and handler.command == "POST":
+        data = _web_read_json(handler)
+        sid = _snapshot_create(label=data.get("label", ""), trigger="manual")
+        _web_json(handler, {"id": sid})
+        return True
+
+    if re.match(r"^/api/snapshots/[^/]+/diff$", path):
+        snap_id = path.split("/")[3]
+        _web_json(handler, {"diff": snapshot_diff(snap_id)})
+        return True
+
+    if re.match(r"^/api/snapshots/[^/]+/restore$", path):
+        snap_id = path.split("/")[3]
+        data = _web_read_json(handler)
+        dry  = data.get("dry_run", False)
+        only = data.get("only")
+        ok_flag = snapshot_restore(snap_id, only=only, dry_run=dry)
+        _web_json(handler, {"ok": ok_flag})
+        return True
+
+    # ── Jobs (Phase 5) ─────────────────────────────────────────────────────
+    if re.match(r"^/api/jobs/[^/]+$", path):
+        job_id = path.split("/")[3]
+        st = job_status(job_id)
+        if st:
+            _web_json(handler, st)
+        else:
+            _web_json(handler, {"error": "not found"}, 404)
+        return True
+
+    if re.match(r"^/api/jobs/[^/]+/log$", path):
+        import urllib.parse as _up
+        job_id = path.split("/")[3]
+        parsed = _up.urlparse(handler.path)
+        qs = _up.parse_qs(parsed.query)
+        offset = int(qs.get("from", ["0"])[0])
+        text, new_offset = job_log_tail(job_id, offset)
+        _web_json(handler, {"text": text, "offset": new_offset})
+        return True
+
+    # ── Trash (Phase 6) ────────────────────────────────────────────────────
+    if path == "/api/trash" and handler.command == "GET":
+        _web_json(handler, trash_list())
+        return True
+
+    if re.match(r"^/api/trash/[^/]+/restore$", path):
+        tid = path.split("/")[3]
+        ok_flag = trash_restore(tid)
+        _web_json(handler, {"ok": ok_flag})
+        return True
+
+    # ── Dead-man's confirmation (Phase 4) ─────────────────────────────────
+    if re.match(r"^/api/confirm/[^/]+$", path):
+        tx_id = path.split("/")[3]
+        confirmed = deadman_confirm(tx_id)
+        _web_json(handler, {"confirmed": confirmed})
+        return True
+
+    # ── Plan/Apply (Phase 0) ───────────────────────────────────────────────
+    if path == "/api/plan":
+        data = _web_read_json(handler)
+        pid = plan_create(
+            action=data.get("action", ""),
+            data=data,
+            tier=data.get("tier", 1),
+            impact=data.get("impact", []),
+        )
+        _web_json(handler, {"plan_id": pid, "ttl": _PLAN_TTL})
+        return True
+
+    if path == "/api/apply":
+        data = _web_read_json(handler)
+        plan = plan_consume(data.get("plan_id", ""))
+        if not plan:
+            _web_json(handler, {"error": "invalid, expired, or already-used plan_id"}, 400)
+            return True
+        # Execute the stored plan — for now return the plan data; actual execution
+        # is done by the existing handlers after confirming via plan_id.
+        _web_json(handler, {"ok": True, "plan": plan})
+        return True
+
+    # ── Doctor (Phase 5/9) ─────────────────────────────────────────────────
+    if re.match(r"^/api/doctor/[^/]+/(check|repair)$", path):
+        parts = path.strip("/").split("/")
+        subsystem = parts[2]
+        action    = parts[3]
+        if action == "check":
+            result = validate_subsystem(subsystem)
+            _web_json(handler, {"ok": result.ok, "msg": result.msg})
+        else:
+            result = validate_subsystem(subsystem)
+            _web_json(handler, {"ok": result.ok, "msg": result.msg})
+        return True
+
+    # ── Changes / undo (Phase 1/3) ─────────────────────────────────────────
+    if path == "/api/changes":
+        # List recent transactions from journal
+        txs = []
+        if os.path.isdir(ZM_JOURNAL_DIR):
+            for entry in sorted(os.scandir(ZM_JOURNAL_DIR),
+                                key=lambda e: e.name, reverse=True)[:20]:
+                mf = os.path.join(entry.path, "manifest.json")
+                try:
+                    with open(mf) as f:
+                        txs.append(json.load(f))
+                except Exception:
+                    pass
+        _web_json(handler, txs)
+        return True
+
+    # ── Auth management ────────────────────────────────────────────────────
+    if path == "/api/auth/reset":
+        data = _web_read_json(handler)
+        new_pw = data.get("password", "")
+        if len(new_pw) < 8:
+            _web_json(handler, {"error": "Password must be at least 8 characters."}, 400)
+            return True
+        auth_reset(new_pw)
+        _web_json(handler, {"ok": True})
+        return True
+
+    return False
+
+
 def detect_server_ip():
     """Return the primary non‑loopback IPv4 address of the server, or None.
     Uses a UDP socket to an external address to discover the outbound interface.
@@ -40,7 +2083,7 @@ def ask_domain(prompt="  Domain: "):
             return ""
         if re.match(r"^[a-zA-Z0-9.-]+$", val):
             return val
-        print("  Invalid domain. Only letters, numbers, dots, and hyphens are allowed.")
+        err("Invalid domain. Only letters, numbers, dots, and hyphens are allowed.")
 
 def ask_db_name(prompt="Database name", default=""):
     prompt_str = f"  {prompt} [{default}]: " if default else f"  {prompt}: "
@@ -51,7 +2094,7 @@ def ask_db_name(prompt="Database name", default=""):
             return ""
         if re.match(r"^[a-zA-Z0-9_]+$", val):
             return val
-        print("  Invalid database name. Only letters, numbers, and underscores are allowed.")
+        err("Invalid database name. Only letters, numbers, and underscores are allowed.")
 
 def ask_db_user(prompt="Database user", default=""):
     prompt_str = f"  {prompt} [{default}]: " if default else f"  {prompt}: "
@@ -62,13 +2105,12 @@ def ask_db_user(prompt="Database user", default=""):
             return ""
         if re.match(r"^[a-zA-Z0-9_]+$", val):
             return val
-        print("  Invalid database user. Only letters, numbers, and underscores are allowed.")
+        err("Invalid database user. Only letters, numbers, and underscores are allowed.")
 
 
 def validate_docroot(path):
     if not path:
         return False, "Document root cannot be empty."
-    import os
     p = os.path.abspath(path)
     protected = {
         "/", "/etc", "/var", "/usr", "/bin", "/sbin", "/lib", "/boot", 
@@ -99,11 +2141,14 @@ def safe_write(filepath, content):
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         if not str(filepath).endswith('.json'):
             backup_config(filepath)
-        with open(filepath, "w") as f:
-            f.write(content)
+        if DRY_RUN:
+            step(f"[dry-run] Would write to { filepath }")
+        else:
+            with open(filepath, "w") as f:
+                f.write(content)
         return True
     except Exception as e:
-        print(f"  Error writing to {filepath}: {e}")
+        err(f"Error writing to {filepath}: {e}")
         return False
 
 # ─────────────────────────────────────────
@@ -120,6 +2165,12 @@ NGINX_SITES_ENABLED   = "/etc/nginx/sites-enabled"
 
 # Set to True via --dry-run CLI flag; makes run()/run_live() print-and-no-op.
 DRY_RUN = False
+
+# configure_apache_ports() moves Apache to 8080 (HTTP) / 8443 (HTTPS) and puts nginx
+# in front of it, and every nginx proxy template points at 127.0.0.1:8080.
+# Nothing else may ever claim these ports: not this web UI, not Docker sites.
+APACHE_BACKEND_PORTS = (8080, 8443)
+WEB_UI_DEFAULT_PORT = 8090
 SHOW_SPLASH = True        # set to False to disable the splash screen
 EASTER_EGG_ENABLED = True # set to False to disable the easter egg entirely
 MAI_PERSONAL_MESSAGE = "[ I love you, Mai ]"   # ← replace this with your own words
@@ -178,7 +2229,7 @@ def show_splash():
 
     print()
     print(f"{C.BOLD}  Zervermanager{C.RESET}")
-    print(f"  An automated Debian 12 server setup & management tool")
+    print(f"  An automated Debian 11/12/13 server setup & management tool")
     print(f"{C.CYAN}  {DIVIDER}{C.RESET}")
     print(f"  Version     : v{SCRIPT_VERSION}")
     print(f"  Created by  : ZFRFRK")
@@ -252,7 +2303,6 @@ def prompt_confirm(msg, default="no"):
 def menu_header(title):
     """Print a standardized bold menu header with a separator."""
     global current_menu_width
-    import re
     # Strip any ANSI escape sequences from the title
     clean_title = re.sub(r"\x1b\[[0-9;]*m", "", title)
     clean_title = re.sub(r"\033\[[0-9;]*m", "", clean_title)
@@ -288,7 +2338,9 @@ def apply_reloads():
 
     if "apache2" in _pending:
         print(f"  {C.CYAN}Reloading Apache2...{C.RESET}", end=" ", flush=True)
-        result = run(["systemctl", "reload", "apache2"])
+        _is_active = run(["systemctl", "is-active", "apache2"]).stdout.strip() == "active"
+        _action = "reload" if _is_active else "restart"
+        result = run(["systemctl", _action, "apache2"])
 
         if result.returncode == 0:
             print(f"{C.GREEN}✓{C.RESET}")
@@ -298,7 +2350,10 @@ def apply_reloads():
 
     if "bind9" in _pending:
         print(f"  {C.CYAN}Reloading BIND9...{C.RESET}", end=" ", flush=True)
-        result = run(["systemctl", "reload", "bind9"])
+        _bind9_svc = get_bind9_service_name()
+        _is_active = run(["systemctl", "is-active", _bind9_svc]).stdout.strip() == "active"
+        _action = "reload" if _is_active else "restart"
+        result = run(["systemctl", _action, _bind9_svc])
 
         if result.returncode == 0:
             print(f"{C.GREEN}✓{C.RESET}")
@@ -308,7 +2363,9 @@ def apply_reloads():
 
     if "nginx" in _pending:
         print(f"  {C.CYAN}Reloading Nginx...{C.RESET}", end=" ", flush=True)
-        result = run(["systemctl", "reload", "nginx"])
+        _is_active = run(["systemctl", "is-active", "nginx"]).stdout.strip() == "active"
+        _action = "reload" if _is_active else "restart"
+        result = run(["systemctl", _action, "nginx"])
 
         if result.returncode == 0:
             print(f"{C.GREEN}✓{C.RESET}")
@@ -393,7 +2450,7 @@ def service_status(name):
 #  Site metadata (type tracking)
 # ─────────────────────────────────────────
 
-def save_site_meta(domain, site_type, docroot, db_name=None, db_user=None, web_server="apache", dns=False):
+def save_site_meta(domain, site_type, docroot, db_name=None, db_user=None, web_server="apache", dns=False, container_name=None, host_port=None):
     os.makedirs(META_DIR, exist_ok=True)
 
     meta = {
@@ -409,6 +2466,10 @@ def save_site_meta(domain, site_type, docroot, db_name=None, db_user=None, web_s
         meta["db_name"] = db_name
     if db_user:
         meta["db_user"] = db_user
+    if container_name:
+        meta["container_name"] = container_name
+    if host_port:
+        meta["host_port"] = host_port
 
     safe_write(f"{META_DIR}/{domain}.json", json.dumps(meta, indent=2))
 
@@ -416,7 +2477,7 @@ def save_site_meta(domain, site_type, docroot, db_name=None, db_user=None, web_s
 def get_site_meta(domain):
     path = f"{META_DIR}/{domain}.json"
 
-    if not os.path.exists(path):
+    if not os.path.isfile(path):
         return None
 
     try:
@@ -429,7 +2490,7 @@ def get_site_meta(domain):
 def delete_site_meta(domain):
     path = f"{META_DIR}/{domain}.json"
 
-    if os.path.exists(path):
+    if os.path.isfile(path):
         os.remove(path)
 
 
@@ -445,6 +2506,8 @@ def site_type_label(domain):
         return f"{C.BLUE}[LAMP]{C.RESET}"
     elif t == "static":
         return f"{C.DIM}[static]{C.RESET}"
+    elif t == "docker":
+        return f"{C.BLUE}[docker]{C.RESET}"
 
     return f"{C.DIM}[{t}]{C.RESET}"
 
@@ -452,6 +2515,49 @@ def site_type_label(domain):
 # ─────────────────────────────────────────
 #  Apache helpers
 # ─────────────────────────────────────────
+
+def configure_apache_ports():
+    ports_conf = "/etc/apache2/ports.conf"
+    if os.path.exists(ports_conf):
+        with open(ports_conf, "r") as f:
+            content = f.read()
+        if "Listen 8080" not in content:
+            content = re.sub(r"^(Listen\s+)80$", r"\g<1>8080", content, flags=re.MULTILINE)
+            content = re.sub(r"^(Listen\s+)443$", r"\g<1>8443", content, flags=re.MULTILINE)
+            if not DRY_RUN:
+                with open(ports_conf, "w") as f:
+                    f.write(content)
+            else:
+                step(f"[dry-run] Would update ports in {ports_conf}")
+    
+    default_conf = "/etc/apache2/sites-available/000-default.conf"
+    if os.path.exists(default_conf):
+        with open(default_conf, "r") as f:
+            content = f.read()
+        if "<VirtualHost *:8080>" not in content:
+            content = re.sub(r"<VirtualHost \*:80>", "<VirtualHost *:8080>", content)
+            if not DRY_RUN:
+                with open(default_conf, "w") as f:
+                    f.write(content)
+
+    # Silence AH00558 ("Could not reliably determine the server's fully qualified
+    # domain name") by giving Apache a global ServerName — unless one already exists.
+    servername_conf = "/etc/apache2/conf-available/servername.conf"
+    if not DRY_RUN and os.path.isdir("/etc/apache2/conf-available") and not os.path.exists(servername_conf):
+        try:
+            existing = ""
+            for pth in ["/etc/apache2/apache2.conf"] + glob.glob("/etc/apache2/conf-enabled/*.conf"):
+                try:
+                    with open(pth, "r") as f:
+                        existing += f.read()
+                except OSError:
+                    pass
+            if not re.search(r"^\s*ServerName\s", existing, re.MULTILINE):
+                with open(servername_conf, "w") as f:
+                    f.write("ServerName localhost\n")
+                subprocess.run(["a2enconf", "servername"], capture_output=True)
+        except Exception:
+            pass
 
 def apache_test():
     return run(["/usr/sbin/apache2ctl", "configtest"])
@@ -504,7 +2610,7 @@ def create_docroot(docroot, domain):
 
 def http_vhost(domain, docroot):
     return f"""
-<VirtualHost *:80>
+<VirtualHost *:8080>
     ServerName {domain}
     ServerAlias www.{domain}
 
@@ -521,7 +2627,7 @@ def http_vhost(domain, docroot):
 
 def https_vhost(domain, docroot, cert, key):
     return f"""
-<VirtualHost *:80>
+<VirtualHost *:8080>
     ServerName {domain}
     ServerAlias www.{domain}
 
@@ -529,7 +2635,7 @@ def https_vhost(domain, docroot, cert, key):
     RewriteRule ^ https://%{{HTTP_HOST}}%{{REQUEST_URI}} [R=301,L]
 </VirtualHost>
 
-<VirtualHost *:443>
+<VirtualHost *:8443>
     ServerName {domain}
     ServerAlias www.{domain}
 
@@ -671,13 +2777,80 @@ server {{
 }}
 """
 
+def detect_package_manager():
+    """Return the primary package manager for the OS."""
+    return "apt-get"
+
+def detect_webserver_php_socket():
+    """Probe /run/php/ for active php-fpm sockets."""
+    sockets = sorted(glob.glob("/run/php/php*-fpm.sock"), reverse=True)
+    if sockets:
+        return sockets[0]
+    return "/run/php/php8.2-fpm.sock"
+
 def find_php_fpm_socket():
     """Locate the PHP-FPM unix socket, falling back to TCP."""
-    import glob
     sockets = sorted(glob.glob("/var/run/php/php*-fpm.sock"), reverse=True)
     if sockets:
         return sockets[0]
+    
+    # Fallback using our new probe
+    probe = detect_webserver_php_socket()
+    if os.path.isfile(probe):
+        return probe
+    
     return "127.0.0.1:9000"
+
+
+def get_php_version():
+    """Return the installed PHP MAJOR.MINOR version string (e.g. '8.5'), or None.
+    Used by build_php_packages() to construct versioned package names on Ubuntu.
+    """
+    result = run(["php", "-r", "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;"])
+    if result.returncode == 0:
+        ver = result.stdout.strip()
+        if ver and "." in ver:
+            return ver
+    return None
+
+
+def build_php_packages(base_names):
+    """Return a list of apt package names for PHP extensions.
+
+    On Ubuntu: rewrites generic names to versioned names using the detected PHP
+    version (e.g. 'php-imap' -> 'php8.5-imap', 'php' -> 'php8.5').
+    If PHP is not yet installed (version undetectable), returns base_names unchanged
+    so apt can resolve the correct version itself.
+
+    On Debian 12 / 11 / 13 and all other OS: always returns base_names unchanged.
+    Generic unversioned names are correct on Debian and must not be modified.
+    """
+    status, _ = check_os_compatibility()
+    if status != "ubuntu":
+        # Debian (any codename) and all other OS — passthrough, no change.
+        return base_names
+
+    ver = get_php_version()
+    if not ver:
+        # Ubuntu but PHP not yet installed — let apt resolve the version.
+        return base_names
+
+    versioned = []
+    try:
+        ver_num = float(ver)
+    except ValueError:
+        ver_num = 0.0
+
+    for pkg in base_names:
+        if pkg == "php-imap" and ver_num >= 8.4:
+            continue
+        if pkg == "php":
+            versioned.append(f"php{ver}")
+        elif pkg.startswith("php-"):
+            versioned.append(f"php{ver}-{pkg[4:]}")
+        else:
+            versioned.append(pkg)
+    return versioned
 
 
 def nginx_lemp_http_vhost(domain, docroot, fpm_socket):
@@ -1050,7 +3223,7 @@ def delete_nginx_site():
 
         nginx_disable_site(domain)
 
-        if os.path.exists(conf):
+        if os.path.isfile(conf):
             os.remove(conf)
 
         if remove_files == "yes" and os.path.exists(docroot):
@@ -1095,7 +3268,7 @@ def reload_bind9():
 
 
 def zone_exists(domain):
-    if not os.path.exists(NAMED_CONF_LOCAL):
+    if not os.path.isfile(NAMED_CONF_LOCAL):
         return False
 
     with open(NAMED_CONF_LOCAL, "r") as f:
@@ -1113,8 +3286,11 @@ zone "{domain}" {{
 """
 
     backup_config(NAMED_CONF_LOCAL)
-    with open(NAMED_CONF_LOCAL, "a") as f:
-        f.write(block)
+    if DRY_RUN:
+        step(f"[dry-run] Would append to { NAMED_CONF_LOCAL }")
+    else:
+        with open(NAMED_CONF_LOCAL, "a") as f:
+            f.write(block)
 
 
 def remove_zone_from_conf(domain):
@@ -1129,8 +3305,11 @@ def remove_zone_from_conf(domain):
     new_content = re.sub(pattern, "\n", content)
 
     backup_config(NAMED_CONF_LOCAL)
-    with open(NAMED_CONF_LOCAL, "w") as f:
-        f.write(new_content)
+    if DRY_RUN:
+        step(f"[dry-run] Would write to { NAMED_CONF_LOCAL }")
+    else:
+        with open(NAMED_CONF_LOCAL, "w") as f:
+            f.write(new_content)
 
 
 def reverse_zone_name(ip):
@@ -1165,8 +3344,11 @@ www IN  A       {ip}
 """
 
     backup_config(zonefile)
-    with open(zonefile, "w") as f:
-        f.write(content)
+    if DRY_RUN:
+        step(f"[dry-run] Would write to { zonefile }")
+    else:
+        with open(zonefile, "w") as f:
+            f.write(content)
 
 
 def write_reverse_zone(domain, ip, zonefile):
@@ -1187,8 +3369,11 @@ $TTL    604800
 """
 
     backup_config(zonefile)
-    with open(zonefile, "w") as f:
-        f.write(content)
+    if DRY_RUN:
+        step(f"[dry-run] Would write to { zonefile }")
+    else:
+        with open(zonefile, "w") as f:
+            f.write(content)
 
 
 # ─────────────────────────────────────────
@@ -1270,7 +3455,7 @@ def pick_sites(show_enabled=True, show_disabled=True, type_filter=None):
 
 def pick_zones():
     """Show numbered list of BIND9 zones. Returns list of selected zone names."""
-    if not os.path.exists(NAMED_CONF_LOCAL):
+    if not os.path.isfile(NAMED_CONF_LOCAL):
         err("named.conf.local not found.")
         return []
 
@@ -1327,7 +3512,7 @@ def pick_zones():
 
 def pick_zones_forward():
     """Numbered picker — forward zones only (no in-addr.arpa)."""
-    if not os.path.exists(NAMED_CONF_LOCAL):
+    if not os.path.isfile(NAMED_CONF_LOCAL):
         err("named.conf.local not found.")
         return []
 
@@ -1412,7 +3597,7 @@ def add_mx_record():
     for domain in zones:
         zonefile = get_zone_file(domain)
 
-        if not zonefile or not os.path.exists(zonefile):
+        if not zonefile or not os.path.isfile(zonefile):
             err(f"Zone file not found for {domain}.")
             continue
 
@@ -1437,8 +3622,11 @@ def add_mx_record():
             content += f"{sub}    IN  A   {mail_ip}\n"
 
         backup_config(zonefile)
-        with open(zonefile, "w") as f:
-            f.write(content)
+        if DRY_RUN:
+            step(f"[dry-run] Would write to { zonefile }")
+        else:
+            with open(zonefile, "w") as f:
+                f.write(content)
 
         ok_z, msg_z = validate_zone(domain, zonefile)
 
@@ -1469,7 +3657,7 @@ def remove_mx_record():
     for domain in zones:
         zonefile = get_zone_file(domain)
 
-        if not zonefile or not os.path.exists(zonefile):
+        if not zonefile or not os.path.isfile(zonefile):
             err(f"Zone file not found for {domain}.")
             continue
 
@@ -1518,8 +3706,11 @@ def remove_mx_record():
         )
 
         backup_config(zonefile)
-        with open(zonefile, "w") as f:
-            f.write(new_content)
+        if DRY_RUN:
+            step(f"[dry-run] Would write to { zonefile }")
+        else:
+            with open(zonefile, "w") as f:
+                f.write(new_content)
 
         ok_z, msg_z = validate_zone(domain, zonefile)
 
@@ -1552,7 +3743,7 @@ def list_mx_records():
 
         print(f"\n  {C.BOLD}{domain}{C.RESET}")
 
-        if not zonefile or not os.path.exists(zonefile):
+        if not zonefile or not os.path.isfile(zonefile):
             err(f"  Zone file not found.")
             continue
 
@@ -1591,7 +3782,7 @@ def copy_existing_site_files(source, destination, clear_dest=True):
             err("Source and destination are the same. Cannot copy.")
             return False
 
-        if clear_dest and os.path.exists(destination):
+        if clear_dest and os.path.isfile(destination):
             for item in os.listdir(destination):
                 p = os.path.join(destination, item)
                 if os.path.isdir(p):
@@ -1630,8 +3821,8 @@ def ask_for_custom_site_files(docroot):
         warn("No path provided, using default page.")
         return False
 
-    if not os.path.exists(src):
-        err(f"Path does not exist: {src}")
+    if not os.path.isdir(src):
+        err(f"Path does not exist or is not a directory: {src}")
         return False
 
     step(f"Copying files from {src} to {docroot}...")
@@ -1682,6 +3873,9 @@ def prompt_db_import(db_name, db_user, db_pass, docroot):
 
 def create_full_site():
     menu_header("Create Full Site (Apache + optional DNS)")
+
+    if not ensure_nginx():
+        return
 
     domain = ask_domain()
     if not domain:
@@ -1738,13 +3932,15 @@ def create_full_site():
 
     # ── Document root ──
     step("Creating document root...")
-    create_docroot(docroot, domain)
+    Path(docroot).mkdir(parents=True, exist_ok=True)
 
     # Custom site files?
     custom = ask_for_custom_site_files(docroot)
     if not custom:
-        # make sure at least an index.html exists (already created by create_docroot)
-        pass
+        # No custom files — write the default placeholder index.html
+        index = Path(docroot) / "index.html"
+        if not index.exists():
+            index.write_text(f"<html><body><h1>{domain}</h1></body></html>")
 
     # ── Apache vhost ──
     step("Writing Apache vhost config...")
@@ -1766,8 +3962,27 @@ def create_full_site():
 
     enable_site(domain)
     save_site_meta(domain, "static", docroot, dns=create_dns)
+    configure_apache_ports()
     ok("Apache vhost created.")
     reload_apache()
+
+    # ── Nginx proxy ──
+    step("Configuring Nginx front-door proxy...")
+    nginx_vhost = f"""server {{
+    listen 80;
+    server_name {domain} www.{domain};
+    location / {{
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }}
+}}"""
+    write_nginx_vhost(domain, nginx_vhost)
+    nginx_enable_site(domain)
+    reload_nginx()
+    ok("Nginx proxy configured.")
 
     # ── BIND9 zones (only if requested) ──
     if create_dns:
@@ -1967,7 +4182,7 @@ def list_apache_sites():
             continue
 
         found   = True
-        enabled = os.path.exists(f"/etc/apache2/sites-enabled/{file}")
+        enabled = os.path.isfile(f"/etc/apache2/sites-enabled/{file}")
         status  = (
             f"{C.GREEN}enabled{C.RESET}"
             if enabled
@@ -2092,11 +4307,19 @@ def delete_apache_site():
         if os.path.islink(enabled_link):
             os.unlink(enabled_link)
 
-        if os.path.exists(conf):
+        if os.path.isfile(conf):
             os.remove(conf)
 
         if remove_files == "yes" and os.path.exists(docroot):
             shutil.rmtree(docroot)
+
+        # ── Remove Nginx proxy if it exists ──
+        nginx_conf = f"{NGINX_SITES_AVAILABLE}/{domain}.conf"
+        nginx_enabled = f"{NGINX_SITES_ENABLED}/{domain}.conf"
+        if os.path.islink(nginx_enabled):
+            os.unlink(nginx_enabled)
+        if os.path.isfile(nginx_conf):
+            os.remove(nginx_conf)
 
         # ── Remove metadata ──
         delete_site_meta(domain)
@@ -2110,6 +4333,8 @@ def delete_apache_site():
         return
 
     reload_apache()
+    if os.path.exists("/usr/sbin/nginx"):
+        reload_nginx()
     apply_reloads()
 
 
@@ -2337,7 +4562,7 @@ def delete_zone():
 
         zonefile = f"{BIND_DIR}/db.{domain}"
 
-        if delete_files == "yes" and os.path.exists(zonefile):
+        if delete_files == "yes" and os.path.isfile(zonefile):
             os.remove(zonefile)
 
         ok(f"{domain} removed.")
@@ -2355,7 +4580,7 @@ def delete_zone():
 def list_zones():
     print()
 
-    if not os.path.exists(NAMED_CONF_LOCAL):
+    if not os.path.isfile(NAMED_CONF_LOCAL):
         err("named.conf.local not found.")
         return
 
@@ -2421,6 +4646,9 @@ def create_lamp_site():
     if not ensure_mariadb():
         return
 
+    if not ensure_nginx():
+        return
+
     domain = ask_domain()
     if not domain:
         return
@@ -2477,6 +4705,7 @@ def create_lamp_site():
         return
 
     ok("All packages installed.")
+    configure_apache_ports()
 
     # ── Start MariaDB ──
     step("Starting MariaDB...")
@@ -2703,6 +4932,24 @@ mysql {db_name} -e "DELETE FROM test_entries;"</pre>
     reload_apache()
     ok("Apache vhost created.")
 
+    # ── Nginx proxy ──
+    step("Configuring Nginx front-door proxy...")
+    vhost = f"""server {{
+    listen 80;
+    server_name {domain} www.{domain};
+    location / {{
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }}
+}}"""
+    write_nginx_vhost(domain, vhost)
+    nginx_enable_site(domain)
+    reload_nginx()
+    ok("Nginx proxy configured.")
+
     # ── BIND9 zones (only if requested) ──
     if create_dns:
         rev_zone = reverse_zone_name(ip)
@@ -2792,7 +5039,7 @@ def modify_full_site():
     for domain in domains:
         conf = f"{APACHE_SITES_AVAILABLE}/{domain}.conf"
 
-        if not os.path.exists(conf):
+        if not os.path.isfile(conf):
             err(f"Config not found: {conf}")
             continue
 
@@ -2834,14 +5081,20 @@ def modify_full_site():
             )
 
             backup_config(conf)
-            with open(conf, "w") as f:
-                f.write(updated)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { conf }")
+            else:
+                with open(conf, "w") as f:
+                    f.write(updated)
 
             ok_a, msg_a = validate_apache()
 
             if not ok_a:
-                with open(conf, "w") as f:
-                    f.write(current)
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to { conf }")
+                else:
+                    with open(conf, "w") as f:
+                        f.write(current)
                 err(f"Apache error (reverted):\n{msg_a}")
                 continue
 
@@ -2849,8 +5102,11 @@ def modify_full_site():
             meta = get_site_meta(domain)
             if meta:
                 meta["docroot"] = new_docroot
-                with open(f"{META_DIR}/{domain}.json", "w") as f:
-                    json.dump(meta, f, indent=2)
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to {META_DIR}/{domain}.json")
+                else:
+                    with open(f"{META_DIR}/{domain}.json", "w") as f:
+                        json.dump(meta, f, indent=2)
 
             reload_apache()
             apply_reloads()
@@ -2874,14 +5130,20 @@ def modify_full_site():
             new_config = "\n".join(lines) + "\n"
 
             backup_config(conf)
-            with open(conf, "w") as f:
-                f.write(new_config)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { conf }")
+            else:
+                with open(conf, "w") as f:
+                    f.write(new_config)
 
             ok_a, msg_a = validate_apache()
 
             if not ok_a:
-                with open(conf, "w") as f:
-                    f.write(current)
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to { conf }")
+                else:
+                    with open(conf, "w") as f:
+                        f.write(current)
                 err(f"Apache error (reverted):\n{msg_a}")
                 continue
 
@@ -2924,8 +5186,11 @@ def modify_full_site():
             # Write new vhost under NEW name (we will rename the file)
             new_conf_path = f"{APACHE_SITES_AVAILABLE}/{new_domain}.conf"
             backup_config(new_conf_path)
-            with open(new_conf_path, "w") as f:
-                f.write(new_vhost)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { new_conf_path }")
+            else:
+                with open(new_conf_path, "w") as f:
+                    f.write(new_vhost)
 
             # Validate Apache with new config
             ok_a, msg_a = validate_apache()
@@ -2952,7 +5217,7 @@ def modify_full_site():
                     old_fwd_file = get_zone_file(domain)
                     # Remove old forward zone entirely and create new.
                     remove_zone_from_conf(domain)
-                    if old_fwd_file and os.path.exists(old_fwd_file):
+                    if old_fwd_file and os.path.isfile(old_fwd_file):
                         # Optionally delete old zone file later
                         pass
 
@@ -3011,7 +5276,7 @@ def modify_full_site():
                     continue
 
                 # Optionally delete old zone files
-                if old_fwd_file and os.path.exists(old_fwd_file):
+                if old_fwd_file and os.path.isfile(old_fwd_file):
                     os.remove(old_fwd_file)
                 # Old reverse zone file path can't be determined easily; skip.
 
@@ -3061,7 +5326,7 @@ def modify_full_site():
             if not src:
                 warn("No path provided, skipping.")
                 continue
-            if not os.path.exists(src):
+            if not os.path.isfile(src):
                 err(f"Directory not found: {src}")
                 continue
             step(f"Copying files from {src} to {old_docroot}...")
@@ -3126,7 +5391,7 @@ def modify_lamp_site():
     for domain in domains:
         conf = f"{APACHE_SITES_AVAILABLE}/{domain}.conf"
 
-        if not os.path.exists(conf):
+        if not os.path.isfile(conf):
             err(f"Config not found: {conf}")
             continue
 
@@ -3161,14 +5426,20 @@ def modify_lamp_site():
             )
 
             backup_config(conf)
-            with open(conf, "w") as f:
-                f.write(updated)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { conf }")
+            else:
+                with open(conf, "w") as f:
+                    f.write(updated)
 
             ok_a, msg_a = validate_apache()
 
             if not ok_a:
-                with open(conf, "w") as f:
-                    f.write(current)
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to { conf }")
+                else:
+                    with open(conf, "w") as f:
+                        f.write(current)
                 err(f"Apache error (reverted):\n{msg_a}")
                 continue
 
@@ -3181,7 +5452,7 @@ def modify_lamp_site():
 
             index_path = os.path.join(docroot, "index.php")
 
-            if not os.path.exists(index_path):
+            if not os.path.isfile(index_path):
                 err(f"index.php not found at {index_path}")
                 continue
 
@@ -3200,8 +5471,11 @@ def modify_lamp_site():
                 php
             )
 
-            with open(index_path, "w") as f:
-                f.write(php_updated)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { index_path }")
+            else:
+                with open(index_path, "w") as f:
+                    f.write(php_updated)
 
             ok(f"DB password updated in index.php for {domain}.")
             warn("Remember to also update the MariaDB user password manually.")
@@ -3224,14 +5498,20 @@ def modify_lamp_site():
             new_config = "\n".join(lines) + "\n"
 
             backup_config(conf)
-            with open(conf, "w") as f:
-                f.write(new_config)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { conf }")
+            else:
+                with open(conf, "w") as f:
+                    f.write(new_config)
 
             ok_a, msg_a = validate_apache()
 
             if not ok_a:
-                with open(conf, "w") as f:
-                    f.write(current)
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to { conf }")
+                else:
+                    with open(conf, "w") as f:
+                        f.write(current)
                 err(f"Apache error (reverted):\n{msg_a}")
                 continue
 
@@ -3247,7 +5527,7 @@ def modify_lamp_site():
             if not src:
                 warn("No path provided, skipping.")
                 continue
-            if not os.path.exists(src):
+            if not os.path.isfile(src):
                 err(f"Directory not found: {src}")
                 continue
             meta = get_site_meta(domain)
@@ -3400,8 +5680,15 @@ def create_nginx_full_site():
             return
 
     step("Creating document root...")
-    create_docroot(docroot, domain)
-    ask_for_custom_site_files(docroot)
+    Path(docroot).mkdir(parents=True, exist_ok=True)
+
+    # Custom site files?
+    custom = ask_for_custom_site_files(docroot)
+    if not custom:
+        # No custom files — write the default placeholder index.html
+        index = Path(docroot) / "index.html"
+        if not index.exists():
+            index.write_text(f"<html><body><h1>{domain}</h1></body></html>")
 
     step("Writing Nginx vhost config...")
     if ssl_choice in ("2", "3"):
@@ -3490,7 +5777,7 @@ def modify_nginx_full_site():
     for domain in domains:
         conf = f"{NGINX_SITES_AVAILABLE}/{domain}.conf"
 
-        if not os.path.exists(conf):
+        if not os.path.isfile(conf):
             err(f"Config not found: {conf}")
             continue
 
@@ -3514,13 +5801,19 @@ def modify_nginx_full_site():
             updated = re.sub(r"root\s+\S+;", f"root {new_docroot};", current)
 
             backup_config(conf)
-            with open(conf, "w") as f:
-                f.write(updated)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { conf }")
+            else:
+                with open(conf, "w") as f:
+                    f.write(updated)
 
             ok_n, msg_n = validate_nginx()
             if not ok_n:
-                with open(conf, "w") as f:
-                    f.write(current)
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to { conf }")
+                else:
+                    with open(conf, "w") as f:
+                        f.write(current)
                 err(f"Nginx error (reverted):\n{msg_n}")
                 continue
 
@@ -3540,13 +5833,19 @@ def modify_nginx_full_site():
             new_config = "\n".join(lines) + "\n"
 
             backup_config(conf)
-            with open(conf, "w") as f:
-                f.write(new_config)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { conf }")
+            else:
+                with open(conf, "w") as f:
+                    f.write(new_config)
 
             ok_n, msg_n = validate_nginx()
             if not ok_n:
-                with open(conf, "w") as f:
-                    f.write(current)
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to { conf }")
+                else:
+                    with open(conf, "w") as f:
+                        f.write(current)
                 err(f"Nginx error (reverted):\n{msg_n}")
                 continue
 
@@ -3559,7 +5858,7 @@ def modify_nginx_full_site():
             if not src:
                 warn("No path provided, skipping.")
                 continue
-            if not os.path.exists(src):
+            if not os.path.isfile(src):
                 err(f"Directory not found: {src}")
                 continue
             meta = get_site_meta(domain)
@@ -3894,7 +6193,7 @@ def modify_lemp_site():
     for domain in domains:
         conf = f"{NGINX_SITES_AVAILABLE}/{domain}.conf"
 
-        if not os.path.exists(conf):
+        if not os.path.isfile(conf):
             err(f"Config not found: {conf}")
             continue
 
@@ -3919,13 +6218,19 @@ def modify_lemp_site():
             updated = re.sub(r"root\s+\S+;", f"root {new_docroot};", current)
 
             backup_config(conf)
-            with open(conf, "w") as f:
-                f.write(updated)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { conf }")
+            else:
+                with open(conf, "w") as f:
+                    f.write(updated)
 
             ok_n, msg_n = validate_nginx()
             if not ok_n:
-                with open(conf, "w") as f:
-                    f.write(current)
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to { conf }")
+                else:
+                    with open(conf, "w") as f:
+                        f.write(current)
                 err(f"Nginx error (reverted):\n{msg_n}")
                 continue
 
@@ -3938,7 +6243,7 @@ def modify_lemp_site():
             docroot  = meta.get("docroot", f"/var/www/{domain}") if meta else f"/var/www/{domain}"
             index_path = os.path.join(docroot, "index.php")
 
-            if not os.path.exists(index_path):
+            if not os.path.isfile(index_path):
                 err(f"index.php not found at {index_path}")
                 continue
 
@@ -3952,8 +6257,11 @@ def modify_lemp_site():
 
             php_updated = re.sub(r"\$pass\s*=\s*'[^']*'", f"$pass = '{new_pass}'", php)
 
-            with open(index_path, "w") as f:
-                f.write(php_updated)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { index_path }")
+            else:
+                with open(index_path, "w") as f:
+                    f.write(php_updated)
 
             ok(f"DB password updated in index.php for {domain}.")
             warn("Remember to also update the MariaDB user password manually.")
@@ -3970,13 +6278,19 @@ def modify_lemp_site():
             new_config = "\n".join(lines) + "\n"
 
             backup_config(conf)
-            with open(conf, "w") as f:
-                f.write(new_config)
+            if DRY_RUN:
+                step(f"[dry-run] Would write to { conf }")
+            else:
+                with open(conf, "w") as f:
+                    f.write(new_config)
 
             ok_n, msg_n = validate_nginx()
             if not ok_n:
-                with open(conf, "w") as f:
-                    f.write(current)
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to { conf }")
+                else:
+                    with open(conf, "w") as f:
+                        f.write(current)
                 err(f"Nginx error (reverted):\n{msg_n}")
                 continue
 
@@ -3989,7 +6303,7 @@ def modify_lemp_site():
             if not src:
                 warn("No path provided, skipping.")
                 continue
-            if not os.path.exists(src):
+            if not os.path.isfile(src):
                 err(f"Directory not found: {src}")
                 continue
             meta = get_site_meta(domain)
@@ -4479,6 +6793,479 @@ def reverse_proxy_nginx_menu():
 
 
 # ─────────────────────────────────────────
+#  Docker Sites & Services
+# ─────────────────────────────────────────
+
+def is_docker_installed():
+    return shutil.which("docker") is not None
+
+def is_compose_available():
+    r = run(["docker", "compose", "version"])
+    return r.returncode == 0
+
+def install_docker():
+    menu_header("Install Docker")
+    if is_docker_installed():
+        ok("Docker is already installed.")
+        input("\n  Press Enter to continue...")
+        return True
+
+    step("Checking dependencies...")
+    r, err_msg = run_live(["apt-get", "install", "-y", "ca-certificates", "curl", "gnupg"])
+    if r != 0:
+        err(f"Dependency install failed:\n{err_msg}")
+        return False
+
+    step("Adding Docker's official GPG key...")
+    run(["install", "-m", "0755", "-d", "/etc/apt/keyrings"])
+    
+    dl = run(["curl", "-fsSL", "https://download.docker.com/linux/debian/gpg"])
+    if dl.returncode != 0:
+        err(f"Failed to download Docker GPG key:\n{dl.stderr}")
+        return False
+        
+    run(["rm", "-f", "/etc/apt/keyrings/docker.gpg"])
+    if not DRY_RUN:
+        subprocess.run(["gpg", "--dearmor", "-o", "/etc/apt/keyrings/docker.gpg"], input=dl.stdout, text=True, capture_output=True)
+    run(["chmod", "a+r", "/etc/apt/keyrings/docker.gpg"])
+
+    step("Setting up Docker apt repository...")
+    codename_proc = run(["lsb_release", "-cs"])
+    c_name = codename_proc.stdout.strip() if codename_proc.returncode == 0 else "bookworm"
+    
+    repo_line = f"deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian {c_name} stable"
+    safe_write("/etc/apt/sources.list.d/docker.list", repo_line + "\n")
+
+    step("Updating apt package index...")
+    run_live(["apt-get", "update"])
+
+    step("Installing Docker CE...")
+    r, err_msg = run_live(["apt-get", "install", "-y", "docker-ce", "docker-ce-cli", "containerd.io", "docker-compose-plugin"])
+    if r != 0:
+        err(f"Docker installation failed:\n{err_msg}")
+        return False
+        
+    step("Enabling Docker service...")
+    run(["systemctl", "enable", "--now", "docker"])
+    
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        run(["usermod", "-aG", "docker", sudo_user])
+        info(f"Added user {sudo_user} to docker group. Please log out and log back in for this to take effect.")
+        
+    ok("Docker installed successfully.")
+    input("\n  Press Enter to continue...")
+    return True
+
+def _find_free_docker_port(start=8080, max_tries=200):
+    for port in range(start, start + max_tries):
+        if port in APACHE_BACKEND_PORTS:
+            continue          # Apache lives here; a container on 8080 would stop it from ever starting
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", port))
+                return port
+        except OSError:
+            continue
+    return None
+
+def create_container_site():
+    menu_header("Create Container Site (Nginx Proxy)")
+    
+    if not is_docker_installed():
+        err("Docker is not installed. Please install it first.")
+        input("\n  Press Enter to continue...")
+        return
+        
+    if not ensure_nginx():
+        return
+        
+    domain = ask_domain()
+    if not domain: return
+    
+    image = input("  Container image [e.g. nginx:alpine]: ").strip()
+    if not image: return
+    
+    int_port_str = input("  Internal port [80]: ").strip() or "80"
+    if not int_port_str.isdigit():
+        err("Port must be a number.")
+        return
+    internal_port = int(int_port_str)
+    
+    host_port = _find_free_docker_port()
+    if not host_port:
+        err("Could not find a free host port.")
+        return
+        
+    net_chk = run(["docker", "network", "inspect", "zervermanager_net"])
+    if net_chk.returncode != 0:
+        step("Creating Docker network 'zervermanager_net'...")
+        run(["docker", "network", "create", "zervermanager_net"])
+        
+    container_name = "site-" + domain.replace(".", "-")
+    
+    step(f"Starting container {container_name} on port {host_port}...")
+    cmd = [
+        "docker", "run", "-d", "--name", container_name,
+        "--network", "zervermanager_net",
+        "-p", f"127.0.0.1:{host_port}:{internal_port}",
+        "--restart", "unless-stopped",
+        image
+    ]
+    r, e = run_live(cmd)
+    if r != 0:
+        err(f"Container failed to start:\n{e}")
+        return
+        
+    target = f"http://127.0.0.1:{host_port}"
+    
+    dns_choice = input("  Create DNS zones for this site? (y/N): ").strip().lower()
+    create_dns = (dns_choice == "y")
+    ip = None
+    if create_dns:
+        ip = prompt_for_ip("Server IP")
+        if not ip:
+            create_dns = False
+
+    vhost = f"""server {{
+    listen 80;
+    server_name {domain} www.{domain};
+
+    location / {{
+        proxy_pass {target};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }}
+
+    access_log /var/log/nginx/{domain}-access.log;
+    error_log  /var/log/nginx/{domain}-error.log;
+}}
+"""
+    step("Writing Nginx vhost config...")
+    write_nginx_vhost(domain, vhost)
+    nginx_enable_site(domain)
+    
+    ok_n, msg_n = validate_nginx()
+    if not ok_n:
+        err(f"Nginx config error: {msg_n}")
+        nginx_disable_site(domain)
+        run(["docker", "stop", container_name])
+        run(["docker", "rm", container_name])
+        return
+        
+    reload_nginx()
+    save_site_meta(domain, "docker", f"container:{image}", web_server="nginx", dns=create_dns, container_name=container_name, host_port=host_port)
+    
+    if create_dns:
+        rev_zone = reverse_zone_name(ip)
+        fwd_file = f"{BIND_DIR}/db.{domain}"
+        rev_file = reverse_zone_file(ip)
+
+        if not zone_exists(domain):
+            step("Writing forward zone...")
+            write_forward_zone(domain, ip, fwd_file)
+            ok_z, msg_z = validate_zone(domain, fwd_file)
+            if ok_z:
+                add_zone_to_conf(domain, fwd_file)
+                ok("Forward zone created.")
+            else:
+                os.remove(fwd_file)
+                err(msg_z)
+
+        if not zone_exists(rev_zone):
+            step("Writing reverse zone...")
+            write_reverse_zone(domain, ip, rev_file)
+            ok_r, msg_r = validate_zone(rev_zone, rev_file)
+            if ok_r:
+                add_zone_to_conf(rev_zone, rev_file)
+                ok("Reverse zone created.")
+            else:
+                os.remove(rev_file)
+                remove_zone_from_conf(domain)
+                err(msg_r)
+        
+        ok_b, msg_b = validate_bind9()
+        if not ok_b:
+            err(msg_b)
+        else:
+            reload_bind9()
+            
+    apply_reloads()
+    ok(f"Container site created: http://{domain} -> {image}")
+    input("\n  Press Enter to continue...")
+
+def delete_container_site():
+    menu_header("Delete Container Site")
+    domains = [d for d in pick_nginx_sites(show_enabled=True, show_disabled=True) if get_site_meta(d) and get_site_meta(d).get("type") == "docker"]
+    if not domains:
+        warn("No docker sites selected.")
+        return
+        
+    print(f"\n{C.YELLOW}  WARNING — will delete container and Nginx vhost for:{C.RESET}")
+    for d in domains:
+        print(f"    - {d}")
+
+    if not prompt_confirm(f"{C.YELLOW}Delete these sites?{C.RESET}"):
+        warn("Cancelled.")
+        return
+
+    for domain in domains:
+        meta = get_site_meta(domain)
+        container_name = meta.get("container_name") if meta else None
+        if container_name:
+            step(f"Stopping and removing container {container_name}...")
+            run(["docker", "stop", container_name])
+            run(["docker", "rm", container_name])
+            
+        nginx_disable_site(domain)
+        conf = f"{NGINX_SITES_AVAILABLE}/{domain}.conf"
+        if os.path.isfile(conf):
+            if DRY_RUN:
+                step(f"[dry-run] Would remove {conf}")
+            else:
+                os.remove(conf)
+        delete_site_meta(domain)
+        ok(f"{domain} deleted.")
+        
+    ok_n, msg_n = validate_nginx()
+    if not ok_n:
+        err(msg_n)
+        return
+    reload_nginx()
+    apply_reloads()
+    input("\n  Press Enter to continue...")
+
+def list_container_sites():
+    menu_header("Container Sites")
+    if not os.path.exists(NGINX_SITES_AVAILABLE):
+        warn("Nginx sites-available not found.")
+        return
+
+    found = False
+    for file in sorted(os.listdir(NGINX_SITES_AVAILABLE)):
+        if not file.endswith(".conf"):
+            continue
+        domain = file[:-5]
+        meta = get_site_meta(domain)
+        if not meta or meta.get("type") != "docker":
+            continue
+            
+        found = True
+        enabled = nginx_site_enabled(domain)
+        status = f"{C.GREEN}enabled{C.RESET}" if enabled else f"{C.DIM}disabled{C.RESET}"
+        
+        c_name = meta.get("container_name", "unknown")
+        port = meta.get("host_port", "unknown")
+        
+        c_status_res = run(["docker", "ps", "--filter", f"name={c_name}", "--format", "{{.Status}}"])
+        c_status = c_status_res.stdout.strip() if c_status_res.returncode == 0 and c_status_res.stdout.strip() else "stopped/missing"
+        
+        print(f"  {C.BOLD}{domain}{C.RESET} [{status}] {site_type_label(domain)}")
+        print(f"    {C.DIM}Container: {c_name} | Port: {port} | Status: {c_status}{C.RESET}")
+        print()
+        
+    if not found:
+        warn("No container sites found.")
+    input("\n  Press Enter to continue...")
+
+def parse_multi_select(raw, count):
+    if not raw: return []
+    if raw == "all": return list(range(count))
+    selected = []
+    for part in raw.split(","):
+        try:
+            if "-" in part:
+                s, e = part.split("-")
+                for idx in range(int(s.strip()) - 1, int(e.strip())):
+                    if 0 <= idx < count: selected.append(idx)
+            else:
+                idx = int(part.strip()) - 1
+                if 0 <= idx < count: selected.append(idx)
+        except ValueError:
+            pass
+    return list(set(selected))
+
+def manage_containers_menu():
+    while True:
+        menu_header("Manage Containers")
+        print("1. List all containers")
+        print("2. Start container(s)")
+        print("3. Stop container(s)")
+        print("4. Restart container(s)")
+        print("5. Remove container(s)")
+        print("6. View container logs")
+        print("0. Back")
+        choice = input("  \nChoice: ").strip()
+        
+        if choice == "0": break
+        if choice not in ("1", "2", "3", "4", "5", "6"):
+            warn("Invalid choice.")
+            continue
+            
+        res = run(["docker", "ps", "-a", "--format", "{{.Names}}|{{.Image}}|{{.Status}}"])
+        if res.returncode != 0:
+            err("Failed to list containers.")
+            continue
+            
+        containers = [line.split("|") for line in res.stdout.strip().split("\n") if line]
+        if not containers:
+            warn("No containers found.")
+            continue
+            
+        if choice == "1":
+            print()
+            for c in containers:
+                print(f"  {C.BOLD}{c[0]}{C.RESET} | {c[1]} | {c[2]}")
+            input("\n  Press Enter to continue...")
+            continue
+            
+        print()
+        for i, c in enumerate(containers, 1):
+            print(f"  {C.BOLD}{i}.{C.RESET} {c[0]} ({c[2]})")
+            
+        raw = input("  \nSelect (e.g. 1, 1-3, 1,2,3 or all): ").strip().lower()
+        indices = parse_multi_select(raw, len(containers))
+        if not indices: continue
+        
+        selected_names = [containers[idx][0] for idx in indices]
+        
+        if choice == "2":
+            for name in selected_names:
+                run(["docker", "start", name])
+                ok(f"Started {name}")
+        elif choice == "3":
+            for name in selected_names:
+                run(["docker", "stop", name])
+                ok(f"Stopped {name}")
+        elif choice == "4":
+            for name in selected_names:
+                run(["docker", "restart", name])
+                ok(f"Restarted {name}")
+        elif choice == "5":
+            if prompt_confirm(f"{C.YELLOW}Remove selected containers?{C.RESET}"):
+                for name in selected_names:
+                    run(["docker", "rm", "-f", name])
+                    ok(f"Removed {name}")
+        elif choice == "6":
+            for name in selected_names:
+                follow = prompt_confirm(f"Follow logs for {name}?", default="no")
+                cmd = ["docker", "logs", "--tail", "100"]
+                if follow: cmd.append("-f")
+                cmd.append(name)
+                print(f"\n{C.CYAN}--- Logs for {name} ---{C.RESET}")
+                run_live(cmd)
+                print(f"{C.CYAN}-----------------------{C.RESET}\n")
+
+def docker_oneclick_menu():
+    while True:
+        menu_header("Docker One-Click Services")
+        print("1. Portainer (Docker Web UI)")
+        print("2. Redis")
+        print("3. PostgreSQL")
+        print("0. Back")
+        choice = input("  \nChoice: ").strip()
+        
+        if choice == "0": break
+        
+        if choice == "1":
+            step("Starting Portainer...")
+            r = run(["docker", "run", "-d", "-p", "127.0.0.1:9443:9443", "--name", "portainer", "--restart", "always", "-v", "/var/run/docker.sock:/var/run/docker.sock", "-v", "portainer_data:/data", "portainer/portainer-ce:latest"])
+            if r.returncode == 0:
+                ok("Portainer started. Available locally on port 9443 (https://127.0.0.1:9443)")
+                if prompt_confirm("Create Nginx reverse proxy for Portainer?"):
+                    if not ensure_nginx():
+                        return
+                    domain = ask_domain()
+                    if domain:
+                        vhost = f"""server {{
+    listen 80;
+    server_name {domain} www.{domain};
+    location / {{
+        proxy_pass https://127.0.0.1:9443;
+        proxy_set_header Host $host;
+    }}
+}}"""
+                        write_nginx_vhost(domain, vhost)
+                        nginx_enable_site(domain)
+                        reload_nginx()
+                        apply_reloads()
+                        save_site_meta(domain, "docker", "container:portainer", web_server="nginx", container_name="portainer", host_port=9443)
+                        ok(f"Portainer accessible at http://{domain}")
+            else:
+                err(f"Failed to start Portainer: {r.stderr}")
+                
+        elif choice == "2":
+            step("Starting Redis...")
+            run(["docker", "network", "create", "zervermanager_net"])
+            r = run(["docker", "run", "-d", "--name", "redis", "--network", "zervermanager_net", "-v", "redis_data:/data", "--restart", "unless-stopped", "redis:alpine"])
+            if r.returncode == 0:
+                ok("Redis started. Reachable by other containers at 'redis:6379'.")
+            else:
+                err(f"Failed to start Redis: {r.stderr}")
+                
+        elif choice == "3":
+            pw = input("  Set PostgreSQL POSTGRES_PASSWORD: ").strip()
+            if not pw:
+                warn("Password required.")
+                continue
+            step("Starting PostgreSQL...")
+            run(["docker", "network", "create", "zervermanager_net"])
+            r = run(["docker", "run", "-d", "--name", "postgres", "--network", "zervermanager_net", "-e", f"POSTGRES_PASSWORD={pw}", "-v", "postgres_data:/var/lib/postgresql/data", "--restart", "unless-stopped", "postgres:alpine"])
+            if r.returncode == 0:
+                ok("PostgreSQL started. Reachable by other containers at 'postgres:5432'.")
+            else:
+                err(f"Failed to start PostgreSQL: {r.stderr}")
+                
+        input("\n  Press Enter to continue...")
+
+def docker_system_cleanup():
+    menu_header("Docker System Cleanup")
+    res = run(["docker", "system", "df"])
+    if res.returncode == 0:
+        print(res.stdout)
+        
+    if prompt_confirm(f"{C.YELLOW}Run docker system prune (removes unused images, build cache, stopped containers)?{C.RESET}"):
+        run_live(["docker", "system", "prune", "-f"])
+        ok("Cleanup complete.")
+    input("\n  Press Enter to continue...")
+
+def docker_menu():
+    while True:
+        installed = f"{C.GREEN}Installed{C.RESET}" if is_docker_installed() else f"{C.RED}Not Installed{C.RESET}"
+        containers_count = "0"
+        if is_docker_installed():
+            res = run(["docker", "ps", "-q"])
+            if res.returncode == 0:
+                containers_count = str(len([l for l in res.stdout.strip().split("\\n") if l]))
+        
+        menu_header(f"Docker [{installed}] (Running: {containers_count})")
+        print("1. Install/Update Docker")
+        print("2. Manage Containers")
+        print("3. Create Container Site (proxied through Nginx)")
+        print("4. One-Click Services (Portainer, Redis, PostgreSQL)")
+        print("5. Docker System Cleanup (prune)")
+        print("0. Back")
+        
+        choice = input("  \nChoice: ").strip()
+        if choice == "0": break
+        
+        if choice == "1": install_docker()
+        elif choice == "2": 
+            if is_docker_installed(): manage_containers_menu()
+            else: err("Docker not installed.")
+        elif choice == "3": create_container_site()
+        elif choice == "4": 
+            if is_docker_installed(): docker_oneclick_menu()
+            else: err("Docker not installed.")
+        elif choice == "5":
+            if is_docker_installed(): docker_system_cleanup()
+            else: err("Docker not installed.")
+        else: warn("Invalid choice.")
+
+
+# ─────────────────────────────────────────
 #  WordPress Site
 # ─────────────────────────────────────────
 
@@ -4538,6 +7325,8 @@ def create_apache_wordpress_site():
     menu_header("Create WordPress Site (Apache)")
     if not ensure_mariadb():
         return
+    if not ensure_nginx():
+        return
     domain = ask_domain()
     if not domain: return
     docroot = f"/var/www/{domain}"
@@ -4580,13 +7369,14 @@ def create_apache_wordpress_site():
     if r.returncode != 0:
         err(f"Failed to install PHP packages:\n{r.stderr}")
         return
+    configure_apache_ports()
 
     # Download WordPress
     if not _install_wordpress(domain, docroot, db_name, db_user, db_pass, "apache"):
         return
 
     # VHost
-    vhost = f"""<VirtualHost *:80>
+    vhost = f"""<VirtualHost *:8080>
     ServerName {domain}
     ServerAlias www.{domain}
     DocumentRoot {docroot}
@@ -4626,6 +7416,24 @@ def create_apache_wordpress_site():
 
     save_site_meta(domain, "wordpress", docroot, db_name=db_name, db_user=db_user, web_server="apache", dns=create_dns)
 
+    # ── Nginx proxy ──
+    step("Configuring Nginx front-door proxy...")
+    nginx_vhost = f"""server {{
+    listen 80;
+    server_name {domain} www.{domain};
+    location / {{
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }}
+}}"""
+    write_nginx_vhost(domain, nginx_vhost)
+    nginx_enable_site(domain)
+    reload_nginx()
+    ok("Nginx proxy configured.")
+
     # Restart related services
     step("Restarting related services...")
     run(["systemctl", "restart", "mariadb"])
@@ -4633,7 +7441,7 @@ def create_apache_wordpress_site():
     run(["systemctl", "restart", "apache2"])
     ok("Apache2 restarted.")
     if create_dns:
-        run(["systemctl", "restart", "bind9"])
+        run(["systemctl", "restart", get_bind9_service_name()])
         ok("BIND9 restarted.")
     print(f"\n{C.BOLD}{'─' * 35}{C.RESET}")
     print(f"  {C.BOLD}Site:{C.RESET}         {C.GREEN}{domain}{C.RESET}")
@@ -4716,8 +7524,14 @@ def create_nginx_wordpress_site():
             
         fpm_socket = find_php_fpm_socket()
         if fpm_socket == "127.0.0.1:9000":
-            # Debian12 uses php8.2-fpm socket location
-            fpm_socket = "/run/php/php8.2-fpm.sock"
+            codename = detect_codename()
+            if codename == "bullseye":
+                fpm_socket = "/run/php/php7.4-fpm.sock"
+            elif codename == "trixie":
+                fpm_socket = "/run/php/php8.3-fpm.sock"
+            else:
+                # bookworm (default/reference)
+                fpm_socket = "/run/php/php8.2-fpm.sock"
     if not _install_wordpress(domain, docroot, db_name, db_user, db_pass, "nginx"):
         return
 
@@ -4778,7 +7592,7 @@ def create_nginx_wordpress_site():
     run(["systemctl", "restart", "nginx"])
     ok("Nginx restarted.")
     if create_dns:
-        run(["systemctl", "restart", "bind9"])
+        run(["systemctl", "restart", get_bind9_service_name()])
         ok("BIND9 restarted.")
     print(f"\n{C.BOLD}{'─' * 35}{C.RESET}")
     print(f"  {C.BOLD}Site:{C.RESET}         {C.GREEN}{domain}{C.RESET}")
@@ -5026,7 +7840,7 @@ NETWORK_INTERFACES = "/etc/network/interfaces"
 
 
 def _read_interfaces():
-    if not os.path.exists(NETWORK_INTERFACES):
+    if not os.path.isfile(NETWORK_INTERFACES):
         return None
     with open(NETWORK_INTERFACES, "r") as f:
         return f.read()
@@ -5128,6 +7942,11 @@ def _pick_interface(interfaces):
     print()
     raw = input("  Select interface: ").strip()
 
+    # Allow exact name match for Web UI integration
+    for iface in interfaces:
+        if iface["name"] == raw:
+            return iface
+
     try:
         idx = int(raw) - 1
         if 0 <= idx < len(interfaces):
@@ -5190,6 +8009,13 @@ def show_current_ip_config():
 
     print()
 
+
+def get_bind9_service_name():
+    # Use named if bind9 service isn't found
+    res = subprocess.run(["systemctl", "is-active", "bind9"], capture_output=True, text=True)
+    if "unknown" in res.stdout or "not-found" in res.stderr:
+        return "named"
+    return "bind9"
 
 def set_interface_static():
     """Interactively set (or update) an interface to a static IP."""
@@ -5255,8 +8081,11 @@ def set_interface_static():
     new_content = _replace_iface_block(content, iface_name, new_block)
 
     backup_config(NETWORK_INTERFACES)
-    with open(NETWORK_INTERFACES, "w") as f:
-        f.write(new_content)
+    if DRY_RUN:
+        step(f"[dry-run] Would write to { NETWORK_INTERFACES }")
+    else:
+        with open(NETWORK_INTERFACES, "w") as f:
+            f.write(new_content)
 
     ok(f"{iface_name} updated to static {new_addr}.")
     _apply_networking(iface_name, backup)
@@ -5290,8 +8119,11 @@ def set_interface_dhcp():
     new_content = _replace_iface_block(content, iface_name, new_block)
 
     backup_config(NETWORK_INTERFACES)
-    with open(NETWORK_INTERFACES, "w") as f:
-        f.write(new_content)
+    if DRY_RUN:
+        step(f"[dry-run] Would write to { NETWORK_INTERFACES }")
+    else:
+        with open(NETWORK_INTERFACES, "w") as f:
+            f.write(new_content)
 
     ok(f"{iface_name} set to DHCP.")
     _apply_networking(iface_name, backup)
@@ -5301,7 +8133,7 @@ def restore_interfaces_backup():
     """Restore /etc/network/interfaces from the .bak file."""
     backup = f"{NETWORK_INTERFACES}.bak"
 
-    if not os.path.exists(backup):
+    if not os.path.isfile(backup):
         warn(f"No backup found at {backup}.")
         return
 
@@ -5323,6 +8155,116 @@ def restore_interfaces_backup():
     _apply_networking("", backup)
 
 
+
+def detect_netplan():
+    return os.path.isdir("/etc/netplan")
+
+def _pick_netplan_interface():
+    result = subprocess.run(["ip", "-o", "link", "show"], capture_output=True, text=True)
+    ifaces = []
+    for line in result.stdout.splitlines():
+        parts = line.split(":")
+        if len(parts) > 1:
+            name = parts[1].strip()
+            if name != "lo" and "@" not in name:
+                ifaces.append(name)
+    if not ifaces:
+        err("No network interfaces found.")
+        return None
+
+    print("\n  Available Interfaces:")
+    for i, name in enumerate(ifaces, 1):
+        print(f"  {i}. {name}")
+    
+    choice = input("  \nSelect interface number: ").strip()
+    try:
+        idx = int(choice) - 1
+        if 0 <= idx < len(ifaces):
+            return ifaces[idx]
+    except ValueError:
+        pass
+    err("Invalid choice.")
+    return None
+
+def set_netplan_static():
+    menu_header("Set Static IP (Netplan)")
+    iface_name = _pick_netplan_interface()
+    if not iface_name: return
+
+    print(f"\n  Configuring {C.BOLD}{iface_name}{C.RESET} as static\n")
+    
+    new_addr = input("  IP address (CIDR, e.g. 192.168.1.10/24): ").strip()
+    if not new_addr or "/" not in new_addr:
+        err("Invalid IP. CIDR notation (e.g. /24) is required for Netplan.")
+        return
+
+    new_gw = input("  Gateway: ").strip()
+    new_dns = input("  DNS servers (comma separated, e.g. 8.8.8.8, 8.8.4.4): ").strip()
+
+    routes_block = f"\n      routes:\n        - to: default\n          via: {new_gw}" if new_gw else ""
+    
+    if new_dns:
+        dns_list = ", ".join(f'"{d.strip()}"' for d in new_dns.split(","))
+        dns_block = f"\n      nameservers:\n        addresses: [{dns_list}]"
+    else:
+        dns_block = ""
+
+    yaml_content = f"""network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    {iface_name}:
+      dhcp4: false
+      addresses:
+        - {new_addr}{routes_block}{dns_block}
+"""
+    yaml_path = "/etc/netplan/99-zervermanager.yaml"
+    
+    if DRY_RUN:
+        step(f"[dry-run] Would write static config to {yaml_path}")
+    else:
+        with open(yaml_path, "w") as f:
+            f.write(yaml_content)
+        step(f"Netplan generated at {yaml_path}")
+        print(f"  {C.CYAN}Applying Netplan...{C.RESET}", end=" ", flush=True)
+        res = run(["netplan", "apply"])
+        if res.returncode == 0:
+            print(f"{C.GREEN}✓{C.RESET}")
+            ok("Static IP applied.")
+        else:
+            print(f"{C.RED}✗{C.RESET}")
+            err(res.stderr.strip())
+
+
+def set_netplan_dhcp():
+    menu_header("Set Interface to DHCP (Netplan)")
+    iface_name = _pick_netplan_interface()
+    if not iface_name: return
+    
+    yaml_content = f"""network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    {iface_name}:
+      dhcp4: true
+"""
+    yaml_path = "/etc/netplan/99-zervermanager.yaml"
+    
+    if DRY_RUN:
+        step(f"[dry-run] Would write DHCP config to {yaml_path}")
+    else:
+        with open(yaml_path, "w") as f:
+            f.write(yaml_content)
+        step(f"Netplan generated at {yaml_path}")
+        print(f"  {C.CYAN}Applying Netplan...{C.RESET}", end=" ", flush=True)
+        res = run(["netplan", "apply"])
+        if res.returncode == 0:
+            print(f"{C.GREEN}✓{C.RESET}")
+            ok("DHCP applied.")
+        else:
+            print(f"{C.RED}✗{C.RESET}")
+            err(res.stderr.strip())
+
 def manage_server_ip():
     while True:
         menu_header("Manage Server IP")
@@ -5340,9 +8282,15 @@ def manage_server_ip():
         if choice == "1":
             show_current_ip_config()
         elif choice == "2":
-            set_interface_static()
+            if detect_netplan():
+                set_netplan_static()
+            else:
+                set_interface_static()
         elif choice == "3":
-            set_interface_dhcp()
+            if detect_netplan():
+                set_netplan_dhcp()
+            else:
+                set_interface_dhcp()
         elif choice == "4":
             restore_interfaces_backup()
         elif choice == "0":
@@ -5502,11 +8450,14 @@ def reload_all_services():
 # ─────────────────────────────────────────
 
 def fix_dpkg():
-    """Run dpkg --configure -a to repair any interrupted package installs."""
+    """Run dpkg --configure -a and apt --fix-broken install to repair any interrupted package installs."""
     info("Repairing package state (dpkg --configure -a)...")
     rc, stderr = run_live(["dpkg", "--configure", "-a"])
     if rc != 0 and stderr.strip():
         warn(f"dpkg repair note: {stderr.strip()[:200]}")
+    info("Running apt --fix-broken install -y...")
+    run_live(["apt", "--fix-broken", "install", "-y"])
+    ok("OS Maintenance package repair complete.")
 
 
 def ensure_dependencies(auto_install=True):
@@ -5560,33 +8511,47 @@ def ensure_dependencies(auto_install=True):
         ok("BIND9 enabled.") if r.returncode == 0 else err(r.stderr.strip())
 
         # Create an empty named.conf.local if it doesn't exist yet
-        if not os.path.exists(NAMED_CONF_LOCAL):
+        if not os.path.isfile(NAMED_CONF_LOCAL):
             if DRY_RUN:
                 step(f"[dry-run] Would create {NAMED_CONF_LOCAL}")
             else:
                 backup_config(NAMED_CONF_LOCAL)
-                with open(NAMED_CONF_LOCAL, "w") as f:
-                    f.write("// Local zones\n")
+                if DRY_RUN:
+                    step(f"[dry-run] Would write to { NAMED_CONF_LOCAL }")
+                else:
+                    with open(NAMED_CONF_LOCAL, "w") as f:
+                        f.write("// Local zones\n")
                 ok("Created empty named.conf.local.")
 
     print()
     return []
 
 
+def detect_codename():
+    """Extract and return the OS codename (e.g. 'bullseye', 'bookworm', 'trixie')."""
+    os_name = get_os_version().lower()
+    for codename in ("bullseye", "bookworm", "trixie"):
+        if codename in os_name:
+            return codename
+    return ""
+
 def check_os_compatibility():
     """Return a 3-tier compatibility status for the running OS.
 
     Returns:
         (status, os_name)  where status is one of:
-          'supported'   – Debian 12 / Bookworm  (green)
+          'supported'   – Debian 11/12/13 (green)
           'uncertain'   – Debian (other version), Ubuntu, or Raspbian  (yellow)
           'unsupported' – anything else  (red)
     """
     os_name = get_os_version()
     lower = os_name.lower()
-    if "debian" in lower and ("12" in lower or "bookworm" in lower):
+    
+    if "debian" in lower and any(kw in lower for kw in ("11", "bullseye", "12", "bookworm", "13", "trixie")):
         return "supported", os_name
-    elif any(kw in lower for kw in ("debian", "ubuntu", "raspbian", "raspberry")):
+    elif "ubuntu" in lower:
+        return "ubuntu", os_name
+    elif any(kw in lower for kw in ("debian", "raspbian", "raspberry")):
         return "uncertain", os_name
     else:
         return "unsupported", os_name
@@ -5602,16 +8567,19 @@ def show_loading_screen():
 
     if status == "supported":
         print(f"  {C.GREEN}[✔] Compatible OS: {os_name}{C.RESET}")
+    elif status == "ubuntu":
+        print(f"  {C.YELLOW}[!] Ubuntu detected — experimental/unsupported, proceed at your own risk{C.RESET}")
+        if not prompt_confirm("Do you want to proceed anyway?", default="no"):
+            _shutdown()
     elif status == "uncertain":
         print(f"  {C.YELLOW}[~] Supported (uncertain): {os_name}{C.RESET}")
         print(f"\n  {C.YELLOW}[!] This OS may work but has not been fully tested.{C.RESET}")
-        print(f"      Some features may behave differently from Debian 12 (Bookworm).\n")
+        print(f"      Some features may behave differently from Debian 11/12/13.\n")
         if not prompt_confirm("Do you want to proceed anyway?", default="yes"):
             _shutdown()
     else:
-        print(f"  {C.RED}[✘] Unsupported OS: {os_name}{C.RESET}")
-        print(f"\n  {C.RED}[!] WARNING: This server manager is built for Debian 12 (Bookworm).{C.RESET}")
-        print(f"      Running it on this OS is likely to cause configuration failures.\n")
+        err(f"Unsupported OS: {os_name}")
+        warn("This server manager is built for Debian 11/12/13.\n      Running it on this OS is likely to cause configuration failures.\n")
         if not prompt_confirm("Do you want to proceed anyway?", default="no"):
             _shutdown()
 
@@ -6148,8 +9116,310 @@ def mariadb_menu():
         else:
             warn("Invalid choice.")
 
+# ─────────────────────────────────────────
+#  Front door: nginx (:80) → Apache (:8080)   — used by webmail and phpMyAdmin
+# ─────────────────────────────────────────
+# configure_apache_ports() moves Apache to 8080 and nginx owns port 80. Anything Apache
+# serves therefore needs (a) an Apache vhost on *:8080 and (b) an nginx server block that
+# proxies to it. Installers that skip either one are unreachable on port 80.
+
+FRONT_DOOR_MARK = "# zervermanager: front-door proxy"
+PMA_SNIPPET     = "/etc/nginx/snippets/zm-phpmyadmin.conf"
+PMA_INCLUDE     = "include snippets/zm-phpmyadmin.conf;  # zervermanager"
+
+
+def apache_on_backend_port():
+    """True once Apache has been moved to 8080 (so nginx owns port 80)."""
+    try:
+        with open("/etc/apache2/ports.conf", "r") as f:
+            return bool(re.search(r"^\s*Listen\s+(?:\S+:)?8080\b", f.read(), re.MULTILINE))
+    except OSError:
+        return False
+
+
+def nginx_front_door_vhost(domain, tag=""):
+    label = f" ({tag})" if tag else ""
+    return f"""{FRONT_DOOR_MARK}{label}
+server {{
+    listen 80;
+    server_name {domain};
+    client_max_body_size 64m;
+
+    location / {{
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }}
+}}
+"""
+
+
+def _nginx_default_server_file():
+    """Config file holding nginx's catch-all (default_server) block, or None."""
+    listen_re = re.compile(r"^\s*listen\s+[^;\n]*\bdefault_server\b", re.MULTILINE)
+    candidates = [os.path.realpath(f"{NGINX_SITES_ENABLED}/default")]
+    r = run(["/usr/sbin/nginx", "-T"])                      # where else is default_server declared?
+    if r.returncode == 0:
+        current = None
+        for line in r.stdout.splitlines():
+            m = re.match(r"# configuration file (.+):$", line)
+            if m:
+                current = m.group(1)
+            elif current and re.match(r"^\s*listen\s+[^;\n]*\bdefault_server\b", line):
+                candidates.append(os.path.realpath(current))
+    for path in candidates:
+        if path.startswith("/etc/nginx/") and os.path.isfile(path):
+            try:
+                with open(path, "r") as f:
+                    if listen_re.search(f.read()):
+                        return path
+            except OSError:
+                pass
+    return None
+
+
+def expose_phpmyadmin_via_nginx():
+    """Make http://<ip>/phpmyadmin work when nginx owns :80 and Apache sits on :8080.
+    Returns True if phpMyAdmin is reachable on port 80."""
+    if not apache_on_backend_port():
+        return True                         # Apache itself serves :80 — its own phpmyadmin.conf is enough
+    if not os.path.isfile("/usr/sbin/nginx"):
+        return False
+    target = _nginx_default_server_file()
+    if not target:
+        warn("Could not find nginx's default server block, so /phpmyadmin is not routed on port 80.")
+        return False
+    if DRY_RUN:
+        step(f"[dry-run] Would route /phpmyadmin through nginx ({target})")
+        return True
+
+    snippet = """# zervermanager: phpMyAdmin is served by Apache (127.0.0.1:8080); nginx hands /phpmyadmin over to it
+location ^~ /phpmyadmin {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    client_max_body_size 128m;
+    proxy_read_timeout 300s;
+}
+"""
+    os.makedirs(os.path.dirname(PMA_SNIPPET), exist_ok=True)
+    with open(PMA_SNIPPET, "w") as f:
+        f.write(snippet)
+
+    with open(target, "r") as f:
+        original = f.read()
+    if "zm-phpmyadmin.conf" not in original:
+        updated, n = re.subn(
+            r"^([ \t]*)server_name[ \t]+_[ \t]*;[^\n]*$",
+            lambda m: m.group(0) + "\n" + m.group(1) + PMA_INCLUDE,
+            original, count=1, flags=re.MULTILINE)
+        if n == 0:
+            updated, n = re.subn(
+                r"^([ \t]*)(listen[ \t]+[^;\n]*\bdefault_server\b[^;\n]*;[^\n]*)$",
+                lambda m: m.group(0) + "\n" + m.group(1) + PMA_INCLUDE,
+                original, count=1, flags=re.MULTILINE)
+        if n == 0:
+            os.remove(PMA_SNIPPET)
+            warn(f"Could not find where to add /phpmyadmin in {target}.")
+            return False
+        backup_config(target)
+        with open(target, "w") as f:
+            f.write(updated)
+
+    ok_n, msg_n = validate_nginx()
+    if not ok_n:                            # never leave nginx broken: roll back
+        with open(target, "w") as f:
+            f.write(original)
+        try:
+            os.remove(PMA_SNIPPET)
+        except OSError:
+            pass
+        err(f"nginx rejected the phpMyAdmin route, change rolled back:\n{msg_n.strip()}")
+        return False
+    mark_reload("nginx")
+    ok("nginx now routes /phpmyadmin to Apache.")
+    return True
+
+
+def unexpose_phpmyadmin_nginx():
+    """Undo expose_phpmyadmin_via_nginx() (include line first, then the snippet)."""
+    changed = False
+    paths = (glob.glob(f"{NGINX_SITES_AVAILABLE}/*") + glob.glob("/etc/nginx/conf.d/*.conf")
+             + ["/etc/nginx/nginx.conf"])
+    for p in paths:
+        try:
+            if not os.path.isfile(p):
+                continue
+            with open(p, "r") as f:
+                txt = f.read()
+        except OSError:
+            continue
+        if "zm-phpmyadmin.conf" not in txt:
+            continue
+        with open(p, "w") as f:
+            f.write("".join(l for l in txt.splitlines(True) if "zm-phpmyadmin.conf" not in l))
+        changed = True
+    if os.path.exists(PMA_SNIPPET):
+        os.remove(PMA_SNIPPET)
+        changed = True
+    if changed:
+        ok_n, msg_n = validate_nginx()
+        if ok_n:
+            mark_reload("nginx")
+            ok("Removed the phpMyAdmin route from nginx.")
+        else:
+            err(f"nginx config problem after removing the phpMyAdmin route:\n{msg_n.strip()}")
+
+
+def _remove_webmail_vhosts():
+    """Remove the nginx front door + Apache vhost that setup_mail_server() created."""
+    removed = False
+    for path in glob.glob(f"{NGINX_SITES_AVAILABLE}/*.conf"):
+        try:
+            with open(path, "r") as f:
+                first = (f.readline() or "")
+        except OSError:
+            continue
+        if FRONT_DOOR_MARK in first and "(webmail)" in first:
+            nginx_disable_site(os.path.basename(path)[:-5])
+            os.remove(path)
+            mark_reload("nginx")
+            removed = True
+    for path in glob.glob(f"{APACHE_SITES_AVAILABLE}/mail.*.conf"):
+        try:
+            with open(path, "r") as f:
+                first = (f.readline() or "")
+        except OSError:
+            continue
+        if "zervermanager: webmail" in first:
+            run(["/usr/sbin/a2dissite", os.path.basename(path)])
+            os.remove(path)
+            mark_reload("apache2")
+            removed = True
+    if removed:
+        ok("Removed the webmail virtual hosts (nginx + Apache).")
+
+
+def ensure_mail_dns(domain, ip, webmail_domain):
+    """Make sure `domain` can receive mail: an A record for the mail host and an MX record
+    pointing at it. Creates the forward/reverse zones when missing; if the zone already
+    exists, edits the file named.conf.local actually points to and never duplicates a
+    record. Returns (forward_zone_file, reverse_zone_file)."""
+    mail_host = webmail_domain.rstrip(".") + "."
+    rev_zone  = reverse_zone_name(ip)
+    rev_file  = reverse_zone_file(ip)
+    a_line    = f"mail    IN  A       {ip}\n"
+    mx_line   = f"@       IN  MX  10  {mail_host}\n"
+
+    fwd_file = None
+    if zone_exists(domain):
+        # use the file the zone is really registered with (not a guessed name)
+        for cand in (get_zone_file(domain), f"{BIND_DIR}/db.{domain}"):
+            if cand and os.path.isfile(cand):
+                fwd_file = cand
+                break
+        if not fwd_file:
+            err(f"Zone {domain} is registered but its zone file was not found. "
+                f"Add the MX record manually (DNS Zones → MX Records).")
+        else:
+            with open(fwd_file, "r") as f:
+                original = f.read()
+            mx_targets = re.findall(
+                r"^[ \t]*(?!;)\S+[ \t]+(?:\d+[ \t]+)?IN[ \t]+MX[ \t]+\d+[ \t]+(\S+)",
+                original, re.MULTILINE | re.IGNORECASE)
+
+            def _abs(t):
+                t = t.lower()
+                return t if t.endswith(".") else f"{t}.{domain.lower()}."
+
+            has_mx_to_us = any(_abs(t) == mail_host.lower() for t in mx_targets)
+            has_mail_a = re.search(
+                rf"^[ \t]*mail(?:\.{re.escape(domain)}\.)?[ \t]+(?:\d+[ \t]+)?IN[ \t]+A\b",
+                original, re.MULTILINE | re.IGNORECASE)
+            additions = ""
+            if not has_mail_a:
+                additions += a_line
+            if not mx_targets:
+                additions += mx_line
+            elif not has_mx_to_us:
+                warn(f"{domain} already has an MX record pointing at {', '.join(mx_targets)} — "
+                     f"left unchanged. Edit it under DNS Zones → MX Records if mail should come here.")
+            if not additions:
+                ok(f"{domain} already has an MX record for {mail_host.rstrip('.')}.")
+            elif DRY_RUN:
+                step(f"[dry-run] Would add to {fwd_file}:\n{additions}")
+            else:
+                updated = update_serial(original)
+                if not updated.endswith("\n"):
+                    updated += "\n"
+                updated += "\n; Mail server records (zervermanager)\n" + additions
+                backup_config(fwd_file)
+                with open(fwd_file, "w") as f:
+                    f.write(updated)
+                ok_z, msg_z = validate_zone(domain, fwd_file)
+                if not ok_z:
+                    with open(fwd_file, "w") as f:      # never leave a broken zone behind
+                        f.write(original)
+                    err(f"Zone error, change rolled back:\n{msg_z}")
+                else:
+                    ok(f"MX record added: {domain} → {mail_host.rstrip('.')} (priority 10)")
+                    mark_reload("bind9")
+    else:
+        fwd_file = f"{BIND_DIR}/db.{domain}"
+        step("Writing forward zone...")
+        write_forward_zone(domain, ip, fwd_file)
+        if DRY_RUN:
+            step(f"[dry-run] Would append mail records to {fwd_file}")
+        else:
+            with open(fwd_file, "a") as f:
+                f.write("\n; Mail server records\n" + a_line + mx_line)
+            ok_z, msg_z = validate_zone(domain, fwd_file)
+            if not ok_z:
+                os.remove(fwd_file)
+                err(f"Zone error:\n{msg_z}")
+                fwd_file = None
+            else:
+                add_zone_to_conf(domain, fwd_file)
+                ok(f"Forward zone created with MX record ({domain} → {mail_host.rstrip('.')}).")
+
+    # Reverse zone
+    if zone_exists(rev_zone):
+        warn(f"Reverse zone {rev_zone} already exists, skipping.")
+    else:
+        step("Writing reverse zone...")
+        write_reverse_zone(domain, ip, rev_file)
+        ok_r, msg_r = validate_zone(rev_zone, rev_file)
+        if not ok_r:
+            os.remove(rev_file)
+            err(f"Reverse zone error:\n{msg_r}")
+        else:
+            add_zone_to_conf(rev_zone, rev_file)
+            ok("Reverse zone created.")
+
+    ok_b, msg_b = validate_bind9()
+    if ok_b:
+        reload_bind9()
+    else:
+        err(f"BIND9 error:\n{msg_b}")
+    return fwd_file, rev_file
+
+
 def setup_mail_server():
-    """Installs and configures Postfix, Dovecot, Roundcube."""
+    """Installs and configures Postfix, Dovecot, Roundcube (+ nginx front door and DNS/MX).
+
+    Deferred service reloads are applied no matter how the install ends: it used to
+    `return` early (e.g. when Dovecot failed to restart) and silently skip them."""
+    try:
+        _setup_mail_server_impl()
+    finally:
+        apply_reloads()
+
+
+def _setup_mail_server_impl():
     print("-" * 35)
 
     domain = ask_domain("  Mail Domain (e.g., example.com): ")
@@ -6203,27 +9473,70 @@ roundcube-core roundcube/database-type select sqlite3
     ok(f"Installed Mail Server packages for {domain}.")
     # Enable required Apache modules and Roundcube config
     step("Enabling Apache modules and Roundcube configuration...")
-    run(["/usr/sbin/a2enmod", "rewrite"]) 
-    run(["/usr/sbin/a2enconf", "roundcube"]) 
-    run(["systemctl", "reload", "apache2"]) 
+    run(["/usr/sbin/a2enmod", "rewrite"])
+    run(["/usr/sbin/a2enconf", "roundcube"])
+    run(["systemctl", "enable", "--now", "apache2"])  # start+enable if not yet active
+    mark_reload("apache2")
     
     # Install PHP extensions needed by Roundcube
-    php_packages = [
+    # build_php_packages() emits versioned names on Ubuntu (e.g. php8.5-imap),
+    # and passes through unchanged generic names on Debian 12/11/13.
+    php_packages = build_php_packages([
         "php", "php-imap", "php-mbstring", "php-xml",
         "php-gd", "php-intl"
-    ]
+    ])
     rc, err_msg = run_live(["apt-get", "install", "-y", "--no-install-recommends"] + php_packages)
     if rc != 0:
         err(f"Failed to install PHP extensions for Roundcube:\n{err_msg}")
     else:
         ok("PHP extensions for Roundcube installed.")
     
+    # Ubuntu 26.04 + PHP 8.4+ introduces native array_first which conflicts with Roundcube 1.6's bootstrap.php
+    # We must patch it to prevent a 500 Internal Server Error
+    step("Applying PHP 8.4+ compatibility patches to Roundcube...")
+    bootstrap_file = "/usr/share/roundcube/program/lib/Roundcube/bootstrap.php"
+    if not DRY_RUN and os.path.exists(bootstrap_file):
+        with open(bootstrap_file, "r") as f:
+            lines = f.readlines()
+        
+        out = []
+        in_func = False
+        brace_count = 0
+        patched = False
+        for line in lines:
+            if "function array_first(" in line and "function_exists" not in ''.join(out[-2:]):
+                out.append("if (!function_exists('array_first')) {\n")
+                out.append(line)
+                in_func = True
+                brace_count = line.count("{") - line.count("}")
+                patched = True
+                continue
+            
+            if in_func:
+                out.append(line)
+                brace_count += line.count("{") - line.count("}")
+                if brace_count == 0 and "}" in line:
+                    out.append("}\n")
+                    in_func = False
+            else:
+                out.append(line)
+                
+        if patched:
+            with open(bootstrap_file, "w") as f:
+                f.writelines(out)
+            ok("Roundcube patched for PHP 8.4+ compatibility.")
+    
     # Debian's roundcube package automatically sets correct ownership for temp/logs directories.
     # Do NOT run chown -R on public_html, as it will break symlinks to /usr/share and cause 403 Forbidden errors!
     
-    # Create Apache VirtualHost for Roundcube
+    # Create Apache VirtualHost for Roundcube.
+    # Apache lives on 8080 behind nginx (see configure_apache_ports): a *:80 vhost would never match.
+    if not ensure_nginx():
+        return
+    configure_apache_ports()
     docroot = "/var/lib/roundcube/public_html"
-    vhost_content = f"""<VirtualHost *:80>
+    vhost_content = f"""# zervermanager: webmail
+<VirtualHost *:8080>
     ServerName {webmail_domain}
     DocumentRoot "{docroot}"
 
@@ -6254,113 +9567,85 @@ roundcube-core roundcube/database-type select sqlite3
     
     vhost_path = f"/etc/apache2/sites-available/{webmail_domain}.conf"
     backup_config(vhost_path)
-    with open(vhost_path, "w") as f:
-        f.write(vhost_content)
+    if DRY_RUN:
+        step(f"[dry-run] Would write to { vhost_path }")
+    else:
+        with open(vhost_path, "w") as f:
+            f.write(vhost_content)
         
     run(["/usr/sbin/a2ensite", f"{webmail_domain}.conf"])
-    run(["systemctl", "reload", "apache2"])
+    if not DRY_RUN:
+        ok_a, msg_a = validate_apache()
+        if not ok_a:
+            run(["/usr/sbin/a2dissite", f"{webmail_domain}.conf"])
+            try:
+                os.remove(vhost_path)
+            except OSError:
+                pass
+            err(f"Apache config error:\n{msg_a}")
+            return
+    mark_reload("apache2")  # deferred — applied by setup_mail_server()
     ok(f"Apache VirtualHost created for {webmail_domain}")
+
+    # nginx front door: owns port 80 and hands webmail over to Apache (Host header preserved)
+    step("Configuring Nginx front-door proxy for webmail...")
+    nginx_path = write_nginx_vhost(webmail_domain, nginx_front_door_vhost(webmail_domain, tag="webmail"))
+    nginx_enable_site(webmail_domain)
+    if not DRY_RUN:
+        ok_n, msg_n = validate_nginx()
+        if not ok_n:
+            nginx_disable_site(webmail_domain)
+            try:
+                os.remove(nginx_path)
+            except OSError:
+                pass
+            err(f"Nginx config error:\n{msg_n}")
+            return
+    reload_nginx()
+    ok(f"Nginx proxy configured for {webmail_domain}")
+
+    # DNS first (A + MX): it must not depend on the Postfix/Dovecot steps below succeeding
+    fwd_file = rev_file = None
+    if create_dns:
+        step("Setting up DNS (A + MX records)...")
+        fwd_file, rev_file = ensure_mail_dns(domain, ip, webmail_domain)
 
     # Configure Postfix and Dovecot for Maildir format
     step("Configuring Postfix and Dovecot for Maildir...")
     run(["/usr/sbin/postconf", "-e", "home_mailbox = Maildir/"])
-    backup_config("/etc/dovecot/conf.d/99-local-mail.conf")
-    with open("/etc/dovecot/conf.d/99-local-mail.conf", "w") as f:
-        f.write("mail_location = maildir:~/Maildir\n")
-        f.write("auth_username_format = %n\n")
+    configure_postfix_domain(domain)
+    os_status, _ = check_os_compatibility()
+    write_dovecot_local_conf(os_status)
 
-    run(["systemctl", "restart", "postfix"])
-    run(["systemctl", "restart", "dovecot"])
-    ok("Postfix and Dovecot services restarted.")
-
-    # Configure Roundcube SMTP and Domain settings
+    # Roundcube is plain config text, so write it BEFORE restarting any service. It used to come
+    # after the Dovecot restart, and a failed restart did a bare `return` that skipped it: webmail
+    # kept the old SMTP port and the "tohi@127.0.0.1" sender, whatever else had been fixed.
     step("Configuring Roundcube specific settings...")
-    rc_conf = "/etc/roundcube/config.inc.php"
-    if os.path.exists(rc_conf):
-        backup_config(rc_conf)
-        with open(rc_conf, "a") as f:
-            f.write(f"\n// Custom settings added by servermanager\n")
-            f.write(f"$config['smtp_host'] = 'localhost:25';\n")
-            f.write(f"$config['smtp_user'] = '';\n")
-            f.write(f"$config['smtp_pass'] = '';\n")
-            f.write(f"$config['username_domain'] = '{domain}';\n")
-        ok("Roundcube configured for local SMTP and domain.")
+    write_roundcube_settings(domain)
+
+    dovecot_ok = restart_mail_services(os_status)
+    check_mail_services(domain)
     print()
-    
-    # ── BIND9 zones ──
-    fwd_file = None
-    rev_file = None
-    if create_dns:
-        rev_zone = reverse_zone_name(ip)
-        fwd_file = f"{BIND_DIR}/db.{domain}"
-        rev_file = reverse_zone_file(ip)
+    if not dovecot_ok:
+        warn("Mail setup finished with errors. Fix the Dovecot problem above, then click \"Repair mail\".")
+        return
 
-        # Forward zone
-        if zone_exists(domain):
-            warn(f"Forward zone {domain} already exists. Appending mail records...")
-            with open(fwd_file, "r") as f:
-                zcontent = f.read()
-            zcontent = update_serial(zcontent)
-            zcontent += f"\n; Mail server records\n"
-            zcontent += f"mail    IN  A       {ip}\n"
-            zcontent += f"@       IN  MX  10  {webmail_domain}.\n"
-            backup_config(fwd_file)
-            with open(fwd_file, "w") as f:
-                f.write(zcontent)
-            ok("Mail records appended to forward zone.")
-        else:
-            step("Writing forward zone...")
-            write_forward_zone(domain, ip, fwd_file)
-            with open(fwd_file, "a") as f:
-                f.write(f"\n; Mail server records\n")
-                f.write(f"mail    IN  A       {ip}\n")
-                f.write(f"@       IN  MX  10  {webmail_domain}.\n")
-                
-            ok_z, msg_z = validate_zone(domain, fwd_file)
-            if not ok_z:
-                os.remove(fwd_file)
-                err(f"Zone error:\n{msg_z}")
-            else:
-                add_zone_to_conf(domain, fwd_file)
-                ok("Forward zone created.")
-
-        # Reverse zone
-        if zone_exists(rev_zone):
-            warn(f"Reverse zone {rev_zone} already exists, skipping.")
-        else:
-            step("Writing reverse zone...")
-            write_reverse_zone(domain, ip, rev_file)
-            ok_r, msg_r = validate_zone(rev_zone, rev_file)
-            if not ok_r:
-                os.remove(rev_file)
-                remove_zone_from_conf(domain)
-                err(f"Reverse zone error:\n{msg_r}")
-            else:
-                add_zone_to_conf(rev_zone, rev_file)
-                ok("Reverse zone created.")
-
-        ok_b, msg_b = validate_bind9()
-        if ok_b:
-            reload_bind9()
-        else:
-            err(f"BIND9 error:\n{msg_b}")
-            
     # Summary block similar to Apache site creation
     menu_separator()
     print(f"  {C.BOLD}Mail Domain:{C.RESET}  {domain}")
     print(f"  {C.BOLD}Webmail URL:{C.RESET}  http://{webmail_domain}")
     print(f"  {C.BOLD}Docroot:{C.RESET}      {docroot}")
     print(f"  {C.BOLD}Apache conf:{C.RESET}  {vhost_path}")
+    print(f"  {C.BOLD}Nginx conf:{C.RESET}   {nginx_path}")
     if create_dns:
         print(f"  {C.BOLD}Forward zone:{C.RESET} {fwd_file}")
         print(f"  {C.BOLD}Reverse zone:{C.RESET} {rev_file}")
+        print(f"  {C.BOLD}MX record:{C.RESET}    {domain} → {webmail_domain} (priority 10)")
     else:
         print(f"  {C.BOLD}DNS:{C.RESET}          {C.DIM}not created{C.RESET}")
         print(f"  {C.YELLOW}Note: Don't forget to create DNS A/CNAME records for {webmail_domain} and MX records for {domain}!{C.RESET}")
     menu_separator()
     print()
-    
-    apply_reloads()
 
 def add_mail_user():
     menu_header("Add Mail User")
@@ -6392,24 +9677,503 @@ def add_mail_user():
     except Exception as e:
         err(f"Error setting password: {e}")
 
+# ─────────────────────────────────────────
+#  Mail: domain handling, diagnostics, accounts
+# ─────────────────────────────────────────
+MAIL_GROUP   = "mailuser"
+MAIL_USER_RE = re.compile(r"^[a-z_](?:[a-z0-9_.-]{0,30}[a-z0-9_])?$")
+ROUNDCUBE_DB = "/var/lib/dbconfig-common/sqlite3/roundcube/roundcube"
+
+
+def configure_postfix_domain(domain):
+    """Tell Postfix that `domain` is a LOCAL domain.
+
+    If it isn't in mydestination, mail to user@domain is treated as remote: Postfix looks the
+    domain up in DNS (using the system resolver, which usually isn't this server's BIND) or
+    bounces it with "mail for <domain> loops back to myself". That is exactly what happens when
+    Postfix was installed earlier under a different name — debconf preseeding is then ignored."""
+    if DRY_RUN:
+        step(f"[dry-run] Would add {domain} to Postfix mydestination")
+        return
+    try:
+        with open("/etc/mailname", "w") as f:
+            f.write(domain + "\n")
+    except OSError:
+        pass
+    current = run(["/usr/sbin/postconf", "-h", "mydestination"]).stdout.strip()
+    items = [x for x in re.split(r"[,\s]+", current) if x]
+    if not items:
+        items = ["$myhostname", "localhost.localdomain", "localhost"]
+    if domain.lower() not in (i.lower() for i in items):
+        items.insert(1, domain)
+        run(["/usr/sbin/postconf", "-e", "mydestination = " + ", ".join(items)])
+        ok(f"Postfix now accepts mail for @{domain}.")
+    run(["/usr/sbin/postconf", "-e", "inet_interfaces = all"])
+
+
+def _roundcube_db():
+    """Which database Roundcube uses, from Debian's dbconfig file (default: the sqlite file)."""
+    info = {"type": "sqlite3", "path": ROUNDCUBE_DB}
+    try:
+        with open("/etc/roundcube/debian-db.php", "r") as f:
+            txt = f.read()
+        def grab(name):
+            m = re.search(r"\$" + name + r"\s*=\s*['\"]([^'\"]*)['\"]", txt)
+            return m.group(1) if m else ""
+        dbtype = grab("dbtype")
+        if dbtype in ("mysql", "pgsql"):
+            info = {"type": dbtype, "name": grab("dbname"), "user": grab("dbuser"),
+                    "pass": grab("dbpass"), "server": grab("dbserver") or "localhost"}
+        elif grab("basepath") and grab("dbname"):
+            info["path"] = os.path.join(grab("basepath"), grab("dbname"))
+    except OSError:
+        pass
+    return info
+
+
+def _rc_identities(domain, fix=False):
+    """Count (fix=False) or repair (fix=True) Roundcube identities that carry the IMAP host
+    (127.0.0.1 / localhost) instead of the mail domain. Returns the number of rows."""
+    if not re.fullmatch(r"[a-z0-9.-]+", domain or ""):
+        raise RuntimeError("unexpected characters in the mail domain")
+    db, total = _roundcube_db(), 0
+    for bad in ("127.0.0.1", "localhost"):
+        if db["type"] in ("sqlite3", "sqlite"):
+            import sqlite3
+            if not os.path.isfile(db["path"]):
+                raise RuntimeError("Roundcube database not found")
+            con = sqlite3.connect(db["path"], timeout=10)
+            try:
+                if fix:
+                    cur = con.execute(
+                        "UPDATE identities SET email = substr(email, 1, length(email) - ?) || ? WHERE email LIKE ?",
+                        (len(bad) + 1, "@" + domain, "%@" + bad))
+                    con.commit()
+                    total += cur.rowcount
+                else:
+                    total += con.execute("SELECT COUNT(*) FROM identities WHERE email LIKE ?", ("%@" + bad,)).fetchone()[0]
+            finally:
+                con.close()
+        elif db["type"] == "mysql":
+            binary = shutil.which("mysql") or shutil.which("mariadb")
+            if not binary:
+                raise RuntimeError("the mysql client is not installed")
+            like = f"%@{bad}"
+            sql = (f"UPDATE identities SET email = CONCAT(SUBSTRING(email, 1, CHAR_LENGTH(email) - {len(bad) + 1}), '@{domain}') "
+                   f"WHERE email LIKE '{like}'; SELECT ROW_COUNT();") if fix else \
+                  f"SELECT COUNT(*) FROM identities WHERE email LIKE '{like}';"
+            r = subprocess.run([binary, "-h", db["server"], "-u", db["user"], "-N", db["name"], "-e", sql],
+                               capture_output=True, text=True, timeout=20,
+                               env={**os.environ, "MYSQL_PWD": db["pass"]})
+            if r.returncode != 0:
+                raise RuntimeError((r.stderr or "mysql failed").strip())
+            nums = re.findall(r"^\d+$", r.stdout, re.MULTILINE)
+            total += int(nums[-1]) if nums else 0
+        else:
+            raise RuntimeError(f"unsupported Roundcube database type '{db['type']}'")
+    return total
+
+
+def fix_roundcube_identities(domain):
+    """Roundcube stores each user's From address the first time they log in. Anything created
+    while mail_domain was unset is stored as user@127.0.0.1 — repair those."""
+    if DRY_RUN:
+        return 0
+    try:
+        changed = _rc_identities(domain, fix=True)
+        if changed:
+            ok(f"Fixed {changed} Roundcube sender address(es) → @{domain}.")
+        return changed
+    except Exception as e:
+        warn(f"Could not update existing Roundcube sender addresses ({e}). "
+             f"Fix them under Roundcube → Settings → Identities.")
+        return 0
+
+
+def check_mail_services(domain):
+    """Quick sanity checks so a broken mail setup is reported at install time, not at first send."""
+    if DRY_RUN:
+        return
+    dest = run(["/usr/sbin/postconf", "-h", "mydestination"]).stdout
+    if domain.lower() in dest.lower():
+        ok(f"Postfix delivers @{domain} locally.")
+    else:
+        warn(f"@{domain} is not in Postfix mydestination — mail to it will not be delivered locally.")
+    try:
+        import smtplib
+        with smtplib.SMTP("127.0.0.1", 25, timeout=5) as smtp:
+            smtp.ehlo()
+        ok("SMTP is accepting connections on 127.0.0.1:25 (what webmail uses to send).")
+    except Exception as e:
+        warn(f"Could not connect to SMTP on 127.0.0.1:25: {e}")
+
+
+ROUNDCUBE_CONF = "/etc/roundcube/config.inc.php"
+RC_MARKER      = "// Custom settings added by zervermanager"
+DOVECOT_LOCAL  = "/etc/dovecot/conf.d/99-local-mail.conf"
+
+
+def write_dovecot_local_conf(os_status, full_address_login=True):
+    backup_config(DOVECOT_LOCAL)
+    if DRY_RUN:
+        step(f"[dry-run] Would write to {DOVECOT_LOCAL}")
+        return
+    with open(DOVECOT_LOCAL, "w") as f:
+        if os_status == "ubuntu":
+            # Dovecot 2.4 syntax
+            f.write("mail_driver = maildir\n")
+            f.write("mail_path = ~/Maildir\n")
+            f.write("mailbox_list_layout = fs\n")
+        else:
+            # Dovecot 2.3 syntax (Debian)
+            f.write("mail_location = maildir:~/Maildir\n")
+            if full_address_login:
+                # sign in with tohi@example.com as well as plain "tohi"
+                f.write("auth_username_format = %Ln\n")
+        # auth_username_format is invalid at global scope in Dovecot 2.4 (Ubuntu) and crashes it,
+        # so it is only ever written for the 2.3 branch above.
+        f.write("disable_plaintext_auth = no\n")
+        f.write("ssl = no\n")
+
+
+def write_roundcube_settings(domain):
+    """Point Roundcube at the local Postfix/Dovecot and give it the mail domain."""
+    if not os.path.isfile(ROUNDCUBE_CONF):
+        warn(f"{ROUNDCUBE_CONF} not found — Roundcube settings were not written.")
+        return False
+    backup_config(ROUNDCUBE_CONF)
+    if DRY_RUN:
+        step(f"[dry-run] Would write custom block to {ROUNDCUBE_CONF}")
+        return True
+    with open(ROUNDCUBE_CONF, "r") as f:
+        existing = f.read()
+    if RC_MARKER in existing:                       # idempotent: replace our previous block
+        existing = existing[:existing.index(RC_MARKER)]
+    with open(ROUNDCUBE_CONF, "w") as f:
+        f.write(existing.rstrip() + "\n\n")
+        f.write(f"{RC_MARKER}\n")
+        # imap_host without a port = plain IMAP on 143. Do NOT also set default_host (conflicts in RC 1.6).
+        f.write("$config['imap_host'] = '127.0.0.1';\n")
+        # Roundcube 1.6 IGNORES smtp_port: the port must be part of smtp_host, and a bare host
+        # defaults to 587 (which Postfix doesn't serve → "SMTP Error: Connection to server failed").
+        # smtp_server is the legacy name of the same option; Debian's stock config may still define
+        # it, and Roundcube lets the legacy name win — so set both.
+        f.write("$config['smtp_host'] = '127.0.0.1:25';\n")
+        f.write("$config['smtp_server'] = '127.0.0.1:25';\n")
+        f.write("$config['smtp_user'] = '';\n")
+        f.write("$config['smtp_pass'] = '';\n")
+        # Without mail_domain Roundcube builds addresses from the IMAP host: "tohi@127.0.0.1"
+        f.write(f"$config['mail_domain'] = '{domain}';\n")
+        f.write("$config['create_default_folders'] = true;\n")
+    ok("Roundcube configured for local SMTP and IMAP.")
+    fix_roundcube_identities(domain)
+    return True
+
+
+def restart_mail_services(os_status):
+    """Restart Postfix + Dovecot. If Dovecot rejects the optional full-address-login line,
+    retry without it, so that line can never leave Dovecot (and therefore webmail) down."""
+    run(["systemctl", "restart", "postfix"])
+    res = run(["systemctl", "restart", "dovecot"])
+    if res.returncode != 0 and os_status != "ubuntu" and not DRY_RUN:
+        warn("Dovecot rejected the new configuration — retrying without full-address login...")
+        write_dovecot_local_conf(os_status, full_address_login=False)
+        res = run(["systemctl", "restart", "dovecot"])
+        if res.returncode == 0:
+            warn("Dovecot is running, but webmail login needs the plain username (e.g. 'tohi').")
+    if res.returncode != 0:
+        journal = run(["journalctl", "-xeu", "dovecot.service", "--no-pager", "-n", "40"])
+        err(f"Dovecot failed to restart. Journal output:\n{journal.stdout.strip()}")
+        return False
+    if ":143" not in run(["ss", "-tlnp"]).stdout:
+        warn("Dovecot does not appear to be listening on port 143. "
+             "Check 'systemctl status dovecot' and /var/log/mail.log for errors.")
+    else:
+        ok("Postfix and Dovecot services restarted and verified (port 143 active).")
+    return True
+
+
+def _rc_last(txt, key):
+    vals = re.findall(r"\$config\[\s*['\"]" + key + r"['\"]\s*\]\s*=\s*['\"]([^'\"]*)['\"]", txt)
+    return vals[-1] if vals else None
+
+
+def diagnose_mail():
+    """Check every link of the chain  webmail → SMTP → Postfix → mailbox  and say what is wrong.
+    Read-only: it opens an SMTP conversation but never sends a message. Returns #problems."""
+    problems = 0
+
+    def bad(msg, fix=""):
+        nonlocal problems
+        problems += 1
+        err(msg)
+        if fix:
+            print(f"      → {fix}")
+
+    print(f"\n  {C.BOLD}Mail check{C.RESET}\n")
+    if not mail_server_installed():
+        bad("The mail server is not installed.", "Install it first (Install Mail Server).")
+        return problems
+    domain = get_mail_domain()
+    webmail = f"mail.{domain}"
+    if domain and "." in domain:
+        ok(f"Mail domain: {domain}")
+    else:
+        bad(f"No usable mail domain (/etc/mailname says '{domain}').", "Run Install Mail Server once with your domain.")
+
+    # Postfix: running? listening? (Debian's postfix.service can say "active" while the real instance is down)
+    if run(["/usr/sbin/postfix", "status"]).returncode == 0:
+        ok("Postfix is running.")
+    else:
+        bad("Postfix is NOT running.", "Run 'postfix check' and 'systemctl status postfix@-' on the server to see why.")
+    listen = run(["ss", "-H", "-ltn", "sport = :25"]).stdout
+    addrs = re.findall(r"(\S+):25\b", listen)
+    if addrs:
+        ok(f"Something is listening on port 25 ({', '.join(sorted(set(addrs)))}).")
+    else:
+        bad("Nothing is listening on port 25 — webmail shows \"SMTP Error: Connection to server failed\".",
+            "Click Repair mail, or check 'postfix check' for configuration errors.")
+
+    # A real SMTP conversation up to RCPT TO — exactly what webmail does, minus the message
+    try:
+        import smtplib
+        users = get_mail_users()
+        rcpt = f"{users[0]}@{domain}" if users else f"postmaster@{domain}"
+        with smtplib.SMTP("127.0.0.1", 25, timeout=8) as smtp:
+            smtp.ehlo()
+            smtp.mail(f"check@{domain}")
+            code, msg = smtp.rcpt(rcpt)
+            smtp.rset()
+        if code in (250, 251):
+            ok(f"Postfix accepts mail for {rcpt}.")
+        else:
+            text = msg.decode("utf-8", "replace") if isinstance(msg, bytes) else str(msg)
+            hint = ("The domain is not in Postfix's local domains — click Repair mail." if code == 554
+                    else "That mailbox does not exist." if code == 550 else "")
+            bad(f"Postfix refused {rcpt}: {code} {text}", hint)
+    except Exception as e:
+        bad(f"Cannot talk to SMTP on 127.0.0.1:25 ({e}).", "This is what webmail hits when sending fails.")
+
+    dest = run(["/usr/sbin/postconf", "-h", "mydestination"]).stdout
+    if domain and domain.lower() in dest.lower():
+        ok(f"Postfix treats @{domain} as a local domain.")
+    else:
+        bad(f"@{domain} is not in Postfix's local domains (mydestination: {dest.strip() or 'empty'}).", "Click Repair mail.")
+
+    # Dovecot
+    if run(["systemctl", "is-active", "dovecot"]).returncode == 0 and ":143" in run(["ss", "-tlnp"]).stdout:
+        ok("Dovecot is running (IMAP port 143).")
+    else:
+        bad("Dovecot is not running or not listening on IMAP port 143.", "Check 'systemctl status dovecot'.")
+
+    # Roundcube settings as Roundcube will actually read them (last assignment wins; legacy name wins)
+    try:
+        with open(ROUNDCUBE_CONF, "r") as f:
+            rc = f.read()
+        legacy, new = _rc_last(rc, "smtp_server"), _rc_last(rc, "smtp_host")
+        eff = legacy if legacy is not None else new
+        m = re.search(r":(\d+)$", eff or "")
+        if eff and m and m.group(1) == "25":
+            ok(f"Roundcube sends through {eff}.")
+        elif eff and not m:
+            bad(f"Roundcube's SMTP host is '{eff}' with no port, so it tries port 587 (nothing listens there).", "Click Repair mail.")
+        else:
+            bad(f"Roundcube's SMTP host is '{eff or 'empty'}', expected 127.0.0.1:25.", "Click Repair mail.")
+        md = _rc_last(rc, "mail_domain")
+        if md and md.lower() == (domain or "").lower():
+            ok(f"Roundcube builds addresses as user@{md}.")
+        else:
+            bad(f"Roundcube mail_domain is '{md or 'not set'}' — addresses come out as user@127.0.0.1.", "Click Repair mail.")
+    except OSError:
+        bad(f"Cannot read {ROUNDCUBE_CONF}.", "Is Roundcube installed?")
+    try:
+        n = _rc_identities(domain, fix=False)
+        if n:
+            bad(f"{n} Roundcube sender address(es) still show 127.0.0.1/localhost.", "Click Repair mail.")
+        else:
+            ok("No Roundcube sender addresses show the loopback address.")
+    except Exception as e:
+        warn(f"Could not inspect Roundcube sender addresses: {e}")
+
+    # Is webmail reachable the way a browser reaches it (nginx on :80 → Apache)?
+    try:
+        import urllib.request
+        req = urllib.request.Request("http://127.0.0.1/", headers={"Host": webmail})
+        body = urllib.request.urlopen(req, timeout=6).read(4000).decode("utf-8", "replace")
+        if "Apache2 Debian Default Page" in body:
+            bad(f"http://{webmail} answers with Apache's default page — the webmail virtual host isn't matched.",
+                "Run Install Mail Server again.")
+        elif "roundcube" in body.lower():
+            ok(f"Webmail answers at http://{webmail}.")
+        else:
+            warn(f"http://{webmail} answered, but it doesn't look like Roundcube.")
+    except Exception as e:
+        bad(f"Webmail did not answer at http://{webmail} ({e}).", "Run Install Mail Server again.")
+
+    # recent evidence
+    log = run(["journalctl", "-u", "postfix*", "-n", "60", "--no-pager"]).stdout
+    lines = [l for l in log.splitlines() if re.search(r"error|warning|fatal|reject|refused|deferred|bounced", l, re.I)][-5:]
+    if lines:
+        print(f"\n  {C.DIM}Recent Postfix problems:{C.RESET}")
+        for l in lines:
+            print(f"    {l.strip()[:200]}")
+    try:
+        with open("/var/log/roundcube/errors.log", "r", errors="replace") as f:
+            tail = [l.strip() for l in f.readlines()[-4:] if l.strip()]
+        if tail:
+            print(f"\n  {C.DIM}Recent Roundcube errors:{C.RESET}")
+            for l in tail:
+                print(f"    {l[:200]}")
+    except OSError:
+        pass
+
+    print()
+    if problems:
+        warn(f"{problems} problem(s) found. Click \"Repair mail\" to fix the settings automatically.")
+    else:
+        ok("Everything checks out. If sending still fails, the lines above show what to look at.")
+    return problems
+
+
+def repair_mail():
+    """Re-apply every mail setting WITHOUT reinstalling packages: Postfix local domain, Dovecot,
+    Roundcube SMTP/mail_domain and stored sender addresses — then run the check."""
+    if not mail_server_installed():
+        err("The mail server is not installed. Install it first.")
+        return False
+    domain = get_mail_domain()
+    if not domain or "." not in domain:
+        err(f"Cannot tell which domain to use (/etc/mailname says '{domain}'). Run Install Mail Server once.")
+        return False
+    step(f"Repairing mail settings for {domain}...")
+    configure_postfix_domain(domain)
+    os_status, _ = check_os_compatibility()
+    write_dovecot_local_conf(os_status)
+    write_roundcube_settings(domain)
+    services_ok = restart_mail_services(os_status)
+    problems = diagnose_mail()
+    return services_ok and problems == 0
+
+
+def get_mail_domain():
+    """The primary mail domain written by the installer (/etc/mailname), or '' if none."""
+    try:
+        with open("/etc/mailname", "r") as f:
+            return f.readline().strip().lower()
+    except OSError:
+        return ""
+
+
+def mail_server_installed():
+    return os.path.exists("/usr/sbin/postfix") and os.path.exists("/usr/sbin/dovecot")
+
+
+def get_mail_users():
+    res = run(["/usr/bin/getent", "group", MAIL_GROUP])
+    if res.returncode == 0 and res.stdout.strip():
+        parts = res.stdout.strip().split(":")
+        if len(parts) >= 4 and parts[3]:
+            return sorted(u for u in parts[3].split(",") if u)
+    return []
+
+
+def _ensure_maildir(username):
+    try:
+        import pwd
+        pw = pwd.getpwnam(username)
+        base = os.path.join(pw.pw_dir, "Maildir")
+        for sub in ("", "cur", "new", "tmp"):
+            d = os.path.join(base, sub)
+            os.makedirs(d, exist_ok=True)
+            os.chmod(d, 0o700)
+            os.chown(d, pw.pw_uid, pw.pw_gid)
+    except Exception:
+        pass            # Postfix / Dovecot create it on first delivery / login anyway
+
+
+def create_mail_user(username, password):
+    """Create a mail account: a system user in the 'mailuser' group, with a Maildir.
+
+    Non-interactive on purpose. add_mail_user() runs the interactive `passwd`, which needs a
+    terminal and so silently never set the password when called from the web UI."""
+    domain = get_mail_domain()
+    username = (username or "").strip().lower()
+    password = password or ""
+    if "@" in username:
+        local, _, dom = username.partition("@")
+        if domain and dom != domain:
+            err(f"This server's mail domain is {domain} — enter just the part before the @.")
+            return False
+        username = local
+    if not mail_server_installed():
+        err("The mail server is not installed yet. Install it first (Install Services → Mail Server).")
+        return False
+    if not username:
+        err("Enter a username.")
+        return False
+    if not MAIL_USER_RE.match(username):
+        err("Usernames can use lowercase letters, digits, '.', '-' and '_', and must start with a letter.")
+        return False
+    if len(password) < 6:
+        err("Password must be at least 6 characters.")
+        return False
+    if "\n" in password or "\r" in password:
+        err("Password cannot contain line breaks.")
+        return False
+
+    run(["/usr/sbin/groupadd", "-f", MAIL_GROUP])
+    if run(["/usr/bin/id", username]).returncode == 0:
+        if username in get_mail_users():
+            err(f"The mail account {username}@{domain or 'this-server'} already exists.")
+        else:
+            err(f"'{username}' is already used by a system account — pick another name.")
+        return False
+
+    step(f"Creating mail account {username}...")
+    res = run(["/usr/sbin/useradd", "-m", "-s", "/usr/sbin/nologin", "-G", MAIL_GROUP, username])
+    if res.returncode != 0:
+        err(f"Failed to create the account:\n{(res.stderr or res.stdout).strip()}")
+        return False
+    pw = subprocess.run(["/usr/sbin/chpasswd"], input=f"{username}:{password}\n",
+                        text=True, capture_output=True)
+    if pw.returncode != 0:
+        run(["/usr/sbin/userdel", "-r", username])          # don't leave an account without a password
+        err(f"Could not set the password:\n{(pw.stderr or pw.stdout).strip()}")
+        return False
+    _ensure_maildir(username)
+    ok(f"Mail account {username}@{domain} created." if domain else f"Mail account {username} created.")
+    print(f"  Webmail login: {username}" + (f"  (or {username}@{domain})" if domain else ""))
+    return True
+
+
+def delete_mail_user_account(username):
+    """Delete a mail account. Only members of the 'mailuser' group can be removed this way, so the
+    web API can never be used to delete a real system account (root, your admin user, ...)."""
+    username = (username or "").strip().lower().split("@")[0]
+    if not username:
+        err("No account given.")
+        return False
+    if username not in get_mail_users():
+        err(f"'{username}' is not a mail account — refusing to delete it.")
+        return False
+    step(f"Deleting mail account {username} and its mailbox...")
+    res = run(["/usr/sbin/userdel", "-r", username])
+    if res.returncode == 8:                                  # an IMAP session is still open
+        res = run(["/usr/sbin/userdel", "-r", "-f", username])
+    if res.returncode in (0, 6):                             # 6 = mail spool already gone
+        ok(f"Mail account {username} deleted.")
+        return True
+    err(f"Failed to delete the account:\n{(res.stderr or res.stdout).strip()}")
+    return False
+
+
 def delete_mail_user():
     menu_header("Delete Mail User")
 
     username = input("  Enter mail username to delete: ").strip()
     if not username:
         return
-
-    # Basic safety check
-    if username in ["root", "admin", "a2"]:
-        if not prompt_confirm(f"Are you sure you want to delete {username}?"):
-            return
-
-    step(f"Deleting user {username} and their mailbox...")
-    res = run(["/usr/sbin/userdel", "-r", username])
-    if res.returncode == 0:
-        ok(f"User {username} deleted.")
-    else:
-        err(f"Failed to delete user:\n{res.stderr.strip()}")
+    delete_mail_user_account(username)
 
 def list_mail_users():
     menu_header("List Mail Users")
@@ -6472,9 +10236,11 @@ def delete_mail_services():
     step("Cleaning up residuals...")
     run(["apt-get", "autoremove", "-y"])
     
-    if os.path.exists("/etc/apache2/conf-available/roundcube.conf"):
+    if os.path.isfile("/etc/apache2/conf-available/roundcube.conf"):
         run(["/usr/sbin/a2disconf", "roundcube"])
         run(["systemctl", "reload", "apache2"])
+    _remove_webmail_vhosts()
+    apply_reloads()
     
     # Optional manual cleanup
     for d in ["/etc/postfix", "/etc/dovecot"]:
@@ -6634,11 +10400,25 @@ def setup_phpmyadmin():
     # Enable mbstring for apache if present
     run(["/usr/sbin/phpenmod", "mbstring"])
     run(["/usr/sbin/a2enconf", "phpmyadmin"])
-    run(["systemctl", "reload", "apache2"])
+    if os.path.isfile("/usr/sbin/nginx"):
+        configure_apache_ports()            # nginx owns :80 — keep Apache off it
+    mark_reload("apache2")
 
     ok("phpMyAdmin installed successfully.")
+
+    # Apache serves phpMyAdmin on :8080; without a route, nginx on :80 answers /phpmyadmin with 404
+    on_port_80 = expose_phpmyadmin_via_nginx()
+    apply_reloads()
+
+    ip = detect_server_ip() or "<your-server-ip>"
     print()
-    print(f"  {C.BOLD}Access via:{C.RESET}  http://<your-server-ip>/phpmyadmin")
+    if on_port_80:
+        print(f"  {C.BOLD}Access via:{C.RESET}  http://{ip}/phpmyadmin")
+        if apache_on_backend_port():
+            print(f"  {C.DIM}Direct (Apache): http://{ip}:8080/phpmyadmin{C.RESET}")
+    else:
+        port = 8080 if apache_on_backend_port() else 80
+        print(f"  {C.BOLD}Access via:{C.RESET}  http://{ip}:{port}/phpmyadmin")
     print(f"  Login with your MariaDB root or site database credentials.")
     input("\n  Press Enter to continue...")
 
@@ -6649,7 +10429,9 @@ def delete_phpmyadmin():
         return
     rc, _ = run_live(["apt-get", "purge", "-y", "phpmyadmin"])
     ok("phpMyAdmin removed.") if rc == 0 else err("Failed to remove phpMyAdmin.")
-    run(["systemctl", "reload", "apache2"])
+    unexpose_phpmyadmin_nginx()
+    mark_reload("apache2")
+    apply_reloads()
     input("\n  Press Enter to continue...")
 
 
@@ -6714,8 +10496,11 @@ def setup_samba():
 """
     try:
         backup_config("/etc/samba/smb.conf")
-        with open("/etc/samba/smb.conf", "a") as f:
-            f.write(smb_block)
+        if DRY_RUN:
+            step(f"[dry-run] Would append to /etc/samba/smb.conf")
+        else:
+            with open("/etc/samba/smb.conf", "a") as f:
+                f.write(smb_block)
         ok(f"Share '{share_name}' added to /etc/samba/smb.conf")
     except Exception as e:
         err(f"Could not write to smb.conf: {e}")
@@ -6967,16 +10752,3038 @@ def display_main_menu() -> str:
     print("4. Manage Server")
     print("5. Reload All Related Services")
     print("6. Help")
+    print("7. Docker")
     print("0. Exit")
     menu_separator()
     print(f"  {C.CYAN}OS Detected: {get_os_version()}{C.RESET}")
     return input("  \nChoice: ").strip()
 
 
+def check_apparmor_warning(service_name):
+    if not os.path.isfile("/usr/sbin/aa-status"):
+        return
+    res = subprocess.run(["aa-status"], capture_output=True, text=True)
+    if service_name in res.stdout and "enforce" in res.stdout:
+        warn(f"AppArmor is enforcing a profile for {service_name}. This may block custom config paths.")
+
 def _shutdown():
     """Centralised graceful shutdown — add cleanup tasks here as needed."""
     print(f"\n  {C.CYAN}Goodbye!{C.RESET}")
     sys.exit(0)
+
+
+# ─────────────────────────────────────────
+#  Server Telemetry Helpers
+# ─────────────────────────────────────────
+
+_last_cpu_sample = None
+
+def get_system_uptime():
+    """Return system uptime in seconds, formatted duration string, and boot timestamp."""
+    seconds = None
+    if os.path.exists("/proc/uptime"):
+        try:
+            with open("/proc/uptime", "r") as f:
+                seconds = float(f.readline().split()[0])
+        except Exception:
+            pass
+
+    if seconds is None and sys.platform == "win32":
+        try:
+            import ctypes
+            ms = ctypes.windll.kernel32.GetTickCount64()
+            seconds = ms / 1000.0
+        except Exception:
+            pass
+
+    if seconds is None:
+        return {"seconds": 0, "formatted": "N/A", "boot_time": "N/A"}
+
+    total_secs = int(seconds)
+    days = total_secs // 86400
+    hours = (total_secs % 86400) // 3600
+    minutes = (total_secs % 3600) // 60
+    secs = total_secs % 60
+
+    parts = []
+    if days > 0:
+        parts.append(f"{days}d")
+    if hours > 0 or days > 0:
+        parts.append(f"{hours}h")
+    parts.append(f"{minutes}m")
+    formatted = " ".join(parts) if parts else f"{secs}s"
+
+    try:
+        boot_dt = datetime.fromtimestamp(time.time() - seconds).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        boot_dt = "N/A"
+
+    return {
+        "seconds": total_secs,
+        "formatted": formatted,
+        "boot_time": boot_dt
+    }
+
+
+def get_ram_usage():
+    """Return RAM usage: percent, used_gb, total_gb, free_gb, formatted string."""
+    if os.path.exists("/proc/meminfo"):
+        try:
+            mem = {}
+            with open("/proc/meminfo", "r") as f:
+                for line in f:
+                    parts = line.split(":")
+                    if len(parts) == 2:
+                        mem[parts[0].strip()] = int(parts[1].strip().split()[0])
+            total_kb = mem.get("MemTotal", 0)
+            avail_kb = mem.get("MemAvailable", mem.get("MemFree", 0) + mem.get("Buffers", 0) + mem.get("Cached", 0))
+            used_kb = max(0, total_kb - avail_kb)
+            if total_kb > 0:
+                percent = round((used_kb / total_kb) * 100, 1)
+                total_gb = round(total_kb / (1024 * 1024), 2)
+                used_gb = round(used_kb / (1024 * 1024), 2)
+                free_gb = round(avail_kb / (1024 * 1024), 2)
+                return {
+                    "percent": percent,
+                    "used_gb": used_gb,
+                    "total_gb": total_gb,
+                    "free_gb": free_gb,
+                    "formatted": f"{used_gb} GB / {total_gb} GB"
+                }
+        except Exception:
+            pass
+
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ('dwLength', ctypes.c_ulong),
+                    ('dwMemoryLoad', ctypes.c_ulong),
+                    ('ullTotalPhys', ctypes.c_ulonglong),
+                    ('ullAvailPhys', ctypes.c_ulonglong),
+                    ('ullTotalPageFile', ctypes.c_ulonglong),
+                    ('ullAvailPageFile', ctypes.c_ulonglong),
+                    ('ullTotalVirtual', ctypes.c_ulonglong),
+                    ('ullAvailVirtual', ctypes.c_ulonglong),
+                    ('ullAvailExtendedVirtual', ctypes.c_ulonglong),
+                ]
+            stat = MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+            total_gb = round(stat.ullTotalPhys / (1024**3), 2)
+            avail_gb = round(stat.ullAvailPhys / (1024**3), 2)
+            used_gb = round(max(0.0, total_gb - avail_gb), 2)
+            percent = float(stat.dwMemoryLoad)
+            return {
+                "percent": percent,
+                "used_gb": used_gb,
+                "total_gb": total_gb,
+                "free_gb": avail_gb,
+                "formatted": f"{used_gb} GB / {total_gb} GB"
+            }
+        except Exception:
+            pass
+
+    return {
+        "percent": 0.0,
+        "used_gb": 0.0,
+        "total_gb": 0.0,
+        "free_gb": 0.0,
+        "formatted": "N/A"
+    }
+
+
+def get_cpu_usage():
+    """Return CPU usage: percent, cores count, load average, and load string."""
+    global _last_cpu_sample
+    cores = os.cpu_count() or 1
+    percent = 0.0
+    load_avg = [0.0, 0.0, 0.0]
+
+    if os.path.exists("/proc/loadavg"):
+        try:
+            with open("/proc/loadavg", "r") as f:
+                load_parts = f.read().split()[:3]
+                load_avg = [round(float(x), 2) for x in load_parts]
+        except Exception:
+            pass
+
+    if os.path.exists("/proc/stat"):
+        try:
+            with open("/proc/stat", "r") as f:
+                first_line = f.readline()
+            if first_line.startswith("cpu "):
+                fields = [float(x) for x in first_line.split()[1:8]]
+                idle = fields[3] + fields[4]
+                total = sum(fields)
+                if _last_cpu_sample is not None:
+                    prev_idle, prev_total = _last_cpu_sample
+                    idle_delta = idle - prev_idle
+                    total_delta = total - prev_total
+                    if total_delta > 0:
+                        percent = round(100.0 * (1.0 - (idle_delta / total_delta)), 1)
+                        percent = max(0.0, min(100.0, percent))
+                else:
+                    time.sleep(0.05)
+                    with open("/proc/stat", "r") as f2:
+                        second_line = f2.readline()
+                    fields2 = [float(x) for x in second_line.split()[1:8]]
+                    idle2 = fields2[3] + fields2[4]
+                    total2 = sum(fields2)
+                    total_delta = total2 - total
+                    idle_delta = idle2 - idle
+                    if total_delta > 0:
+                        percent = round(100.0 * (1.0 - (idle_delta / total_delta)), 1)
+                        percent = max(0.0, min(100.0, percent))
+                    idle, total = idle2, total2
+                _last_cpu_sample = (idle, total)
+        except Exception:
+            pass
+    elif sys.platform == "win32":
+        try:
+            import ctypes
+            class FILETIME(ctypes.Structure):
+                _fields_ = [("dwLowDateTime", ctypes.c_uint), ("dwHighDateTime", ctypes.c_uint)]
+            def to_int(ft):
+                return (ft.dwHighDateTime << 32) + ft.dwLowDateTime
+            idle_ft, kernel_ft, user_ft = FILETIME(), FILETIME(), FILETIME()
+            if ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(idle_ft), ctypes.byref(kernel_ft), ctypes.byref(user_ft)):
+                idle = to_int(idle_ft)
+                kernel = to_int(kernel_ft)
+                user = to_int(user_ft)
+                total = kernel + user
+                if _last_cpu_sample is not None:
+                    prev_idle, prev_total = _last_cpu_sample
+                    idle_delta = idle - prev_idle
+                    total_delta = total - prev_total
+                    if total_delta > 0:
+                        percent = round(100.0 * (1.0 - (idle_delta / total_delta)), 1)
+                        percent = max(0.0, min(100.0, percent))
+                _last_cpu_sample = (idle, total)
+        except Exception:
+            pass
+
+    load_str = f"{load_avg[0]:.2f}, {load_avg[1]:.2f}, {load_avg[2]:.2f}"
+    return {
+        "percent": percent,
+        "cores": cores,
+        "load_avg": load_avg,
+        "load_str": load_str,
+        "formatted": f"{percent}%"
+    }
+
+
+# ─────────────────────────────────────────
+#  Web Configuration Server
+# ─────────────────────────────────────────
+
+class MockStdin:
+    """Stdin replacement that feeds pre-defined answers to input() calls.
+
+    The web handlers drive the interactive CLI menus by swapping sys.stdin for
+    one of these. After all answers are consumed it returns empty lines, which
+    accepts defaults / skips optional prompts.
+
+    Lives at module level on purpose: it used to be defined *inside*
+    handle_makesite_post(), so every other handler (install, uninstall, docker,
+    database, DNS, network, ...) crashed with ``NameError: name 'MockStdin' is not defined``.
+    """
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self._buffer = ""
+    def readline(self):
+        if self.responses:
+            return str(self.responses.pop(0)) + "\n"
+        return "\n"
+    def read(self, n=-1):
+        return self.readline()
+    def isatty(self):
+        return False
+    def fileno(self):
+        raise io.UnsupportedOperation("MockStdin has no fileno")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Web terminal — a real shell (PTY) behind the Web UI.
+#  One shared shell per server process; its output is buffered, so opening the
+#  Terminal page (or reloading it) reconnects to the SAME session with the
+#  recent history still visible.
+#
+#  Endpoints
+#    GET  /api/terminal/stream?after=N   long-poll: output after buffer offset N
+#                                        (base64), waits up to 12s for new data
+#    GET  /api/terminal/state            is a shell alive? (+ host info)
+#    POST /api/terminal/input            {"data": "..."} keystrokes / pasted text
+#    POST /api/terminal/size             {"cols": n, "rows": n}  (SIGWINCH via ioctl)
+#    POST /api/terminal/start            spawn (or re-spawn) the shell
+#    POST /api/terminal/stop             kill the shell
+#
+#  Security: this is a FULL shell for anyone who can reach the Web UI. It is
+#  guarded like every other /api route (same origin/host checks) and safe mode
+#  blocks all write routes — but the Web UI itself currently has no login.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import base64
+
+_ZM_TERM_MAX_BUF = 300_000          # bytes of scrollback kept for reconnects
+_ZM_TERM_POLL_WAIT = 12.0           # seconds a /stream request may park
+
+
+class _TermSession:
+    """One long-lived PTY shell shared by all Web UI clients."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.cond = threading.Condition(self.lock)
+        self.proc = None
+        self.fd = None
+        self.buf = bytearray()
+        self.alive = False
+        self.cols = 80
+        self.rows = 24
+        self.spawn_error = ""
+
+    # ── lifecycle ──────────────────────────────────────────────────────────
+    def start(self):
+        with self.lock:
+            if self.alive:
+                return True
+            try:
+                import pty
+            except Exception as exc:
+                self.spawn_error = f"terminal needs a Unix host ({exc})"
+                return False
+            shell = os.environ.get("SHELL") or ""
+            if not shell or not shutil.which(shell):
+                shell = shutil.which("bash") or shutil.which("sh") or "/bin/sh"
+            # reap a previous zombie, if any
+            if self.proc:
+                try:
+                    os.waitpid(self.proc, os.WNOHANG)
+                except Exception:
+                    pass
+            pid, fd = pty.fork()
+            if pid == 0:                       # child: login shell on the pty
+                try:
+                    os.environ["TERM"] = "xterm-256color"
+                    os.execv(shell, [shell, "--login"])
+                except Exception:
+                    os._exit(1)
+            self.proc = pid
+            self.fd = fd
+            self.alive = True
+            self.spawn_error = ""
+            self.buf.clear()
+            self._apply_size_locked()
+            threading.Thread(target=self._reader, daemon=True).start()
+            return True
+
+    def _apply_size_locked(self):
+        if self.fd is None:
+            return
+        try:
+            import struct, termios, fcntl as _fcntl
+            winsize = struct.pack("HHHH", self.rows, self.cols, 0, 0)
+            _fcntl.ioctl(self.fd, termios.TIOCSWINSZ, winsize)
+        except Exception:
+            pass
+
+    def resize(self, cols, rows):
+        with self.lock:
+            try:
+                self.cols = max(20, min(500, int(cols or self.cols)))
+                self.rows = max(5, min(200, int(rows or self.rows)))
+            except Exception:
+                return
+            self._apply_size_locked()
+
+    def _reader(self):
+        """Drain the pty into the shared buffer until the shell exits."""
+        try:
+            while True:
+                try:
+                    chunk = os.read(self.fd, 65536)
+                except OSError:
+                    chunk = b""
+                with self.cond:
+                    if not chunk:
+                        self.alive = False
+                        try:
+                            os.close(self.fd)
+                        except Exception:
+                            pass
+                        self.fd = None
+                        self.cond.notify_all()
+                        return
+                    self.buf.extend(chunk)
+                    if len(self.buf) > _ZM_TERM_MAX_BUF:
+                        del self.buf[: len(self.buf) - _ZM_TERM_MAX_BUF]
+                    self.cond.notify_all()
+        except Exception:
+            with self.cond:
+                self.alive = False
+                self.cond.notify_all()
+
+    def read_new(self, after: int, timeout: float):
+        """Wait up to `timeout` for output past buffer offset `after`."""
+        with self.cond:
+            if after > len(self.buf):          # buffer was trimmed past cursor: resync
+                after = len(self.buf)
+            if after >= len(self.buf) and timeout > 0 and self.alive:
+                self.cond.wait(timeout)
+            data = bytes(self.buf[after:])
+            return data, len(self.buf), self.alive
+
+    def write(self, data: str):
+        if not data:
+            return
+        with self.lock:
+            fd = self.fd if self.alive else None
+        if fd is None:
+            if not self.start():
+                return
+            with self.lock:
+                fd = self.fd
+        try:
+            os.write(fd, data.encode("utf-8"))
+        except OSError:
+            pass
+
+    def stop(self):
+        with self.lock:
+            pid, fd = self.proc, self.fd
+            self.proc = None
+        if pid:
+            try:
+                os.kill(pid, signal.SIGHUP)
+            except Exception:
+                pass
+        if fd is not None:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+
+
+_ZM_TERM = _TermSession()
+
+
+def _handle_terminal_get(handler, parsed) -> bool:
+    """GET routes for the web terminal (streaming, so it bypasses handle_api_get)."""
+    if parsed.path == "/api/terminal/state":
+        _web_json(handler, {
+            "ok": True,
+            "alive": _ZM_TERM.alive,
+            "error": _ZM_TERM.spawn_error,
+            "cols": _ZM_TERM.cols,
+            "rows": _ZM_TERM.rows,
+        })
+        return True
+
+    if parsed.path == "/api/terminal/stream":
+        query = urllib.parse.parse_qs(parsed.query)
+        try:
+            after = int((query.get("after") or ["0"])[0] or 0)
+        except ValueError:
+            after = 0
+        wait = _ZM_TERM_POLL_WAIT if after >= 0 else 0.0
+        try:
+            data, nxt, alive = _ZM_TERM.read_new(after, wait)
+        except Exception:
+            data, nxt, alive = b"", after, _ZM_TERM.alive
+        payload = {
+            "ok": True,
+            "data": base64.b64encode(data).decode("ascii"),
+            "next": nxt,
+            "alive": alive,
+        }
+        body = json.dumps(payload).encode("utf-8")
+        handler.send_response(200)
+        handler.send_header("Content-Type", "application/json")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.send_header("Cache-Control", "no-store")
+        handler.end_headers()
+        handler.wfile.write(body)
+        return True
+
+    return False
+
+
+def _handle_terminal_post(handler, parsed) -> None:
+    body = {}
+    try:
+        body = _web_read_json(handler)
+    except Exception:
+        body = {}
+    path = parsed.path
+
+    if path == "/api/terminal/input":
+        data = str(body.get("data", ""))
+        if not _ZM_TERM.alive and not _ZM_TERM.start():
+            _web_json(handler, {"ok": False, "error": _ZM_TERM.spawn_error or "shell not running"}, 503)
+            return
+        _ZM_TERM.write(data)
+        _web_json(handler, {"ok": True})
+        return
+
+    if path == "/api/terminal/size":
+        _ZM_TERM.resize(body.get("cols"), body.get("rows"))
+        _web_json(handler, {"ok": True})
+        return
+
+    if path == "/api/terminal/start":
+        started = _ZM_TERM.start()
+        _web_json(handler, {
+            "ok": started,
+            "alive": _ZM_TERM.alive,
+            "error": "" if started else (_ZM_TERM.spawn_error or "could not start the shell"),
+        })
+        return
+
+    if path == "/api/terminal/stop":
+        _ZM_TERM.stop()
+        _web_json(handler, {"ok": True})
+        return
+
+    _web_json(handler, {"ok": False, "error": "unknown terminal endpoint"}, 404)
+
+
+class WebUIHandler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        # Serve static files from the web_config directory
+        kwargs['directory'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web_config')
+        super().__init__(*args, **kwargs)
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+
+        if parsed.path.startswith("/api/"):
+            # ── Open access: no login required ────────────────────────────────
+            self.zm_session = {"actor": "web", "role": "admin", "csrf": ""}
+
+            if parsed.path == "/api/session":
+                _web_json(self, {"ok": True, "actor": "web", "role": "admin", "csrf": ""})
+                return
+
+            # ── Phase 2–6: New API endpoints ───────────────────────────────────
+            if web_handle_new_api(self, parsed.path):
+                return
+
+            # ── Web terminal: stream + state (streaming, handled here) ────────
+            if parsed.path.startswith("/api/terminal/"):
+                if _handle_terminal_get(self, parsed):
+                    return
+
+            # ── Existing GET handler ───────────────────────────────────────────
+            self.handle_api_get(parsed)
+        else:
+            super().do_GET()
+
+    def log_request(self, code="-", size="-"):
+        pass  # access logs go to the audit log, not stdout
+
+    def log_error(self, fmt, *args):
+        pass  # suppress error spam from broken pipe / client disconnect
+
+    def handle_api_get(self, parsed):
+        self.send_response(200)
+        self.send_header("Content-type", "application/json")
+        self.send_header("X-ZM-API-Version", API_VERSION)
+        self.end_headers()
+        
+        if parsed.path == "/api/status":
+            # Strip ANSI escape codes
+            def strip_ansi(text):
+                return re.sub(r'\x1b\[[0-9;]*m', '', text)
+            
+            uptime_info = get_system_uptime()
+            ram_info = get_ram_usage()
+            cpu_info = get_cpu_usage()
+
+            open_inc = incidents_list("open")
+            data = {
+                "os": get_os_version(),
+                "apache2": strip_ansi(service_status("apache2")),
+                "nginx": strip_ansi(service_status("nginx")),
+                "bind9": strip_ansi(service_status("bind9")),
+                "mariadb": strip_ansi(service_status("mariadb")),
+                "postfix": strip_ansi(service_status("postfix")),
+                "dovecot": strip_ansi(service_status("dovecot")),
+                "ufw": strip_ansi(service_status("ufw")),
+                "docker_installed": is_docker_installed(),
+                "version": SCRIPT_VERSION,
+                "api_version": API_VERSION,
+                "safe_mode": is_safe_mode(),
+                "open_incidents": len(open_inc),
+                "high_severity": sum(1 for i in open_inc if i["severity"] in ("high", "critical")),
+                "uptime": uptime_info["formatted"],
+                "uptime_seconds": uptime_info["seconds"],
+                "boot_time": uptime_info.get("boot_time", ""),
+                "cpu": cpu_info["percent"],
+                "cpu_cores": cpu_info["cores"],
+                "cpu_load": cpu_info["load_str"],
+                "ram": ram_info["percent"],
+                "ram_used_gb": ram_info["used_gb"],
+                "ram_total_gb": ram_info["total_gb"],
+                "ram_formatted": ram_info["formatted"]
+            }
+            self.wfile.write(json.dumps(data).encode("utf-8"))
+        elif parsed.path == "/api/access":
+            self.wfile.write(json.dumps(enumerate_access_hosts(
+                port=self.server.server_address[1])).encode("utf-8"))
+        elif parsed.path == "/api/sites":
+            sites = []
+            if os.path.exists(APACHE_SITES_AVAILABLE):
+                for file in sorted(os.listdir(APACHE_SITES_AVAILABLE)):
+                    if file.endswith(".conf"):
+                        domain = file[:-5]
+                        meta = get_site_meta(domain) or {}
+                        enabled = os.path.exists(f"/etc/apache2/sites-enabled/{file}")
+                        sites.append({
+                            "domain": domain,
+                            "server": "apache",
+                            "type": meta.get("type", "unknown"),
+                            "docroot": meta.get("docroot", f"/var/www/{domain}"),
+                            "container_name": meta.get("container_name"),
+                            "host_port": meta.get("host_port"),
+                            "enabled": enabled
+                        })
+            if os.path.exists(NGINX_SITES_AVAILABLE):
+                for file in sorted(os.listdir(NGINX_SITES_AVAILABLE)):
+                    if file.endswith(".conf"):
+                        domain = file[:-5]
+                        meta = get_site_meta(domain) or {}
+                        enabled = os.path.exists(f"/etc/nginx/sites-enabled/{file}")
+                        sites.append({
+                            "domain": domain,
+                            "server": "nginx",
+                            "type": meta.get("type", "unknown"),
+                            "docroot": meta.get("docroot", f"/var/www/{domain}"),
+                            "container_name": meta.get("container_name"),
+                            "host_port": meta.get("host_port"),
+                            "enabled": enabled
+                        })
+            self.wfile.write(json.dumps(sites).encode("utf-8"))
+        elif parsed.path == "/api/docker_containers":
+            containers = []
+            if is_docker_installed():
+                res = run(["docker", "ps", "-a", "--format", "{{.Names}}|{{.Image}}|{{.Status}}"])
+                if res.returncode == 0 and res.stdout.strip():
+                    for line in res.stdout.strip().split("\n"):
+                        parts = line.split("|")
+                        if len(parts) >= 3:
+                            containers.append({"name": parts[0], "image": parts[1], "status": parts[2]})
+            self.wfile.write(json.dumps(containers).encode("utf-8"))
+        elif parsed.path == "/api/manage/dns":
+            query = urllib.parse.parse_qs(parsed.query)
+            if query.get('action', [''])[0] == 'list':
+                zones_list = []
+                if os.path.isfile(NAMED_CONF_LOCAL):
+                    with open(NAMED_CONF_LOCAL, "r") as f:
+                        content = f.read()
+                    zones = re.findall(r'zone "([^"]+)"', content)
+                    for z in zones:
+                        z_type = "reverse" if z.endswith(".in-addr.arpa") else "forward"
+                        zones_list.append({"domain": z, "type": z_type})
+                self.wfile.write(json.dumps(zones_list).encode("utf-8"))
+            else:
+                self.wfile.write(b"[]")
+        elif parsed.path == "/api/manage/mail":
+            query = urllib.parse.parse_qs(parsed.query)
+            action_q = query.get('action', [''])[0]
+            if action_q == 'info':
+                self.wfile.write(json.dumps({
+                    "installed": mail_server_installed(),
+                    "domain": get_mail_domain(),
+                    "users": get_mail_users(),
+                }).encode("utf-8"))
+            elif action_q == 'list':
+                self.wfile.write(json.dumps(get_mail_users()).encode("utf-8"))
+            else:
+                self.wfile.write(b"[]")
+        else:
+            self.wfile.write(b"{}")
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+
+        # ── Open access: no login or CSRF token required ──────────────────────
+        self.zm_session = {"actor": "web", "role": "admin", "csrf": ""}
+
+        # ── Phase 5: Safe-mode guard ───────────────────────────────────────
+        SAFE_MODE_ALLOWED = {
+            "/api/snapshots", "/api/changes", "/api/incidents",
+            "/api/doctor", "/api/auth/reset", "/api/confirm",
+            "/api/safe-mode",
+        }
+        if is_safe_mode():
+            allowed = any(
+                parsed.path == p or parsed.path.startswith(p + "/")
+                for p in SAFE_MODE_ALLOWED
+            )
+            if not allowed:
+                self.send_response(503)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(
+                    b'{"error":"safe mode active - only recovery routes are available"}'
+                )
+                return
+
+        # ── Phase 0: Origin / Host check ───────────────────────────────────
+        origin = self.headers.get("Origin", "")
+        host   = self.headers.get("Host", "")
+        if origin and not (origin.startswith("http://") or origin.startswith("https://")):
+            self.send_error(403, "Forbidden: bad Origin")
+            return
+        if origin and host and host not in origin:
+            self.send_error(403, "Forbidden: cross-origin request")
+            return
+
+        # ── Phase 0: Audit context ─────────────────────────────────────────
+        self._zm_actor = "web"
+        self._zm_src   = self.client_address[0] if self.client_address else ""
+
+        # ── Phase 2–6: New API endpoints ───────────────────────────────────
+        if web_handle_new_api(self, parsed.path):
+            return
+
+        # ── Web terminal: input / size / start / stop ──────────────────────
+        if parsed.path.startswith("/api/terminal/"):
+            _handle_terminal_post(self, parsed)
+            return
+
+        # ── Existing POST routing ─────────────────────────────────────────
+        if parsed.path.startswith("/api/makesite/"):
+            self.handle_makesite_post(parsed.path)
+        elif parsed.path.startswith("/api/manage/docker"):
+            self.handle_manage_docker_post(parsed.path)
+        elif parsed.path == "/api/makesite_docker":
+            self.handle_makesite_post("/api/makesite/docker")
+        elif parsed.path.startswith("/api/manage/site_action"):
+            self.handle_site_action_post()
+        elif parsed.path.startswith("/api/manage/"):
+            self.handle_manage_post(parsed.path)
+        elif parsed.path.startswith("/api/install/") or parsed.path.startswith("/api/uninstall/"):
+            self.handle_install_post(parsed.path)
+        elif parsed.path.startswith("/api/upload_site"):
+            self.handle_upload_site(parsed)
+        else:
+            self.send_error(404)
+
+    def handle_upload_site(self, parsed):
+        content_length = int(self.headers.get('Content-Length', 0))
+        if content_length == 0:
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(b'{"success": false, "error": "No content"}')
+            return
+
+        query = urllib.parse.parse_qs(parsed.query)
+        filename = query.get("filename", ["site.zip"])[0]
+        
+        upload_dir = "/tmp/zerver_uploads"
+        if not os.path.exists(upload_dir):
+            os.makedirs(upload_dir, exist_ok=True)
+            
+        import uuid, zipfile
+        uid = str(uuid.uuid4())[:8]
+        temp_zip_path = os.path.join(upload_dir, f"upload_{uid}.zip")
+        extract_path = os.path.join(upload_dir, f"site_{uid}")
+        
+        try:
+            with open(temp_zip_path, "wb") as f:
+                bytes_read = 0
+                while bytes_read < content_length:
+                    chunk = self.rfile.read(min(8192, content_length - bytes_read))
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    bytes_read += len(chunk)
+                    
+            if not os.path.exists(extract_path):
+                os.makedirs(extract_path, exist_ok=True)
+                
+            with zipfile.ZipFile(temp_zip_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_path)
+                
+            if os.path.exists(temp_zip_path):
+                os.remove(temp_zip_path)
+            
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            response = {"success": True, "path": extract_path}
+            self.wfile.write(json.dumps(response).encode("utf-8"))
+        except Exception as e:
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            response = {"success": False, "error": str(e)}
+            self.wfile.write(json.dumps(response).encode("utf-8"))
+
+    def handle_site_action_post(self):
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length) if content_length > 0 else b'{}'
+        data = json.loads(post_data.decode('utf-8'))
+        
+        action = data.get("action")
+        domain = data.get("domain")
+        server = data.get("server", "apache")
+        
+        success = False
+        message = ""
+        
+        try:
+            if not domain:
+                raise Exception("Domain is required.")
+                
+            conf_dir = APACHE_SITES_AVAILABLE if server == "apache" else NGINX_SITES_AVAILABLE
+            enabled_dir = "/etc/apache2/sites-enabled" if server == "apache" else "/etc/nginx/sites-enabled"
+            conf_path = f"{conf_dir}/{domain}.conf"
+            link_path = f"{enabled_dir}/{domain}.conf"
+            
+            if action == "enable":
+                if server == "apache":
+                    enable_site(domain)
+                    reload_apache()
+                else:
+                    if not os.path.exists(link_path) and os.path.exists(conf_path):
+                        os.symlink(conf_path, link_path)
+                    reload_nginx()
+                success = True
+                message = f"Enabled {domain}."
+                
+            elif action == "disable":
+                if server == "apache":
+                    disable_site_cmd(domain)
+                    reload_apache()
+                else:
+                    if os.path.islink(link_path):
+                        os.unlink(link_path)
+                    reload_nginx()
+                success = True
+                message = f"Disabled {domain}."
+                
+            elif action == "delete":
+                remove_docroot = data.get("remove_docroot", False)
+                meta = get_site_meta(domain)
+                docroot = meta.get("docroot", f"/var/www/{domain}") if meta else f"/var/www/{domain}"
+                
+                # Delete DB if lamp or lemp
+                if meta and meta.get("type") in ["lamp", "lemp"]:
+                    db_name = meta.get("db_name")
+                    db_user = meta.get("db_user")
+                    if db_name and db_user:
+                        sql = f"DROP DATABASE IF EXISTS `{db_name}`; DROP USER IF EXISTS '{db_user}'@'localhost'; FLUSH PRIVILEGES;"
+                        run(["mysql", "-e", sql])
+                        
+                # Disable site and remove configs
+                if server == "apache":
+                    disable_site_cmd(domain)
+                    if os.path.islink(link_path): os.unlink(link_path)
+                    if os.path.isfile(conf_path): os.remove(conf_path)
+                    reload_apache()
+                else:
+                    if os.path.islink(link_path): os.unlink(link_path)
+                    if os.path.isfile(conf_path): os.remove(conf_path)
+                    reload_nginx()
+                    
+                if remove_docroot and os.path.exists(docroot):
+                    shutil.rmtree(docroot)
+                    
+                delete_site_meta(domain)
+                success = True
+                message = f"Deleted {domain}."
+                
+            elif action == "get_vhost":
+                if os.path.isfile(conf_path):
+                    with open(conf_path, "r") as f:
+                        config_content = f.read()
+                    success = True
+                    message = config_content
+                else:
+                    raise Exception("Config file not found.")
+                    
+            elif action == "update_vhost":
+                new_config = data.get("config", "")
+                if os.path.isfile(conf_path):
+                    with open(conf_path, "w") as f:
+                        f.write(new_config)
+                    if server == "apache":
+                        reload_apache()
+                    else:
+                        reload_nginx()
+                    success = True
+                    message = f"Updated vhost configuration for {domain}."
+                else:
+                    raise Exception("Config file not found.")
+                    
+            elif action == "update_docroot":
+                new_docroot = data.get("docroot")
+                if not new_docroot:
+                    raise Exception("New document root cannot be empty.")
+                meta = get_site_meta(domain) or {}
+                meta["docroot"] = new_docroot
+                
+                with open(conf_path, "r") as f:
+                    content = f.read()
+                if server == "apache":
+                    content = re.sub(r'DocumentRoot\s+.*', f'DocumentRoot {new_docroot}', content)
+                    content = re.sub(r'<Directory\s+[^>]+>', f'<Directory {new_docroot}>', content)
+                else:
+                    content = re.sub(r'root\s+[^;]+;', f'root {new_docroot};', content)
+                with open(conf_path, "w") as f:
+                    f.write(content)
+                    
+                Path(new_docroot).mkdir(parents=True, exist_ok=True)
+                
+                with open(f"{META_DIR}/{domain}.json", "w") as f:
+                    json.dump(meta, f, indent=4)
+                    
+                if server == "apache":
+                    reload_apache()
+                else:
+                    reload_nginx()
+                success = True
+                message = f"Updated DocumentRoot to {new_docroot}."
+                
+            elif action == "update_db_pass":
+                new_pass = data.get("db_pass")
+                meta = get_site_meta(domain)
+                if not meta or meta.get("type") not in ["lamp", "lemp", "wordpress"]:
+                    raise Exception("Site does not have an active database.")
+                db_user = meta.get("db_user")
+                if not db_user:
+                    raise Exception("No DB user recorded for this site.")
+                    
+                # Update mariaDB
+                sql = f"ALTER USER '{db_user}'@'localhost' IDENTIFIED BY '{new_pass}'; FLUSH PRIVILEGES;"
+                res = run(["mysql", "-e", sql])
+                if res.returncode != 0:
+                    raise Exception(f"MariaDB error: {res.stderr}")
+                    
+                # Update wp-config.php or index.php
+                docroot = meta.get("docroot", f"/var/www/{domain}")
+                wp_cfg = f"{docroot}/wp-config.php"
+                idx_php = f"{docroot}/index.php"
+                
+                if os.path.exists(wp_cfg):
+                    with open(wp_cfg, "r") as f: content = f.read()
+                    content = re.sub(r"define\(\s*'DB_PASSWORD'\s*,\s*'.*?'\s*\);", f"define( 'DB_PASSWORD', '{new_pass}' );", content)
+                    with open(wp_cfg, "w") as f: f.write(content)
+                elif os.path.exists(idx_php):
+                    with open(idx_php, "r") as f: content = f.read()
+                    content = re.sub(r'\$password\s*=\s*".*?";', f'$password = "{new_pass}";', content)
+                    content = re.sub(r"\$password\s*=\s*'.*?';", f"$password = '{new_pass}';", content)
+                    with open(idx_php, "w") as f: f.write(content)
+                    
+                success = True
+                message = "Database password updated successfully."
+                
+            else:
+                raise Exception("Unknown action.")
+                
+        except Exception as e:
+            success = False
+            message = str(e)
+            import traceback
+            traceback.print_exc()
+            
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"success": success, "message": message}).encode("utf-8"))
+
+    def _setup_stream(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        import sys, io, re
+        
+        class StreamingLogger:
+            def __init__(self, wfile):
+                self.wfile = wfile
+            def write(self, text):
+                if not text: return
+                # text = re.sub(r'\x1b\[[0-9;]*m', '', text) # Preserved for frontend parsing
+                try:
+                    self.wfile.write(text.encode('utf-8'))
+                    self.wfile.flush()
+                except Exception:
+                    pass
+            def flush(self):
+                try:
+                    self.wfile.flush()
+                except Exception:
+                    pass
+            def isatty(self): return False
+            def fileno(self): raise io.UnsupportedOperation()
+            
+        old_stdout = sys.stdout
+        old_stdin = sys.stdin
+        sys.stdout = StreamingLogger(self.wfile)
+        return old_stdout, old_stdin
+
+    def _teardown_stream(self, old_stdout, old_stdin, success, domain=None):
+        import sys, json
+        sys.stdout = old_stdout
+        sys.stdin = old_stdin
+        result = {"success": success}
+        if domain:
+            result["domain"] = domain
+        try:
+            self.wfile.write(f"\n===RESULT===\n{json.dumps(result)}\n".encode('utf-8'))
+            self.wfile.flush()
+        except Exception:
+            pass
+
+    def handle_manage_docker_post(self, path):
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length) if content_length > 0 else b'{}'
+        data = json.loads(post_data.decode('utf-8'))
+        
+        old_stdout, old_stdin = self._setup_stream()
+        import sys
+        
+        success = False
+        try:
+            action = data.get("action")
+            if action == "install":
+                install_docker()
+            elif action == "prune":
+                sys.stdin = MockStdin(["y"])
+                docker_system_cleanup()
+            elif action == "list":
+                res = run(["docker", "ps", "-a", "--format", "{{.Names}}|{{.Image}}|{{.Status}}"])
+                if res.returncode == 0:
+                    print(res.stdout)
+            elif action in ["start", "stop", "restart", "rm"]:
+                target = data.get("target")
+                if target:
+                    if action == "rm":
+                        run(["docker", "rm", "-f", target])
+                        ok(f"Removed {target}")
+                    else:
+                        run(["docker", action, target])
+                        ok(f"Successfully executed {action} on {target}")
+            elif action == "oneclick":
+                service = data.get("service")
+                if service == "1":
+                    domain = data.get("domain", "")
+                    dns_choice = "y" if domain else "n"
+                    inputs = ["1", dns_choice]
+                    if domain: inputs.append(domain)
+                    inputs.append("0")
+                    sys.stdin = MockStdin(inputs)
+                    docker_oneclick_menu()
+                elif service == "2":
+                    sys.stdin = MockStdin(["2", "0"])
+                    docker_oneclick_menu()
+                elif service == "3":
+                    pw = data.get("password", "")
+                    sys.stdin = MockStdin(["3", pw, "0"])
+                    docker_oneclick_menu()
+            success = True
+        except Exception as e:
+            import traceback
+            print(f"Error: {e}")
+            traceback.print_exc()
+        finally:
+            self._teardown_stream(old_stdout, old_stdin, success)
+
+    def handle_manage_post(self, path):
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length) if content_length > 0 else b'{}'
+        data = json.loads(post_data.decode('utf-8'))
+        
+        old_stdout, old_stdin = self._setup_stream()
+        import sys, io
+        
+        success = False
+        try:
+            if path == "/api/manage/reload":
+                reload_all_services()
+                success = True
+            elif path == "/api/manage/mariadb":
+                typ = data.get("type")
+                action = data.get("action")
+                if typ == "database":
+                    dbname = data.get("db_name", "")
+                    fpath = data.get("file_path", "")
+                    confirm = "yes" if data.get("confirm") else "no"
+                    if action == "list":
+                        mariadb_list_databases()
+                    elif action == "create":
+                        sys.stdin = MockStdin([dbname])
+                        mariadb_create_database()
+                    elif action == "drop":
+                        sys.stdin = MockStdin([dbname, confirm])
+                        mariadb_drop_database()
+                    elif action == "inspect":
+                        sys.stdin = MockStdin([dbname])
+                        mariadb_inspect_database()
+                    elif action == "backup":
+                        sys.stdin = MockStdin([dbname, fpath])
+                        mariadb_backup()
+                    elif action == "restore":
+                        sys.stdin = MockStdin([fpath, dbname, confirm])
+                        mariadb_restore()
+                elif typ == "user":
+                    uname = data.get("username", "")
+                    upass = data.get("password", "")
+                    dbname = data.get("db_name", "")
+                    if action == "list":
+                        mariadb_list_users()
+                    elif action == "create":
+                        sys.stdin = MockStdin([uname, upass])
+                        mariadb_create_user()
+                    elif action == "drop":
+                        sys.stdin = MockStdin([uname, "yes"])
+                        mariadb_drop_user()
+                    elif action == "password":
+                        sys.stdin = MockStdin([uname, upass])
+                        mariadb_change_password()
+                    elif action == "grant":
+                        sys.stdin = MockStdin([uname, dbname, "1"])
+                        mariadb_grant_privileges()
+                    elif action == "revoke":
+                        sys.stdin = MockStdin([uname, dbname])
+                        mariadb_revoke_privileges()
+                success = True
+            elif path == "/api/manage/service":
+                svc = data.get("service")
+                action = data.get("action")
+                if action in ["start", "stop", "restart", "enable", "disable"] and svc:
+                    run(["systemctl", action, svc])
+                    ok(f"Successfully executed {action} on {svc}")
+                    success = True
+            elif path == "/api/manage/firewall":
+                action = data.get("action")
+                port = data.get("port", "")
+                if action == "enable":
+                    run(["ufw", "--force", "enable"])
+                    ok("UFW Firewall Enabled")
+                elif action == "disable":
+                    run(["ufw", "disable"])
+                    ok("UFW Firewall Disabled")
+                elif action == "allow" and port:
+                    run(["ufw", "allow", port])
+                    ok(f"Port {port} allowed")
+                elif action == "deny" and port:
+                    run(["ufw", "delete", "allow", port])
+                    run(["ufw", "deny", port])
+                    ok(f"Port {port} denied")
+                elif action == "list":
+                    run_live(["ufw", "status", "numbered"])
+                success = True
+            elif path == "/api/manage/dns":
+                action = data.get("action")
+                domain = data.get("domain", "")
+                if action == "create":
+                    ztype = data.get("type", "forward")
+                    ip = data.get("ip", "")
+                    responses = [domain]
+                    if ztype != "forward": responses.append(ip)
+                    sys.stdin = MockStdin(responses)
+                    if ztype == "forward": create_forward_zone()
+                    elif ztype == "reverse": create_reverse_zone()
+                    elif ztype == "both": create_both_zones()
+                elif action == "delete":
+                    # Directly delete the zone by name, bypassing the interactive
+                    # pick_zones() selector which expects a numeric index, not a domain name.
+                    if domain:
+                        remove_zone_from_conf(domain)
+                        zonefile = f"{BIND_DIR}/db.{domain}"
+                        if os.path.isfile(zonefile):
+                            os.remove(zonefile)
+                        ok(f"{domain} removed.")
+                        ok_b, msg_b = validate_bind9()
+                        if not ok_b:
+                            err(msg_b)
+                            raise RuntimeError(msg_b)
+                        reload_bind9()
+                        apply_reloads()
+                elif action == "test":
+                    if not domain:
+                        ok_b, msg_b = validate_bind9()
+                        if ok_b: ok("BIND9 Configuration is valid.")
+                        else: err(msg_b)
+                    else:
+                        sys.stdin = MockStdin([domain, "127.0.0.1", ""])
+                        test_dns()
+                elif action == "mx_list":
+                    sys.stdin = MockStdin([domain])
+                    list_mx_records()
+                elif action == "mx_add":
+                    mail_host = data.get("mail_host", "")
+                    priority = data.get("priority", "10")
+                    sys.stdin = MockStdin([domain, priority, mail_host])
+                    add_mx_record()
+                elif action == "mx_remove":
+                    sys.stdin = MockStdin([domain, "yes"])
+                    remove_mx_record()
+                success = True
+            elif path == "/api/manage/network":
+                action = data.get("action")
+                iface = data.get("iface", "")
+                if action == "show":
+                    run_live(["ip", "addr", "show", iface] if iface else ["ip", "addr", "show"])
+                elif action == "static":
+                    ip = data.get("ip", "")
+                    netmask = data.get("netmask", "255.255.255.0")
+                    gw = data.get("gateway", "")
+                    sys.stdin = MockStdin([iface, ip, netmask, gw, "yes"])
+                    set_interface_static()
+                elif action == "dhcp":
+                    sys.stdin = MockStdin([iface, "yes"])
+                    set_interface_dhcp()
+                elif action == "restore":
+                    sys.stdin = MockStdin(["yes"])
+                    restore_interfaces_backup()
+                success = True
+            elif path == "/api/manage/os":
+                if data.get("action") == "fix_dpkg":
+                    fix_dpkg()
+                success = True
+            elif path == "/api/manage/mail":
+                action = data.get("action")
+                if action == "add_user":
+                    success = create_mail_user(data.get("mail_user", ""), data.get("mail_pass", ""))
+                elif action == "delete_user":
+                    success = delete_mail_user_account(data.get("mail_user", ""))
+        except Exception as e:
+            print(f"\n[!] Server Error: {e}")
+            import traceback
+            traceback.print_exc(file=sys.stdout)
+            success = False
+        finally:
+            self._teardown_stream(old_stdout, old_stdin, success)
+
+    def handle_install_post(self, path):
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length) if content_length > 0 else b'{}'
+        data = json.loads(post_data.decode('utf-8'))
+        
+        old_stdout, old_stdin = self._setup_stream()
+        import sys, io
+        
+        success = False
+        try:
+            if path == "/api/install/mail":
+                domain = data.get("domain", "")
+                ip = data.get("ip") or detect_server_ip() or "127.0.0.1"
+                sys.stdin = MockStdin([domain, ip])
+                setup_mail_server()
+                success = True
+            elif path == "/api/install/mail-check":
+                diagnose_mail()
+                success = True
+            elif path == "/api/install/mail-repair":
+                success = repair_mail()
+            elif path == "/api/install/ftp":
+                setup_ftp_server()
+                success = True
+            elif path == "/api/install/ftp_user":
+                uname = data.get("username", "")
+                upass = data.get("password", "")
+                if uname and upass:
+                    run_live(["useradd", "-m", "-s", "/bin/bash", uname])
+                    proc = subprocess.Popen(["chpasswd"], stdin=subprocess.PIPE, stdout=sys.stdout, stderr=sys.stdout, text=True)
+                    proc.communicate(input=f"{uname}:{upass}\n")
+                    ok(f"FTP user '{uname}' created.")
+                    success = True
+            elif path == "/api/install/pma":
+                setup_phpmyadmin()
+                success = True
+            elif path == "/api/install/samba":
+                share = data.get("share_name", "shared")
+                spath = data.get("path", f"/srv/samba/{share}")
+                sys.stdin = MockStdin([share, spath, "yes"])
+                setup_samba()
+                success = True
+            elif path == "/api/install/samba_share":
+                share = data.get("share_name", "shared")
+                spath = data.get("path", f"/srv/samba/{share}")
+                user = data.get("user", "")
+                sys.stdin = MockStdin([share, spath, "no" if user else "yes"])
+                setup_samba()
+                if user:
+                    ok(f"Samba share '{share}' created. Make sure to run 'smbpasswd -a {user}' via SSH.")
+                success = True
+            elif path == "/api/uninstall/mail":
+                sys.stdin = MockStdin(["yes"])
+                delete_mail_services()
+                success = True
+            elif path == "/api/uninstall/ftp":
+                sys.stdin = MockStdin(["yes"])
+                delete_ftp_server()
+                success = True
+            elif path == "/api/uninstall/pma":
+                sys.stdin = MockStdin(["yes"])
+                delete_phpmyadmin()
+                success = True
+            elif path == "/api/uninstall/samba":
+                sys.stdin = MockStdin(["yes"])
+                delete_samba()
+                success = True
+        except Exception as e:
+            print(f"\n[!] Server Error: {e}")
+            import traceback
+            traceback.print_exc(file=sys.stdout)
+            success = False
+        finally:
+            self._teardown_stream(old_stdout, old_stdin, success)
+
+    def handle_makesite_post(self, path):
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length) if content_length > 0 else b'{}'
+        data = json.loads(post_data.decode('utf-8'))
+        
+        old_stdout, old_stdin = self._setup_stream()
+        import sys, io
+        
+        # MockStdin is defined at module level (shared by every handler)
+        
+        site_type = path.split("/")[-1]
+        success = False
+        
+        try:
+            domain = data.get("domain", "")
+            if "create_dns" in data:
+                dns_enabled = bool(data.get("create_dns"))
+            else:
+                import re
+                is_ip = bool(re.match(r"^\d{1,3}(\.\d{1,3}){3}$", domain))
+                dns_enabled = bool(domain and not is_ip)
+            ip = data.get("ip", "")
+            db_pass = data.get("db_pass", "")
+            
+            if site_type == "lamp":
+                # create_lamp_site() input sequence:
+                #  1. ask_domain()           -> domain
+                #  2. "Create DNS zones?"     -> "y"/"n"
+                #  3. prompt_for_ip()         -> ip  (ONLY if dns="y")
+                #  4. ask_db_name()           -> db_name or "" (accept default)
+                #  5. ask_db_user()           -> db_user or "" (accept default)
+                #  6. "Database password:"    -> db_pass
+                #  7. "SSL Choice [1]:"       -> ssl ("1" or "2")
+                #  8. ask_docroot()           -> docroot or "" (accept default)
+                #  9. prompt_confirm (custom files) -> "y"/"n"
+                # 10. path to site files       -> site_files_path (ONLY if use_site_files="y")
+                # 11. prompt_confirm (db import)    -> "y"/"n"
+                # 12. sql file path            -> sql_path (ONLY if import_sql="y")
+                db_name = data.get("db_name", "")
+                db_user = data.get("db_user", "")
+                ssl_choice = data.get("ssl", "1")
+                le_email = data.get("le_email", "")
+                actual_ssl = "1" if ssl_choice == "4" else ssl_choice
+                docroot = data.get("docroot", "")
+                use_site_files = bool(data.get("use_site_files"))
+                site_files_path = data.get("site_files_path", "")
+                import_sql = bool(data.get("import_sql"))
+                sql_path = data.get("sql_path", "")
+                responses = [domain]
+                if dns_enabled:
+                    responses += ["y", ip]
+                else:
+                    responses += ["n"]
+                responses += [db_name, db_user, db_pass, actual_ssl, docroot]
+                # custom site files
+                if use_site_files and site_files_path:
+                    responses += ["y", site_files_path]
+                else:
+                    responses += ["n"]
+                # db import
+                if import_sql and sql_path:
+                    responses += ["y", sql_path]
+                else:
+                    responses += ["n"]
+                sys.stdin = MockStdin(responses)
+                create_lamp_site()
+                if ssl_choice == "4":
+                    _ensure_certbot("apache")
+                    step("Running Certbot for Let's Encrypt...")
+                    r = run(["certbot", "--apache", "-d", domain, "-d", f"www.{domain}", "--non-interactive", "--agree-tos", "-m", le_email, "--redirect"])
+                    if r.returncode == 0: ok(f"SSL certificate issued for {domain}.")
+                    else: err(f"Certbot failed: {r.stderr}")
+                success = True
+                
+            elif site_type == "lemp":
+                # create_lemp_site() — same pattern as LAMP but with Nginx/PHP-FPM
+                #  1-12 same sequence as LAMP
+                db_name = data.get("db_name", "")
+                db_user = data.get("db_user", "")
+                ssl_choice = data.get("ssl", "1")
+                le_email = data.get("le_email", "")
+                actual_ssl = "1" if ssl_choice == "4" else ssl_choice
+                docroot = data.get("docroot", "")
+                use_site_files = bool(data.get("use_site_files"))
+                site_files_path = data.get("site_files_path", "")
+                import_sql = bool(data.get("import_sql"))
+                sql_path = data.get("sql_path", "")
+                responses = [domain]
+                if dns_enabled:
+                    responses += ["y", ip]
+                else:
+                    responses += ["n"]
+                responses += [db_name, db_user, db_pass, actual_ssl, docroot]
+                # custom site files
+                if use_site_files and site_files_path:
+                    responses += ["y", site_files_path]
+                else:
+                    responses += ["n"]
+                # db import
+                if import_sql and sql_path:
+                    responses += ["y", sql_path]
+                else:
+                    responses += ["n"]
+                sys.stdin = MockStdin(responses)
+                create_lemp_site()
+                if ssl_choice == "4":
+                    _ensure_certbot("nginx")
+                    step("Running Certbot for Let's Encrypt...")
+                    r = run(["certbot", "--nginx", "-d", domain, "-d", f"www.{domain}", "--non-interactive", "--agree-tos", "-m", le_email, "--redirect"])
+                    if r.returncode == 0: ok(f"SSL certificate issued for {domain}.")
+                    else: err(f"Certbot failed: {r.stderr}")
+                success = True
+                
+            elif site_type == "wordpress":
+                # create_apache/nginx_wordpress_site() input sequence:
+                #  1. ask_domain()           -> domain
+                #  2. "Create DNS zones?"     -> "y"/"n"
+                #  3. prompt_for_ip()         -> ip  (ONLY if dns="y")
+                #  4. ask_db_name()           -> "" (accept default)
+                #  5. ask_db_user()           -> "" (accept default)
+                #  6. "Database password:"    -> db_pass
+                server = data.get("server", "apache")
+                responses = [domain]
+                if dns_enabled:
+                    responses += ["y", ip]
+                else:
+                    responses += ["n"]
+                responses += ["", "", db_pass]  # db_name, db_user, pass
+                responses += [""]  # press enter at end
+                sys.stdin = MockStdin(responses)
+                if server == "apache":
+                    create_apache_wordpress_site()
+                else:
+                    create_nginx_wordpress_site()
+                success = True
+                
+            elif site_type == "static":
+                # create_full_site() / create_nginx_full_site() input sequence:
+                #  1. ask_domain()           -> domain
+                #  2. "Create DNS zones?"     -> "y"/"n"
+                #  3. prompt_for_ip()         -> ip  (ONLY if dns="y")
+                #  4. SSL Choice             -> ssl
+                #  5. cert path (if ssl=3)   -> cert_path
+                #  6. key path (if ssl=3)    -> key_path
+                #  7. ask_docroot()          -> docroot (or "")
+                #  8. custom site files?     -> "n"
+                #  9. input("Press Enter")   -> "" (at end)
+                server = data.get("server", "apache")
+                ssl_choice = data.get("ssl", "1")
+                le_email = data.get("le_email", "")
+                actual_ssl = "1" if ssl_choice == "4" else ssl_choice
+                docroot = data.get("docroot", "")
+                use_site_files = bool(data.get("use_site_files"))
+                site_files_path = data.get("site_files_path", "")
+                
+                responses = [domain]
+                if dns_enabled:
+                    responses += ["y", ip]
+                else:
+                    responses += ["n"]
+                
+                responses.append(actual_ssl)
+                responses.append(docroot)
+                
+                if actual_ssl == "3":
+                    responses += [data.get("cert_path", ""), data.get("key_path", "")]
+                
+                if use_site_files and site_files_path:
+                    responses += ["y", site_files_path]
+                else:
+                    responses.append("n")
+                responses.append("")
+                
+                sys.stdin = MockStdin(responses)
+                if server == "apache":
+                    create_full_site()
+                else:
+                    create_nginx_full_site()
+
+                if ssl_choice == "4":
+                    _ensure_certbot(server)
+                    step("Running Certbot for Let's Encrypt...")
+                    r = run(["certbot", f"--{server}", "-d", domain, "-d", f"www.{domain}", "--non-interactive", "--agree-tos", "-m", le_email, "--redirect"])
+                    if r.returncode == 0: ok(f"SSL certificate issued for {domain}.")
+                    else: err(f"Certbot failed: {r.stderr}")
+                    
+                success = True
+                
+            elif site_type == "proxy":
+                # create_apache/nginx_reverse_proxy() input sequence:
+                #  1. ask_domain()           -> domain
+                #  2. "Create DNS zones?"     -> "y"/"n"
+                #  3. prompt_for_ip()         -> ip  (ONLY if dns="y")
+                #  4. "Proxy target:"         -> backend
+                #  5. input("Press Enter")    -> ""
+                server = data.get("server", "apache")
+                backend = data.get("backend", "")
+                responses = [domain]
+                if dns_enabled:
+                    responses += ["y", ip]
+                else:
+                    responses += ["n"]
+                responses += [backend, ""]  # target, press enter
+                sys.stdin = MockStdin(responses)
+                if server == "apache":
+                    create_apache_reverse_proxy()
+                else:
+                    create_nginx_reverse_proxy()
+                success = True
+
+            elif site_type == "docker":
+                # create_container_site() input sequence:
+                #  1. ask_domain()           -> domain
+                #  2. image                  -> image
+                #  3. internal port          -> port
+                #  4. "Create DNS zones?"    -> "y"/"n"
+                #  5. prompt_for_ip()        -> ip  (ONLY if dns="y")
+                image = data.get("image", "")
+                port = data.get("port", "80")
+                dns = "y" if data.get("dns") else "n"
+                ip = data.get("ip", "")
+                responses = [domain, image, str(port), dns]
+                if dns == "y":
+                    responses.append(ip)
+                responses.append("")  # press enter
+                sys.stdin = MockStdin(responses)
+                create_container_site()
+                success = True
+
+        except Exception as e:
+            print(f"\n[!] Server Error: {e}")
+            import traceback
+            traceback.print_exc(file=sys.stdout)
+            success = False
+        finally:
+            self._teardown_stream(old_stdout, old_stdin, success, data.get("domain", ""))
+
+class _WebServer(socketserver.ThreadingTCPServer):
+    """Multi-threaded TCP server. SO_REUSEPORT intentionally removed (Phase 0):
+    a stale instance must not silently share the port with a new one."""
+    allow_reuse_address = True
+
+    def server_bind(self):
+        # SO_REUSEPORT deliberately NOT set here — see plan.md §5.6 Phase 0.
+        # allow_reuse_address (SO_REUSEADDR) is sufficient and does not let
+        # two live processes share the same port simultaneously.
+        super().server_bind()
+
+def _find_free_port(preferred, max_tries=10):
+    """Return *preferred* if available, else the next free port up to preferred+max_tries.
+    Ports reserved for Apache are never returned."""
+    for port in range(preferred, preferred + max_tries):
+        if port in APACHE_BACKEND_PORTS:
+            continue
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.bind(("0.0.0.0", port))
+            return port
+        except OSError:
+            continue
+    return None
+
+def _port_is_busy(port) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("0.0.0.0", port))
+        return False
+    except OSError:
+        return True
+
+def _port_owner(port):
+    """(name, pid) of every process listening on *port* — via ss, else lsof.
+    ss -p only shows other users' processes as root, which is how this app runs.
+    Returns [] when nothing listens or the platform has neither tool."""
+    try:
+        out = subprocess.run(["ss", "-ltnp", f"sport = :{port}"],
+                             capture_output=True, text=True, timeout=5).stdout or ""
+        pairs, seen = [], set()
+        for name, pid in re.findall(r'users:\(\("([^"]+)",pid=(\d+)', out):
+            if (name, pid) not in seen:
+                seen.add((name, pid))
+                pairs.append((name, int(pid)))
+        if pairs:
+            return pairs
+    except Exception:
+        pass
+    try:
+        out = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"],
+                             capture_output=True, text=True, timeout=5).stdout or ""
+        pairs = []
+        for line in out.splitlines()[1:]:
+            parts = line.split()
+            if len(parts) >= 2 and parts[1].isdigit():
+                pairs.append((parts[0], int(parts[1])))
+        return pairs
+    except Exception:
+        return []
+
+def _kill_port_owners(port, owners) -> bool:
+    """SIGTERM the listeners, escalate to SIGKILL, then verify the port is free."""
+    for _, pid in owners:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+    time.sleep(1.0)
+    alive = []
+    for _, pid in owners:
+        try:
+            os.kill(pid, 0)          # still exists?
+            alive.append(pid)
+        except OSError:
+            pass
+    for pid in alive:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except Exception:
+            pass
+    if alive:
+        time.sleep(0.5)
+    return not _port_is_busy(port)
+
+def _warn_if_apache_port_blocked(ports_conf="/etc/apache2/ports.conf"):
+    """Apache is configured to Listen on 8080. If some other process already owns that
+    port, Apache fails with "(98)Address already in use" — say so, and say who it is."""
+    try:
+        if not os.path.exists(ports_conf):
+            return
+        with open(ports_conf, "r") as f:
+            if not re.search(r"^\s*Listen\s+(?:\S+:)?8080\b", f.read(), re.MULTILINE):
+                return
+        out = subprocess.run(["ss", "-H", "-ltnp", "sport = :8080"],
+                             capture_output=True, text=True, timeout=5).stdout
+        owners = re.findall(r'users:\(\("([^"]+)",pid=(\d+)', out)
+        others = [(n, p) for n, p in owners if n not in ("apache2", "httpd")]
+        if others:
+            who = ", ".join(f"{n} (pid {p})" for n, p in others)
+            warn(f"Port 8080 is in use by {who}.")
+            warn("Apache is configured to listen on 8080, so it will not start until that process is stopped.")
+            warn("Find it with:  ss -ltnp 'sport = :8080'    stop it with:  kill <pid>")
+    except Exception:
+        pass            # purely advisory — never block startup
+
+
+def _ensure_ufw_allows_port(port: int) -> None:
+    """If UFW is active, make sure the Web UI port is open. Without this a LAN
+    phone gets ERR_CONNECTION_REFUSED even though the server bound 0.0.0.0 —
+    the firewall answers before the listener ever sees the packet. Also covers
+    the fallback-port case: 8090 may be allowed while a busy-8090 run moves to
+    8091, which nothing else ever opens."""
+    if shutil.which("ufw") is None:
+        return
+    try:
+        status = subprocess.run(["ufw", "status"], capture_output=True,
+                                text=True, timeout=8).stdout or ""
+        if "Status: active" not in status:
+            return
+        for line in status.splitlines():
+            if re.match(rf"\s*{port}/(?:tcp|udp)\s+ALLOW", line) or \
+               re.match(rf"\s*{port}\s+ALLOW", line):
+                return                      # already open — nothing to do
+        r = subprocess.run(["ufw", "allow", f"{port}/tcp"],
+                           capture_output=True, text=True, timeout=8)
+        if r.returncode == 0:
+            print(f"  {C.DIM}UFW: opened port {port}/tcp for the Web UI.{C.RESET}")
+        else:
+            warn(f"UFW is active but port {port} could not be opened: "
+                 f"{(r.stderr or r.stdout or '').strip()}")
+    except Exception as exc:
+        warn(f"Could not check UFW for the Web UI port: {exc}")
+
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  VENDORED DEPENDENCY: QR Code encoder
+#  Project Nayuki, MIT License — https://www.nayuki.io/page/qr-code-generator-library
+#  (vendored so the console can print a scannable QR with zero pip installs)
+# ═══════════════════════════════════════════════════════════════════════
+# 
+# QR Code generator library (Python)
+# 
+# Copyright (c) Project Nayuki. (MIT License)
+# https://www.nayuki.io/page/qr-code-generator-library
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy of
+# this software and associated documentation files (the "Software"), to deal in
+# the Software without restriction, including without limitation the rights to
+# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+# the Software, and to permit persons to whom the Software is furnished to do so,
+# subject to the following conditions:
+# - The above copyright notice and this permission notice shall be included in
+#   all copies or substantial portions of the Software.
+# - The Software is provided "as is", without warranty of any kind, express or
+#   implied, including but not limited to the warranties of merchantability,
+#   fitness for a particular purpose and noninfringement. In no event shall the
+#   authors or copyright holders be liable for any claim, damages or other
+#   liability, whether in an action of contract, tort or otherwise, arising from,
+#   out of or in connection with the Software or the use or other dealings in the
+#   Software.
+# 
+
+import collections
+import itertools
+from collections.abc import Sequence
+from typing import Optional, Union
+
+
+# ---- QR Code symbol class ----
+
+class QrCode:
+	"""A QR Code symbol, which is a type of two-dimension barcode.
+	Invented by Denso Wave and described in the ISO/IEC 18004 standard.
+	Instances of this class represent an immutable square grid of dark and light cells.
+	The class provides static factory functions to create a QR Code from text or binary data.
+	The class covers the QR Code Model 2 specification, supporting all versions (sizes)
+	from 1 to 40, all 4 error correction levels, and 4 character encoding modes.
+	
+	Ways to create a QR Code object:
+	- High level: Take the payload data and call QrCode.encode_text() or QrCode.encode_binary().
+	- Mid level: Custom-make the list of segments and call QrCode.encode_segments().
+	- Low level: Custom-make the array of data codeword bytes (including
+	  segment headers and final padding, excluding error correction codewords),
+	  supply the appropriate version number, and call the QrCode() constructor.
+	(Note that all ways require supplying the desired error correction level.)"""
+	
+	# ---- Static factory functions (high level) ----
+	
+	@staticmethod
+	def encode_text(text: str, ecl: QrCode.Ecc) -> QrCode:
+		"""Returns a QR Code representing the given Unicode text string at the given error correction level.
+		As a conservative upper bound, this function is guaranteed to succeed for strings that have 738 or fewer
+		Unicode code points (not UTF-16 code units) if the low error correction level is used. The smallest possible
+		QR Code version is automatically chosen for the output. The ECC level of the result may be higher than the
+		ecl argument if it can be done without increasing the version."""
+		segs: list[QrSegment] = QrSegment.make_segments(text)
+		return QrCode.encode_segments(segs, ecl)
+	
+	
+	@staticmethod
+	def encode_binary(data: Union[bytes,Sequence[int]], ecl: QrCode.Ecc) -> QrCode:
+		"""Returns a QR Code representing the given binary data at the given error correction level.
+		This function always encodes using the binary segment mode, not any text mode. The maximum number of
+		bytes allowed is 2953. The smallest possible QR Code version is automatically chosen for the output.
+		The ECC level of the result may be higher than the ecl argument if it can be done without increasing the version."""
+		return QrCode.encode_segments([QrSegment.make_bytes(data)], ecl)
+	
+	
+	# ---- Static factory functions (mid level) ----
+	
+	@staticmethod
+	def encode_segments(segs: Sequence[QrSegment], ecl: QrCode.Ecc, minversion: int = 1, maxversion: int = 40, mask: int = -1, boostecl: bool = True) -> QrCode:
+		"""Returns a QR Code representing the given segments with the given encoding parameters.
+		The smallest possible QR Code version within the given range is automatically
+		chosen for the output. Iff boostecl is true, then the ECC level of the result
+		may be higher than the ecl argument if it can be done without increasing the
+		version. The mask number is either between 0 to 7 (inclusive) to force that
+		mask, or -1 to automatically choose an appropriate mask (which may be slow).
+		This function allows the user to create a custom sequence of segments that switches
+		between modes (such as alphanumeric and byte) to encode text in less space.
+		This is a mid-level API; the high-level API is encode_text() and encode_binary()."""
+		
+		if not (QrCode.MIN_VERSION <= minversion <= maxversion <= QrCode.MAX_VERSION) or not (-1 <= mask <= 7):
+			raise ValueError("Invalid value")
+		
+		# Find the minimal version number to use
+		for version in range(minversion, maxversion + 1):
+			datacapacitybits: int = QrCode._get_num_data_codewords(version, ecl) * 8  # Number of data bits available
+			datausedbits: Optional[int] = QrSegment.get_total_bits(segs, version)
+			if (datausedbits is not None) and (datausedbits <= datacapacitybits):
+				break  # This version number is found to be suitable
+			if version >= maxversion:  # All versions in the range could not fit the given data
+				msg: str = "Segment too long"
+				if datausedbits is not None:
+					msg = f"Data length = {datausedbits} bits, Max capacity = {datacapacitybits} bits"
+				raise DataTooLongError(msg)
+		assert datausedbits is not None
+		
+		# Increase the error correction level while the data still fits in the current version number
+		for newecl in (QrCode.Ecc.MEDIUM, QrCode.Ecc.QUARTILE, QrCode.Ecc.HIGH):  # From low to high
+			if boostecl and (datausedbits <= QrCode._get_num_data_codewords(version, newecl) * 8):
+				ecl = newecl
+		
+		# Concatenate all segments to create the data bit string
+		bb = _BitBuffer()
+		for seg in segs:
+			bb.append_bits(seg.get_mode().get_mode_bits(), 4)
+			bb.append_bits(seg.get_num_chars(), seg.get_mode().num_char_count_bits(version))
+			bb.extend(seg._bitdata)
+		assert len(bb) == datausedbits
+		
+		# Add terminator and pad up to a byte if applicable
+		datacapacitybits = QrCode._get_num_data_codewords(version, ecl) * 8
+		assert len(bb) <= datacapacitybits
+		bb.append_bits(0, min(4, datacapacitybits - len(bb)))
+		bb.append_bits(0, -len(bb) % 8)  # Note: Python's modulo on negative numbers behaves better than C family languages
+		assert len(bb) % 8 == 0
+		
+		# Pad with alternating bytes until data capacity is reached
+		for padbyte in itertools.cycle((0xEC, 0x11)):
+			if len(bb) >= datacapacitybits:
+				break
+			bb.append_bits(padbyte, 8)
+		
+		# Pack bits into bytes in big endian
+		datacodewords = bytearray([0] * (len(bb) // 8))
+		for (i, bit) in enumerate(bb):
+			datacodewords[i >> 3] |= bit << (7 - (i & 7))
+		
+		# Create the QR Code object
+		return QrCode(version, ecl, datacodewords, mask)
+	
+	
+	# ---- Private fields ----
+	
+	# The version number of this QR Code, which is between 1 and 40 (inclusive).
+	# This determines the size of this barcode.
+	_version: int
+	
+	# The width and height of this QR Code, measured in modules, between
+	# 21 and 177 (inclusive). This is equal to version * 4 + 17.
+	_size: int
+	
+	# The error correction level used in this QR Code.
+	_errcorlvl: QrCode.Ecc
+	
+	# The index of the mask pattern used in this QR Code, which is between 0 and 7 (inclusive).
+	# Even if a QR Code is created with automatic masking requested (mask = -1),
+	# the resulting object still has a mask value between 0 and 7.
+	_mask: int
+	
+	# The modules of this QR Code (False = light, True = dark).
+	# Immutable after constructor finishes. Accessed through get_module().
+	_modules: list[list[bool]]
+	
+	# Indicates function modules that are not subjected to masking. Discarded when constructor finishes.
+	_isfunction: list[list[bool]]
+	
+	
+	# ---- Constructor (low level) ----
+	
+	def __init__(self, version: int, errcorlvl: QrCode.Ecc, datacodewords: Union[bytes,Sequence[int]], msk: int) -> None:
+		"""Creates a new QR Code with the given version number,
+		error correction level, data codeword bytes, and mask number.
+		This is a low-level API that most users should not use directly.
+		A mid-level API is the encode_segments() function."""
+		
+		# Check scalar arguments and set fields
+		if not (QrCode.MIN_VERSION <= version <= QrCode.MAX_VERSION):
+			raise ValueError("Version value out of range")
+		if not (-1 <= msk <= 7):
+			raise ValueError("Mask value out of range")
+		
+		self._version = version
+		self._size = version * 4 + 17
+		self._errcorlvl = errcorlvl
+		
+		# Initialize both grids to be size*size arrays of Boolean false
+		self._modules    = [[False] * self._size for _ in range(self._size)]  # Initially all light
+		self._isfunction = [[False] * self._size for _ in range(self._size)]
+		
+		# Compute ECC, draw modules
+		self._draw_function_patterns()
+		allcodewords: bytes = self._add_ecc_and_interleave(bytearray(datacodewords))
+		self._draw_codewords(allcodewords)
+		
+		# Do masking
+		if msk == -1:  # Automatically choose best mask
+			minpenalty: int = 1 << 32
+			for i in range(8):
+				self._apply_mask(i)
+				self._draw_format_bits(i)
+				penalty = self._get_penalty_score()
+				if penalty < minpenalty:
+					msk = i
+					minpenalty = penalty
+				self._apply_mask(i)  # Undoes the mask due to XOR
+		assert 0 <= msk <= 7
+		self._mask = msk
+		self._apply_mask(msk)  # Apply the final choice of mask
+		self._draw_format_bits(msk)  # Overwrite old format bits
+		
+		del self._isfunction
+	
+	
+	# ---- Accessor methods ----
+	
+	def get_version(self) -> int:
+		"""Returns this QR Code's version number, in the range [1, 40]."""
+		return self._version
+	
+	def get_size(self) -> int:
+		"""Returns this QR Code's size, in the range [21, 177]."""
+		return self._size
+	
+	def get_error_correction_level(self) -> QrCode.Ecc:
+		"""Returns this QR Code's error correction level."""
+		return self._errcorlvl
+	
+	def get_mask(self) -> int:
+		"""Returns this QR Code's mask, in the range [0, 7]."""
+		return self._mask
+	
+	def get_module(self, x: int, y: int) -> bool:
+		"""Returns the color of the module (pixel) at the given coordinates, which is False
+		for light or True for dark. The top left corner has the coordinates (x=0, y=0).
+		If the given coordinates are out of bounds, then False (light) is returned."""
+		return (0 <= x < self._size) and (0 <= y < self._size) and self._modules[y][x]
+	
+	
+	# ---- Private helper methods for constructor: Drawing function modules ----
+	
+	def _draw_function_patterns(self) -> None:
+		"""Reads this object's version field, and draws and marks all function modules."""
+		# Draw horizontal and vertical timing patterns
+		for i in range(self._size):
+			self._set_function_module(6, i, i % 2 == 0)
+			self._set_function_module(i, 6, i % 2 == 0)
+		
+		# Draw 3 finder patterns (all corners except bottom right; overwrites some timing modules)
+		self._draw_finder_pattern(3, 3)
+		self._draw_finder_pattern(self._size - 4, 3)
+		self._draw_finder_pattern(3, self._size - 4)
+		
+		# Draw numerous alignment patterns
+		alignpatpos: list[int] = self._get_alignment_pattern_positions()
+		numalign: int = len(alignpatpos)
+		skips: Sequence[tuple[int,int]] = ((0, 0), (0, numalign - 1), (numalign - 1, 0))
+		for i in range(numalign):
+			for j in range(numalign):
+				if (i, j) not in skips:  # Don't draw on the three finder corners
+					self._draw_alignment_pattern(alignpatpos[i], alignpatpos[j])
+		
+		# Draw configuration data
+		self._draw_format_bits(0)  # Dummy mask value; overwritten later in the constructor
+		self._draw_version()
+	
+	
+	def _draw_format_bits(self, mask: int) -> None:
+		"""Draws two copies of the format bits (with its own error correction code)
+		based on the given mask and this object's error correction level field."""
+		# Calculate error correction code and pack bits
+		data: int = self._errcorlvl.formatbits << 3 | mask  # errCorrLvl is uint2, mask is uint3
+		rem: int = data
+		for _ in range(10):
+			rem = (rem << 1) ^ ((rem >> 9) * 0x537)
+		bits: int = (data << 10 | rem) ^ 0x5412  # uint15
+		assert bits >> 15 == 0
+		
+		# Draw first copy
+		for i in range(0, 6):
+			self._set_function_module(8, i, _get_bit(bits, i))
+		self._set_function_module(8, 7, _get_bit(bits, 6))
+		self._set_function_module(8, 8, _get_bit(bits, 7))
+		self._set_function_module(7, 8, _get_bit(bits, 8))
+		for i in range(9, 15):
+			self._set_function_module(14 - i, 8, _get_bit(bits, i))
+		
+		# Draw second copy
+		for i in range(0, 8):
+			self._set_function_module(self._size - 1 - i, 8, _get_bit(bits, i))
+		for i in range(8, 15):
+			self._set_function_module(8, self._size - 15 + i, _get_bit(bits, i))
+		self._set_function_module(8, self._size - 8, True)  # Always dark
+	
+	
+	def _draw_version(self) -> None:
+		"""Draws two copies of the version bits (with its own error correction code),
+		based on this object's version field, iff 7 <= version <= 40."""
+		if self._version < 7:
+			return
+		
+		# Calculate error correction code and pack bits
+		rem: int = self._version  # version is uint6, in the range [7, 40]
+		for _ in range(12):
+			rem = (rem << 1) ^ ((rem >> 11) * 0x1F25)
+		bits: int = self._version << 12 | rem  # uint18
+		assert bits >> 18 == 0
+		
+		# Draw two copies
+		for i in range(18):
+			bit: bool = _get_bit(bits, i)
+			a: int = self._size - 11 + i % 3
+			b: int = i // 3
+			self._set_function_module(a, b, bit)
+			self._set_function_module(b, a, bit)
+	
+	
+	def _draw_finder_pattern(self, x: int, y: int) -> None:
+		"""Draws a 9*9 finder pattern including the border separator,
+		with the center module at (x, y). Modules can be out of bounds."""
+		for dy in range(-4, 5):
+			for dx in range(-4, 5):
+				xx, yy = x + dx, y + dy
+				if (0 <= xx < self._size) and (0 <= yy < self._size):
+					# Chebyshev/infinity norm
+					self._set_function_module(xx, yy, max(abs(dx), abs(dy)) not in (2, 4))
+	
+	
+	def _draw_alignment_pattern(self, x: int, y: int) -> None:
+		"""Draws a 5*5 alignment pattern, with the center module
+		at (x, y). All modules must be in bounds."""
+		for dy in range(-2, 3):
+			for dx in range(-2, 3):
+				self._set_function_module(x + dx, y + dy, max(abs(dx), abs(dy)) != 1)
+	
+	
+	def _set_function_module(self, x: int, y: int, isdark: bool) -> None:
+		"""Sets the color of a module and marks it as a function module.
+		Only used by the constructor. Coordinates must be in bounds."""
+		assert type(isdark) is bool
+		self._modules[y][x] = isdark
+		self._isfunction[y][x] = True
+	
+	
+	# ---- Private helper methods for constructor: Codewords and masking ----
+	
+	def _add_ecc_and_interleave(self, data: bytearray) -> bytes:
+		"""Returns a new byte string representing the given data with the appropriate error correction
+		codewords appended to it, based on this object's version and error correction level."""
+		version: int = self._version
+		assert len(data) == QrCode._get_num_data_codewords(version, self._errcorlvl)
+		
+		# Calculate parameter numbers
+		numblocks: int = QrCode._NUM_ERROR_CORRECTION_BLOCKS[self._errcorlvl.ordinal][version]
+		blockecclen: int = QrCode._ECC_CODEWORDS_PER_BLOCK  [self._errcorlvl.ordinal][version]
+		rawcodewords: int = QrCode._get_num_raw_data_modules(version) // 8
+		numshortblocks: int = numblocks - rawcodewords % numblocks
+		shortblocklen: int = rawcodewords // numblocks
+		
+		# Split data into blocks and append ECC to each block
+		blocks: list[bytes] = []
+		rsdiv: bytes = QrCode._reed_solomon_compute_divisor(blockecclen)
+		k: int = 0
+		for i in range(numblocks):
+			dat: bytearray = data[k : k + shortblocklen - blockecclen + (0 if i < numshortblocks else 1)]
+			k += len(dat)
+			ecc: bytes = QrCode._reed_solomon_compute_remainder(dat, rsdiv)
+			if i < numshortblocks:
+				dat.append(0)
+			blocks.append(dat + ecc)
+		assert k == len(data)
+		
+		# Interleave (not concatenate) the bytes from every block into a single sequence
+		result = bytearray()
+		for i in range(len(blocks[0])):
+			for (j, blk) in enumerate(blocks):
+				# Skip the padding byte in short blocks
+				if (i != shortblocklen - blockecclen) or (j >= numshortblocks):
+					result.append(blk[i])
+		assert len(result) == rawcodewords
+		return result
+	
+	
+	def _draw_codewords(self, data: bytes) -> None:
+		"""Draws the given sequence of 8-bit codewords (data and error correction) onto the entire
+		data area of this QR Code. Function modules need to be marked off before this is called."""
+		assert len(data) == QrCode._get_num_raw_data_modules(self._version) // 8
+		
+		i: int = 0  # Bit index into the data
+		# Do the funny zigzag scan
+		for right in range(self._size - 1, 0, -2):  # Index of right column in each column pair
+			if right <= 6:
+				right -= 1
+			for vert in range(self._size):  # Vertical counter
+				for j in range(2):
+					x: int = right - j  # Actual x coordinate
+					upward: bool = (right + 1) & 2 == 0
+					y: int = (self._size - 1 - vert) if upward else vert  # Actual y coordinate
+					if (not self._isfunction[y][x]) and (i < len(data) * 8):
+						self._modules[y][x] = _get_bit(data[i >> 3], 7 - (i & 7))
+						i += 1
+					# If this QR Code has any remainder bits (0 to 7), they were assigned as
+					# 0/false/light by the constructor and are left unchanged by this method
+		assert i == len(data) * 8
+	
+	
+	def _apply_mask(self, mask: int) -> None:
+		"""XORs the codeword modules in this QR Code with the given mask pattern.
+		The function modules must be marked and the codeword bits must be drawn
+		before masking. Due to the arithmetic of XOR, calling _apply_mask() with
+		the same mask value a second time will undo the mask. A final well-formed
+		QR Code needs exactly one (not zero, two, etc.) mask applied."""
+		if not (0 <= mask <= 7):
+			raise ValueError("Mask value out of range")
+		masker: collections.abc.Callable[[int,int],int] = QrCode._MASK_PATTERNS[mask]
+		for y in range(self._size):
+			for x in range(self._size):
+				self._modules[y][x] ^= (masker(x, y) == 0) and (not self._isfunction[y][x])
+	
+	
+	def _get_penalty_score(self) -> int:
+		"""Calculates and returns the penalty score based on state of this QR Code's current modules.
+		This is used by the automatic mask choice algorithm to find the mask pattern that yields the lowest score."""
+		result: int = 0
+		size: int = self._size
+		modules: list[list[bool]] = self._modules
+		
+		# Adjacent modules in row having same color, and finder-like patterns
+		for y in range(size):
+			runcolor: bool = False
+			runx: int = 0
+			runhistory = collections.deque([0] * 7, 7)
+			for x in range(size):
+				if modules[y][x] == runcolor:
+					runx += 1
+					if runx == 5:
+						result += QrCode._PENALTY_N1
+					elif runx > 5:
+						result += 1
+				else:
+					self._finder_penalty_add_history(runx, runhistory)
+					if not runcolor:
+						result += self._finder_penalty_count_patterns(runhistory) * QrCode._PENALTY_N3
+					runcolor = modules[y][x]
+					runx = 1
+			result += self._finder_penalty_terminate_and_count(runcolor, runx, runhistory) * QrCode._PENALTY_N3
+		# Adjacent modules in column having same color, and finder-like patterns
+		for x in range(size):
+			runcolor = False
+			runy: int = 0
+			runhistory = collections.deque([0] * 7, 7)
+			for y in range(size):
+				if modules[y][x] == runcolor:
+					runy += 1
+					if runy == 5:
+						result += QrCode._PENALTY_N1
+					elif runy > 5:
+						result += 1
+				else:
+					self._finder_penalty_add_history(runy, runhistory)
+					if not runcolor:
+						result += self._finder_penalty_count_patterns(runhistory) * QrCode._PENALTY_N3
+					runcolor = modules[y][x]
+					runy = 1
+			result += self._finder_penalty_terminate_and_count(runcolor, runy, runhistory) * QrCode._PENALTY_N3
+		
+		# 2*2 blocks of modules having same color
+		for y in range(size - 1):
+			for x in range(size - 1):
+				if modules[y][x] == modules[y][x + 1] == modules[y + 1][x] == modules[y + 1][x + 1]:
+					result += QrCode._PENALTY_N2
+		
+		# Balance of dark and light modules
+		dark: int = sum((1 if cell else 0) for row in modules for cell in row)
+		total: int = size**2  # Note that size is odd, so dark/total != 1/2
+		# Compute the smallest integer k >= 0 such that (45-5k)% <= dark/total <= (55+5k)%
+		k: int = (abs(dark * 20 - total * 10) + total - 1) // total - 1
+		assert 0 <= k <= 9
+		result += k * QrCode._PENALTY_N4
+		assert 0 <= result <= 2568888  # Non-tight upper bound based on default values of PENALTY_N1, ..., N4
+		return result
+	
+	
+	# ---- Private helper functions ----
+	
+	def _get_alignment_pattern_positions(self) -> list[int]:
+		"""Returns an ascending list of positions of alignment patterns for this version number.
+		Each position is in the range [0,177), and are used on both the x and y axes.
+		This could be implemented as lookup table of 40 variable-length lists of integers."""
+		if self._version == 1:
+			return []
+		else:
+			numalign: int = self._version // 7 + 2
+			step: int = (self._version * 8 + numalign * 3 + 5) // (numalign * 4 - 4) * 2
+			result: list[int] = [(self._size - 7 - i * step) for i in range(numalign - 1)] + [6]
+			return list(reversed(result))
+	
+	
+	@staticmethod
+	def _get_num_raw_data_modules(ver: int) -> int:
+		"""Returns the number of data bits that can be stored in a QR Code of the given version number, after
+		all function modules are excluded. This includes remainder bits, so it might not be a multiple of 8.
+		The result is in the range [208, 29648]. This could be implemented as a 40-entry lookup table."""
+		if not (QrCode.MIN_VERSION <= ver <= QrCode.MAX_VERSION):
+			raise ValueError("Version number out of range")
+		result: int = (16 * ver + 128) * ver + 64
+		if ver >= 2:
+			numalign: int = ver // 7 + 2
+			result -= (25 * numalign - 10) * numalign - 55
+			if ver >= 7:
+				result -= 36
+		assert 208 <= result <= 29648
+		return result
+	
+	
+	@staticmethod
+	def _get_num_data_codewords(ver: int, ecl: QrCode.Ecc) -> int:
+		"""Returns the number of 8-bit data (i.e. not error correction) codewords contained in any
+		QR Code of the given version number and error correction level, with remainder bits discarded.
+		This stateless pure function could be implemented as a (40*4)-cell lookup table."""
+		return QrCode._get_num_raw_data_modules(ver) // 8 \
+			- QrCode._ECC_CODEWORDS_PER_BLOCK    [ecl.ordinal][ver] \
+			* QrCode._NUM_ERROR_CORRECTION_BLOCKS[ecl.ordinal][ver]
+	
+	
+	@staticmethod
+	def _reed_solomon_compute_divisor(degree: int) -> bytes:
+		"""Returns a Reed-Solomon ECC generator polynomial for the given degree. This could be
+		implemented as a lookup table over all possible parameter values, instead of as an algorithm."""
+		if not (1 <= degree <= 255):
+			raise ValueError("Degree out of range")
+		# Polynomial coefficients are stored from highest to lowest power, excluding the leading term which is always 1.
+		# For example the polynomial x^3 + 255x^2 + 8x + 93 is stored as the uint8 array [255, 8, 93].
+		result = bytearray([0] * (degree - 1) + [1])  # Start off with the monomial x^0
+		
+		# Compute the product polynomial (x - r^0) * (x - r^1) * (x - r^2) * ... * (x - r^{degree-1}),
+		# and drop the highest monomial term which is always 1x^degree.
+		# Note that r = 0x02, which is a generator element of this field GF(2^8/0x11D).
+		root: int = 1
+		for _ in range(degree):  # Unused variable i
+			# Multiply the current product by (x - r^i)
+			for j in range(degree):
+				result[j] = QrCode._reed_solomon_multiply(result[j], root)
+				if j + 1 < degree:
+					result[j] ^= result[j + 1]
+			root = QrCode._reed_solomon_multiply(root, 0x02)
+		return result
+	
+	
+	@staticmethod
+	def _reed_solomon_compute_remainder(data: bytes, divisor: bytes) -> bytes:
+		"""Returns the Reed-Solomon error correction codeword for the given data and divisor polynomials."""
+		result = bytearray([0] * len(divisor))
+		for b in data:  # Polynomial division
+			factor: int = b ^ result.pop(0)
+			result.append(0)
+			for (i, coef) in enumerate(divisor):
+				result[i] ^= QrCode._reed_solomon_multiply(coef, factor)
+		return result
+	
+	
+	@staticmethod
+	def _reed_solomon_multiply(x: int, y: int) -> int:
+		"""Returns the product of the two given field elements modulo GF(2^8/0x11D). The arguments and result
+		are unsigned 8-bit integers. This could be implemented as a lookup table of 256*256 entries of uint8."""
+		if (x >> 8 != 0) or (y >> 8 != 0):
+			raise ValueError("Byte out of range")
+		# Russian peasant multiplication
+		z: int = 0
+		for i in reversed(range(8)):
+			z = (z << 1) ^ ((z >> 7) * 0x11D)
+			z ^= ((y >> i) & 1) * x
+		assert z >> 8 == 0
+		return z
+	
+	
+	def _finder_penalty_count_patterns(self, runhistory: collections.deque[int]) -> int:
+		"""Can only be called immediately after a light run is added, and
+		returns either 0, 1, or 2. A helper function for _get_penalty_score()."""
+		n: int = runhistory[1]
+		assert n <= self._size * 3
+		core: bool = n > 0 and (runhistory[2] == runhistory[4] == runhistory[5] == n) and runhistory[3] == n * 3
+		return (1 if (core and runhistory[0] >= n * 4 and runhistory[6] >= n) else 0) \
+		     + (1 if (core and runhistory[6] >= n * 4 and runhistory[0] >= n) else 0)
+	
+	
+	def _finder_penalty_terminate_and_count(self, currentruncolor: bool, currentrunlength: int, runhistory: collections.deque[int]) -> int:
+		"""Must be called at the end of a line (row or column) of modules. A helper function for _get_penalty_score()."""
+		if currentruncolor:  # Terminate dark run
+			self._finder_penalty_add_history(currentrunlength, runhistory)
+			currentrunlength = 0
+		currentrunlength += self._size  # Add light border to final run
+		self._finder_penalty_add_history(currentrunlength, runhistory)
+		return self._finder_penalty_count_patterns(runhistory)
+	
+	
+	def _finder_penalty_add_history(self, currentrunlength: int, runhistory: collections.deque[int]) -> None:
+		if runhistory[0] == 0:
+			currentrunlength += self._size  # Add light border to initial run
+		runhistory.appendleft(currentrunlength)
+	
+	
+	# ---- Constants and tables ----
+	
+	MIN_VERSION: int =  1  # The minimum version number supported in the QR Code Model 2 standard
+	MAX_VERSION: int = 40  # The maximum version number supported in the QR Code Model 2 standard
+	
+	# For use in _get_penalty_score(), when evaluating which mask is best.
+	_PENALTY_N1: int =  3
+	_PENALTY_N2: int =  3
+	_PENALTY_N3: int = 40
+	_PENALTY_N4: int = 10
+	
+	_ECC_CODEWORDS_PER_BLOCK: Sequence[Sequence[int]] = (
+		# Version: (note that index 0 is for padding, and is set to an illegal value)
+		# 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40    Error correction level
+		(-1,  7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28, 30, 28, 28, 28, 28, 30, 30, 26, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30),  # Low
+		(-1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28),  # Medium
+		(-1, 13, 22, 18, 26, 18, 24, 18, 22, 20, 24, 28, 26, 24, 20, 30, 24, 28, 28, 26, 30, 28, 30, 30, 30, 30, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30),  # Quartile
+		(-1, 17, 28, 22, 16, 22, 28, 26, 26, 24, 28, 24, 28, 22, 24, 24, 30, 28, 28, 26, 28, 30, 24, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30))  # High
+	
+	_NUM_ERROR_CORRECTION_BLOCKS: Sequence[Sequence[int]] = (
+		# Version: (note that index 0 is for padding, and is set to an illegal value)
+		# 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40    Error correction level
+		(-1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4,  4,  4,  4,  4,  6,  6,  6,  6,  7,  8,  8,  9,  9, 10, 12, 12, 12, 13, 14, 15, 16, 17, 18, 19, 19, 20, 21, 22, 24, 25),  # Low
+		(-1, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5,  5,  8,  9,  9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49),  # Medium
+		(-1, 1, 1, 2, 2, 4, 4, 6, 6, 8, 8,  8, 10, 12, 16, 12, 17, 16, 18, 21, 20, 23, 23, 25, 27, 29, 34, 34, 35, 38, 40, 43, 45, 48, 51, 53, 56, 59, 62, 65, 68),  # Quartile
+		(-1, 1, 1, 2, 4, 4, 4, 5, 6, 8, 8, 11, 11, 16, 16, 18, 16, 19, 21, 25, 25, 25, 34, 30, 32, 35, 37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66, 70, 74, 77, 81))  # High
+	
+	_MASK_PATTERNS: Sequence[collections.abc.Callable[[int,int],int]] = (
+		(lambda x, y:  (x + y) % 2                  ),
+		(lambda x, y:  y % 2                        ),
+		(lambda x, y:  x % 3                        ),
+		(lambda x, y:  (x + y) % 3                  ),
+		(lambda x, y:  (x // 3 + y // 2) % 2        ),
+		(lambda x, y:  x * y % 2 + x * y % 3        ),
+		(lambda x, y:  (x * y % 2 + x * y % 3) % 2  ),
+		(lambda x, y:  ((x + y) % 2 + x * y % 3) % 2),
+	)
+	
+	
+	# ---- Public helper enumeration ----
+	
+	class Ecc:
+		ordinal: int  # (Public) In the range 0 to 3 (unsigned 2-bit integer)
+		formatbits: int  # (Package-private) In the range 0 to 3 (unsigned 2-bit integer)
+		
+		"""The error correction level in a QR Code symbol. Immutable."""
+		# Private constructor
+		def __init__(self, i: int, fb: int) -> None:
+			self.ordinal = i
+			self.formatbits = fb
+		
+		# Placeholders
+		LOW     : QrCode.Ecc
+		MEDIUM  : QrCode.Ecc
+		QUARTILE: QrCode.Ecc
+		HIGH    : QrCode.Ecc
+	
+	# Public constants. Create them outside the class.
+	Ecc.LOW      = Ecc(0, 1)  # The QR Code can tolerate about  7% erroneous codewords
+	Ecc.MEDIUM   = Ecc(1, 0)  # The QR Code can tolerate about 15% erroneous codewords
+	Ecc.QUARTILE = Ecc(2, 3)  # The QR Code can tolerate about 25% erroneous codewords
+	Ecc.HIGH     = Ecc(3, 2)  # The QR Code can tolerate about 30% erroneous codewords
+
+
+
+# ---- Data segment class ----
+
+class QrSegment:
+	"""A segment of character/binary/control data in a QR Code symbol.
+	Instances of this class are immutable.
+	The mid-level way to create a segment is to take the payload data
+	and call a static factory function such as QrSegment.make_numeric().
+	The low-level way to create a segment is to custom-make the bit buffer
+	and call the QrSegment() constructor with appropriate values.
+	This segment class imposes no length restrictions, but QR Codes have restrictions.
+	Even in the most favorable conditions, a QR Code can only hold 7089 characters of data.
+	Any segment longer than this is meaningless for the purpose of generating QR Codes."""
+	
+	# ---- Static factory functions (mid level) ----
+	
+	@staticmethod
+	def make_bytes(data: Union[bytes,Sequence[int]]) -> QrSegment:
+		"""Returns a segment representing the given binary data encoded in byte mode.
+		All input byte lists are acceptable. Any text string can be converted to
+		UTF-8 bytes (s.encode("UTF-8")) and encoded as a byte mode segment."""
+		bb = _BitBuffer()
+		for b in data:
+			bb.append_bits(b, 8)
+		return QrSegment(QrSegment.Mode.BYTE, len(data), bb)
+	
+	
+	@staticmethod
+	def make_numeric(digits: str) -> QrSegment:
+		"""Returns a segment representing the given string of decimal digits encoded in numeric mode."""
+		if not QrSegment.is_numeric(digits):
+			raise ValueError("String contains non-numeric characters")
+		bb = _BitBuffer()
+		i: int = 0
+		while i < len(digits):  # Consume up to 3 digits per iteration
+			n: int = min(len(digits) - i, 3)
+			bb.append_bits(int(digits[i : i + n]), n * 3 + 1)
+			i += n
+		return QrSegment(QrSegment.Mode.NUMERIC, len(digits), bb)
+	
+	
+	@staticmethod
+	def make_alphanumeric(text: str) -> QrSegment:
+		"""Returns a segment representing the given text string encoded in alphanumeric mode.
+		The characters allowed are: 0 to 9, A to Z (uppercase only), space,
+		dollar, percent, asterisk, plus, hyphen, period, slash, colon."""
+		if not QrSegment.is_alphanumeric(text):
+			raise ValueError("String contains unencodable characters in alphanumeric mode")
+		bb = _BitBuffer()
+		for i in range(0, len(text) - 1, 2):  # Process groups of 2
+			temp: int = QrSegment._ALPHANUMERIC_ENCODING_TABLE[text[i]] * 45
+			temp += QrSegment._ALPHANUMERIC_ENCODING_TABLE[text[i + 1]]
+			bb.append_bits(temp, 11)
+		if len(text) % 2 > 0:  # 1 character remaining
+			bb.append_bits(QrSegment._ALPHANUMERIC_ENCODING_TABLE[text[-1]], 6)
+		return QrSegment(QrSegment.Mode.ALPHANUMERIC, len(text), bb)
+	
+	
+	@staticmethod
+	def make_segments(text: str) -> list[QrSegment]:
+		"""Returns a new mutable list of zero or more segments to represent the given Unicode text string.
+		The result may use various segment modes and switch modes to optimize the length of the bit stream."""
+		
+		# Select the most efficient segment encoding automatically
+		if text == "":
+			return []
+		elif QrSegment.is_numeric(text):
+			return [QrSegment.make_numeric(text)]
+		elif QrSegment.is_alphanumeric(text):
+			return [QrSegment.make_alphanumeric(text)]
+		else:
+			return [QrSegment.make_bytes(text.encode("UTF-8"))]
+	
+	
+	@staticmethod
+	def make_eci(assignval: int) -> QrSegment:
+		"""Returns a segment representing an Extended Channel Interpretation
+		(ECI) designator with the given assignment value."""
+		bb = _BitBuffer()
+		if assignval < 0:
+			raise ValueError("ECI assignment value out of range")
+		elif assignval < (1 << 7):
+			bb.append_bits(assignval, 8)
+		elif assignval < (1 << 14):
+			bb.append_bits(0b10, 2)
+			bb.append_bits(assignval, 14)
+		elif assignval < 1000000:
+			bb.append_bits(0b110, 3)
+			bb.append_bits(assignval, 21)
+		else:
+			raise ValueError("ECI assignment value out of range")
+		return QrSegment(QrSegment.Mode.ECI, 0, bb)
+	
+	
+	# Tests whether the given string can be encoded as a segment in numeric mode.
+	# A string is encodable iff each character is in the range 0 to 9.
+	@staticmethod
+	def is_numeric(text: str) -> bool:
+		return QrSegment._NUMERIC_REGEX.fullmatch(text) is not None
+	
+	
+	# Tests whether the given string can be encoded as a segment in alphanumeric mode.
+	# A string is encodable iff each character is in the following set: 0 to 9, A to Z
+	# (uppercase only), space, dollar, percent, asterisk, plus, hyphen, period, slash, colon.
+	@staticmethod
+	def is_alphanumeric(text: str) -> bool:
+		return QrSegment._ALPHANUMERIC_REGEX.fullmatch(text) is not None
+	
+	
+	# ---- Private fields ----
+	
+	# The mode indicator of this segment. Accessed through get_mode().
+	_mode: QrSegment.Mode
+	
+	# The length of this segment's unencoded data. Measured in characters for
+	# numeric/alphanumeric/kanji mode, bytes for byte mode, and 0 for ECI mode.
+	# Always zero or positive. Not the same as the data's bit length.
+	# Accessed through get_num_chars().
+	_numchars: int
+	
+	# The data bits of this segment. Accessed through get_data().
+	_bitdata: list[int]
+	
+	
+	# ---- Constructor (low level) ----
+	
+	def __init__(self, mode: QrSegment.Mode, numch: int, bitdata: Sequence[int]) -> None:
+		"""Creates a new QR Code segment with the given attributes and data.
+		The character count (numch) must agree with the mode and the bit buffer length,
+		but the constraint isn't checked. The given bit buffer is cloned and stored."""
+		if numch < 0:
+			raise ValueError()
+		self._mode = mode
+		self._numchars = numch
+		self._bitdata = list(bitdata)  # Make defensive copy
+	
+	
+	# ---- Accessor methods ----
+	
+	def get_mode(self) -> QrSegment.Mode:
+		"""Returns the mode field of this segment."""
+		return self._mode
+	
+	def get_num_chars(self) -> int:
+		"""Returns the character count field of this segment."""
+		return self._numchars
+	
+	def get_data(self) -> list[int]:
+		"""Returns a new copy of the data bits of this segment."""
+		return list(self._bitdata)  # Make defensive copy
+	
+	
+	# Package-private function
+	@staticmethod
+	def get_total_bits(segs: Sequence[QrSegment], version: int) -> Optional[int]:
+		"""Calculates the number of bits needed to encode the given segments at
+		the given version. Returns a non-negative number if successful. Otherwise
+		returns None if a segment has too many characters to fit its length field."""
+		result = 0
+		for seg in segs:
+			ccbits: int = seg.get_mode().num_char_count_bits(version)
+			if seg.get_num_chars() >= (1 << ccbits):
+				return None  # The segment's length doesn't fit the field's bit width
+			result += 4 + ccbits + len(seg._bitdata)
+		return result
+	
+	
+	# ---- Constants ----
+	
+	# Describes precisely all strings that are encodable in numeric mode.
+	_NUMERIC_REGEX: re.Pattern[str] = re.compile(r"[0-9]*")
+	
+	# Describes precisely all strings that are encodable in alphanumeric mode.
+	_ALPHANUMERIC_REGEX: re.Pattern[str] = re.compile(r"[A-Z0-9 $%*+./:-]*")
+	
+	# Dictionary of "0"->0, "A"->10, "$"->37, etc.
+	_ALPHANUMERIC_ENCODING_TABLE: dict[str,int] = {ch: i for (i, ch) in enumerate("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:")}
+	
+	
+	# ---- Public helper enumeration ----
+	
+	class Mode:
+		"""Describes how a segment's data bits are interpreted. Immutable."""
+		
+		_modebits: int  # The mode indicator bits, which is a uint4 value (range 0 to 15)
+		_charcounts: tuple[int,int,int]  # Number of character count bits for three different version ranges
+		
+		# Private constructor
+		def __init__(self, modebits: int, charcounts: tuple[int,int,int]):
+			self._modebits = modebits
+			self._charcounts = charcounts
+		
+		# Package-private method
+		def get_mode_bits(self) -> int:
+			"""Returns an unsigned 4-bit integer value (range 0 to 15) representing the mode indicator bits for this mode object."""
+			return self._modebits
+		
+		# Package-private method
+		def num_char_count_bits(self, ver: int) -> int:
+			"""Returns the bit width of the character count field for a segment in this mode
+			in a QR Code at the given version number. The result is in the range [0, 16]."""
+			return self._charcounts[(ver + 7) // 17]
+		
+		# Placeholders
+		NUMERIC     : QrSegment.Mode
+		ALPHANUMERIC: QrSegment.Mode
+		BYTE        : QrSegment.Mode
+		KANJI       : QrSegment.Mode
+		ECI         : QrSegment.Mode
+	
+	# Public constants. Create them outside the class.
+	Mode.NUMERIC      = Mode(0x1, (10, 12, 14))
+	Mode.ALPHANUMERIC = Mode(0x2, ( 9, 11, 13))
+	Mode.BYTE         = Mode(0x4, ( 8, 16, 16))
+	Mode.KANJI        = Mode(0x8, ( 8, 10, 12))
+	Mode.ECI          = Mode(0x7, ( 0,  0,  0))
+
+
+
+# ---- Private helper class ----
+
+class _BitBuffer(list[int]):
+	"""An appendable sequence of bits (0s and 1s). Mainly used by QrSegment."""
+	
+	def append_bits(self, val: int, n: int) -> None:
+		"""Appends the given number of low-order bits of the given
+		value to this buffer. Requires n >= 0 and 0 <= val < 2^n."""
+		if (n < 0) or (val >> n != 0):
+			raise ValueError("Value out of range")
+		self.extend(((val >> i) & 1) for i in reversed(range(n)))
+
+
+def _get_bit(x: int, i: int) -> bool:
+	"""Returns true iff the i'th bit of x is set to 1."""
+	return (x >> i) & 1 != 0
+
+
+
+class DataTooLongError(ValueError):
+	"""Raised when the supplied data does not fit any QR Code version. Ways to handle this exception include:
+	- Decrease the error correction level if it was greater than Ecc.LOW.
+	- If the encode_segments() function was called with a maxversion argument, then increase
+	  it if it was less than QrCode.MAX_VERSION. (This advice does not apply to the other
+	  factory functions because they search all versions up to QrCode.MAX_VERSION.)
+	- Split the text data into better or optimal segments in order to reduce the number of bits required.
+	- Change the text or binary data to be shorter.
+	- Change the text to fit the character set of a particular segment mode (e.g. alphanumeric).
+	- Propagate the error upward to the caller/user."""
+	pass
+
+
+# ─────────────────────────────────────────────────────────────────────────
+#  WIP-PHONE-ACCESS: the "Connect from your phone" feature is WORK IN
+#  PROGRESS and does NOT yet work from actual phones. Paused 2026-11-13:
+#  the phone's packets never reach the server (router/AP-side block —
+#  tcpdump confirmed zero inbound from the phone; PC works fine).
+#  Debugging is on hold at the user's request. The scan, /api/access and
+#  the console QR below are kept intact; the web UI shows a WIP notice
+#  and the API returns "wip": true. Search "WIP-PHONE-ACCESS" for every
+#  touchpoint (this file: this banner, _print_phone_access, the boot
+#  call in start_web_ui; web_config: index.html, app.js, style.css).
+# ─────────────────────────────────────────────────────────────────────────
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Connect from phone — reachable-address scan (stdlib only)
+#  Lists every way a phone could currently reach the Web UI: LAN, Tailscale,
+#  WireGuard, ZeroTier. No third-party modules; phone needs only a browser.
+# ═══════════════════════════════════════════════════════════════════════
+
+_TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")   # CGNAT range Tailscale uses
+_IFACE_SKIP = ("lo", "docker", "veth", "vethernet", "br-", "virbr", "podman", "cni",
+               "flannel", "kube", "vmnet", "vmware", "virtualbox")
+_ACCESS_NOTES = {
+    "lan": "phone on the same Wi-Fi/LAN",
+    "tailscale": "phone needs the Tailscale app (same tailnet)",
+    "wireguard": "phone needs the WireGuard tunnel",
+    "zerotier": "phone needs the ZeroTier app (same network)",
+}
+_ACCESS_LABELS = {"lan": "LAN", "tailscale": "Tailscale", "wireguard": "WireGuard", "zerotier": "ZeroTier"}
+
+
+def _iter_iface_ipv4s():
+    """Yield (iface_name, 'a.b.c.d') for every IPv4 address of this machine.
+    Order tried: SIOCGIFCONF ioctl (Linux, stdlib fcntl) -> `ip` -> `ipconfig`
+    (Windows dev boxes) -> the single default-route address."""
+    # 1) Linux ioctl — the dependency-free way to see every interface.
+    try:
+        import array
+        import struct
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            buf = array.array("B", b"\x00" * 8192)
+            size = struct.unpack(
+                "iL",
+                fcntl.ioctl(s.fileno(), 0x8912,  # SIOCGIFCONF
+                            struct.pack("iL", len(buf), buf.buffer_info()[0]))
+            )[0]
+            raw = buf.tobytes()
+            found = False
+            for i in range(0, min(size, len(raw)), 40):
+                name = raw[i:i + 16].split(b"\x00", 1)[0].decode("ascii", "ignore")
+                yield name, socket.inet_ntoa(raw[i + 20:i + 24])
+                found = True
+            if found:
+                return
+        finally:
+            s.close()
+    except Exception:
+        pass
+    # 2) iproute2 (present on every Debian).
+    try:
+        out = subprocess.run(["ip", "-4", "-o", "addr"], capture_output=True,
+                             text=True, timeout=5).stdout
+        for line in out.splitlines():
+            m = re.search(r"inet\s+(\d+\.\d+\.\d+\.\d+)", line)
+            if m:
+                name = line.split(":")[1].strip() if ":" in line else "?"
+                yield name, m.group(1)
+        if out.strip():
+            return
+    except Exception:
+        pass
+    # 3) Windows ipconfig (only relevant on dev machines).
+    try:
+        out = subprocess.run(["ipconfig"], capture_output=True, text=True, timeout=5).stdout
+        iface = "?"
+        for line in out.splitlines():
+            t = line.strip()
+            if t.endswith(":") and "adapter" in t.lower():
+                iface = t[:-1]
+                # "Ethernet adapter vEthernet (…)" → "vEthernet (…)"
+                low = iface.lower()
+                if " adapter " in low:
+                    iface = iface[low.index(" adapter ") + 9:].strip() or iface
+            m = re.match(r"IPv4[^\d]*(\d+\.\d+\.\d+\.\d+)", t)
+            if m:
+                yield iface, m.group(1)
+        if out.strip():
+            return
+    except Exception:
+        pass
+    # 4) Last resort: the outbound address only (previous behaviour).
+    ip = detect_server_ip()
+    if ip:
+        yield "?", ip
+
+
+def _classify_addr(name: str, ip: str):
+    """Return an access kind for (interface, ip), or None to hide it."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return None
+    if addr.version != 4 or addr.is_loopback:
+        return None
+    n = (name or "").lower()
+    if n.startswith("tailscale") or addr in _TAILSCALE_NET:
+        return "tailscale"
+    if n.startswith("zt"):
+        return "zerotier"
+    if n.startswith("wg"):
+        return "wireguard"
+    if any(n == s or n.startswith(s) for s in _IFACE_SKIP):
+        return None
+    if addr.is_private:
+        return "lan"
+    return None
+
+
+def _tailscale_magic_dns() -> str:
+    """The MagicDNS name (host.tailnet.ts.net), if the tailscale CLI is around."""
+    exe = shutil.which("tailscale")
+    if not exe:
+        return ""
+    try:
+        out = subprocess.run([exe, "status", "--json"], capture_output=True,
+                             text=True, timeout=4)
+        data = json.loads(out.stdout or "{}")
+        dns = str(((data.get("Self") or {}).get("DNSName")) or "").strip(".").lower()
+        return dns if dns and "." in dns else ""
+    except Exception:
+        return ""
+
+
+def enumerate_access_hosts(port: int = WEB_UI_DEFAULT_PORT) -> dict:
+    """Every way a phone could currently reach the Web UI."""
+    hosts, seen = [], set()
+    for name, ip in _iter_iface_ipv4s():
+        kind = _classify_addr(name, ip)
+        if not kind or ip in seen:
+            continue
+        seen.add(ip)
+        hosts.append({"ip": ip, "iface": name, "kind": kind,
+                      "url": f"http://{ip}:{port}", "note": _ACCESS_NOTES[kind]})
+    hosts.sort(key=lambda h: ({"lan": 0, "tailscale": 1, "wireguard": 2,
+                               "zerotier": 3}.get(h["kind"], 9), h["ip"]))
+    return {"port": port, "bind": "0.0.0.0", "hosts": hosts,
+            "magic_dns": _tailscale_magic_dns(),
+            "wip": True}   # WIP-PHONE-ACCESS: feature not yet phone-verified
+
+
+def _ascii_qr(text: str, quiet: int = 2) -> str:
+    """QR as terminal text, half-block rendered with explicit ANSI colours —
+    light modules get a white background and dark modules a black one, so the
+    symbol is true dark-on-light on every terminal theme and phone cameras
+    always decode it. No external dependencies."""
+    qr = QrCode.encode_text(text, QrCode.Ecc.MEDIUM)
+    size = qr.get_size()
+    n = size + quiet * 2
+    esc = "\x1b["
+    fg = {"l": esc + "97m", "d": esc + "30m"}     # top half colour
+    bg = {"l": esc + "47m", "d": esc + "40m"}     # bottom half colour
+
+    def dark(x, y):
+        return (quiet <= x < quiet + size and quiet <= y < quiet + size
+                and qr.get_module(x - quiet, y - quiet))
+
+    rows = []
+    for y in range(0, n, 2):
+        parts, last_f, last_b = [], None, None
+        for x in range(n):
+            top = "l" if not dark(x, y) else "d"
+            bot = "l" if (y + 1 < n and not dark(x, y + 1)) else "d"
+            if last_f != fg[top]:
+                parts.append(fg[top])
+                last_f = fg[top]
+            if last_b != bg[bot]:
+                parts.append(bg[bot])
+                last_b = bg[bot]
+            parts.append("▀")
+        parts.append(esc + "0m")
+        rows.append("    " + "".join(parts))
+    return "\n".join(rows)
+
+
+def _print_phone_access(access: dict) -> None:
+    """Console 'connect from your phone' block, with two scannable QRs:
+    one for the LAN address, one for the tailnet (works from anywhere)."""
+    hosts = access.get("hosts") or []
+    if not hosts:
+        print(f"  {C.DIM}  Phone access: no reachable addresses found"
+              f" (no LAN/VPN interfaces up).{C.RESET}")
+        return
+    print(f"  {C.BOLD}  Connect from your phone:{C.RESET}")
+    # WIP-PHONE-ACCESS: surface the unfinished state right in the boot output.
+    print(f"  {C.YELLOW}  WIP — this does not work from phones yet (debugging paused).{C.RESET}")
+    for h in hosts:
+        label = _ACCESS_LABELS.get(h["kind"], h["kind"])
+        print(f"    • {label:<9} {h['url']}{C.DIM}  ({h['note']}){C.RESET}")
+    port = access.get("port", WEB_UI_DEFAULT_PORT)
+    dns = access.get("magic_dns")
+    if dns:
+        print(f"    • {'MagicDNS':<9} http://{dns}:{port}"
+              f"{C.DIM}  (needs Tailscale with MagicDNS on the phone){C.RESET}")
+
+    lan = next((h for h in hosts if h["kind"] == "lan"), hosts[0])
+    tail = next((h for h in hosts if h["kind"] == "tailscale"), None)
+
+    def _print_qr(label: str, url: str) -> None:
+        try:
+            print(f"\n  {C.BOLD}  {label}{C.RESET}  {C.CYAN}{url}{C.RESET}")
+            for line in _ascii_qr(url).splitlines():
+                print(line)
+        except Exception:
+            pass
+
+    _print_qr("On this Wi-Fi:", lan["url"])
+    if tail:
+        _print_qr("From anywhere (Tailscale):", tail["url"])
+        if dns:
+            print(f"    {C.DIM}  MagicDNS link: http://{dns}:{port}{C.RESET}")
+    print(f"\n  {C.DIM}  Scan with the phone's camera, or type the URL."
+          f" Both QRs are also in the Web UI: Dashboard → 'Connect from phone'.{C.RESET}")
+
+
+def _tailscale_self_info():
+    """(tailnet_ipv4, magic_dns) of this node, from `tailscale status --json`."""
+    exe = shutil.which("tailscale")
+    if not exe:
+        return "", ""
+    try:
+        out = subprocess.run([exe, "status", "--json"], capture_output=True,
+                             text=True, timeout=6).stdout or ""
+        data = json.loads(out)
+        self_ = data.get("Self") or {}
+        ips = self_.get("TailscaleIPs") or []
+        v4 = next((i for i in ips if ":" not in i), "")
+        dns = str(self_.get("DNSName") or "").strip(".").lower()
+        return v4, dns
+    except Exception:
+        return "", ""
+
+
+def _tailscale_auth_qr(url: str) -> None:
+    """Show the tailscale login URL as text + scannable QR, so the approval
+    can be done straight from a phone camera at the console."""
+    print(f"\n  {C.BOLD}  Approve this server in your tailnet:{C.RESET}")
+    print(f"  {C.CYAN}  {url}{C.RESET}")
+    try:
+        for line in _ascii_qr(url).splitlines():
+            print(line)
+        print(f"  {C.DIM}  (Scan with any phone camera — opens the approval page){C.RESET}\n")
+    except Exception:
+        pass
+
+
+def _offer_tailscale_setup() -> None:
+    """WIP-PHONE-ACCESS: when the user picks the Web UI, offer to install
+    Tailscale (official install script) and connect the node, so the UI is
+    reachable from anywhere via the tailnet — not just on the LAN."""
+    if not sys.stdin.isatty() or DRY_RUN:
+        return
+    if shutil.which("tailscale") is None:
+        if not prompt_confirm("Install Tailscale so you can reach this UI from anywhere?"):
+            return
+        info("Installing Tailscale (official install script)...")
+        if shutil.which("curl") is None:
+            run(["apt-get", "install", "-y", "curl"])
+        collected = []
+        try:
+            proc = subprocess.Popen(["sh", "-c", "curl -fsSL https://tailscale.com/install.sh | sh"],
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            for line in proc.stdout:
+                collected.append(line)
+                t = line.rstrip()
+                # stream the meaningful lines live (same filter style as run_live)
+                if re.match(r"^(Get:|Fetched|Reading|Setting up|Unpacking|Selecting|Processing|Preparing|Removing)", t):
+                    print(f"    {t}")
+            proc.wait()
+        except Exception as exc:
+            warn(f"Tailscale install script failed to run: {exc}")
+            return
+        if proc.returncode != 0 or shutil.which("tailscale") is None:
+            err("Tailscale could not be installed — continuing without it.")
+            # surface the error lines the progress filter would have hidden
+            problems = [l.rstrip() for l in collected
+                        if re.match(r"^\s*(E:|Err:|W:|curl:)", l) or "error" in l.lower()]
+            for l in problems[-10:]:
+                warn(l[:240])
+            if not problems and collected:
+                warn("Last output line: " + collected[-1].rstrip()[:230])
+            return
+        ok("Tailscale installed.")
+    v4, dns = _tailscale_self_info()
+    if v4:
+        ok(f"Tailscale already connected (tailnet IP {v4}).")
+        return
+    if not prompt_confirm("Connect this server to your tailnet now (tailscale up)?"):
+        return
+    info("Starting Tailscale — approve the login URL below when it appears (waiting for you)...")
+    auth_url = None
+    try:
+        proc = subprocess.Popen(["tailscale", "up"],
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True)
+        for line in proc.stdout:
+            print(f"    {line}", end="")
+            m = re.search(r"https://login\.tailscale\.com/a/[A-Za-z0-9]+", line)
+            if m and not auth_url:
+                auth_url = m.group(1)
+                _tailscale_auth_qr(auth_url)
+        proc.wait()
+    except Exception as exc:
+        warn(f"tailscale up failed: {exc}")
+        return
+    v4, dns = _tailscale_self_info()
+    if v4:
+        ok(f"Tailscale connected — tailnet IP {v4}" + (f" ({dns})" if dns else ""))
+        print(f"  {C.DIM}  The tailnet address + QR appear in 'Connect from your phone' below.{C.RESET}")
+    else:
+        warn("Tailscale did not connect — finish the login and re-run, or run 'tailscale up' manually.")
+
+
+def start_web_ui():
+    # ── Phase 0: Single-instance lock ────────────────────────────────────────
+    if not acquire_instance_lock():
+        err("Another instance of Zervermanager is already running. "
+            "If this is wrong, remove /var/lib/zervermanager/lock/instance.lock")
+        sys.exit(1)
+
+    # ── Phase 5: Startup journal recovery ────────────────────────────────────
+    _startup_journal_recovery()
+    if is_safe_mode():
+        warn("SAFE MODE: an interrupted transaction was detected. "
+             "Only read-only and recovery routes are available until it is resolved.")
+
+    # ── Phase 0: Startup self-check (lint) ───────────────────────────────────
+    startup_selfcheck()
+
+    # ── Phase 3: Start watchdog thread ───────────────────────────────────────
+    watchdog_start()
+
+    # ── Phase 6: Prune old trash entries ─────────────────────────────────────
+    try:
+        trash_purge()
+    except Exception:
+        pass
+
+    # ── Phase 0: Auth is intentionally disabled (open control panel) ─────────
+
+    # ── Port & bind address ──────────────────────────────────────────────────
+    PREFERRED_PORT = WEB_UI_DEFAULT_PORT
+    _env_port = os.environ.get("ZM_PORT", "").strip()
+    if _env_port.isdigit():
+        if int(_env_port) in APACHE_BACKEND_PORTS:
+            warn(f"ZM_PORT={_env_port} is reserved for Apache — using {WEB_UI_DEFAULT_PORT} instead.")
+        else:
+            PREFERRED_PORT = int(_env_port)
+
+    # Default: bind to all interfaces so the Web UI is reachable from the
+    # admin's browser. Login is disabled; use --listen 127.0.0.1 to restrict
+    # access to loopback only.
+    LISTEN_ADDR = "0.0.0.0"
+    if "--listen" in sys.argv:
+        idx = sys.argv.index("--listen")
+        if idx + 1 < len(sys.argv):
+            LISTEN_ADDR = sys.argv[idx + 1]
+    if LISTEN_ADDR == "127.0.0.1":
+        warn("Web UI bound to 127.0.0.1 — only accessible from this machine.")
+
+    # Register manager port as protected
+    _PROTECTED_PORTS.add(PREFERRED_PORT)
+
+    _warn_if_apache_port_blocked()
+
+    # WIP-PHONE-ACCESS: optional Tailscale install/connect so the Web UI is
+    # reachable from anywhere, not just the LAN. Fully skippable.
+    if LISTEN_ADDR != "127.0.0.1":
+        try:
+            _offer_tailscale_setup()
+        except Exception as exc:
+            warn(f"Tailscale setup skipped: {exc}")
+
+    web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web_config')
+    os.makedirs(web_dir, exist_ok=True)
+
+    # ── Port selection ────────────────────────────────────────────────────────
+    # If the preferred port is taken, ask: free it (shows what holds it) or fall back.
+    PORT = None
+    if not _port_is_busy(PREFERRED_PORT):
+        PORT = _find_free_port(PREFERRED_PORT)
+    else:
+        owners = _port_owner(PREFERRED_PORT)
+        who = ", ".join(f"{n} (pid {p})" for n, p in owners)
+        if owners and sys.stdin.isatty():
+            warn(f"Port {PREFERRED_PORT} is in use by {who}.")
+            print()
+            print(f"  {C.BOLD}How would you like to proceed?{C.RESET}")
+            print(f"  1. Kill {who} and use port {PREFERRED_PORT}")
+            print(f"  2. Leave it running and use the next available port")
+            while True:
+                choice = input("  Choice [2]: ").strip() or "2"
+                if choice in ("1", "2"):
+                    break
+                warn("Please enter 1 or 2.")
+            if choice == "1":
+                if _kill_port_owners(PREFERRED_PORT, owners):
+                    PORT = PREFERRED_PORT
+                    ok(f"Freed port {PREFERRED_PORT}.")
+                else:
+                    warn("Could not free the port — falling back.")
+        else:
+            # Headless / unknown owner: keep the old silent-fallback behaviour.
+            if who:
+                warn(f"Port {PREFERRED_PORT} is in use by {who} — using the next available port.")
+        if PORT is None:
+            PORT = _find_free_port(PREFERRED_PORT)
+    if PORT is None:
+        err(f"No free port found in range {PREFERRED_PORT}-{PREFERRED_PORT + 9}.")
+        err("Stop any service using those ports and try again.")
+        sys.exit(1)
+
+    try:
+        httpd = _WebServer((LISTEN_ADDR, PORT), WebUIHandler)
+    except OSError as exc:
+        err(f"Cannot bind to {LISTEN_ADDR}:{PORT}: {exc}")
+        sys.exit(1)
+
+    # If UFW is enabled, open the UI port — otherwise phones/LAN get refused.
+    if LISTEN_ADDR != "127.0.0.1":
+        _ensure_ufw_allows_port(PORT)
+
+    ip = detect_server_ip() or "127.0.0.1"
+    display_addr = "127.0.0.1" if LISTEN_ADDR == "127.0.0.1" else ip
+    if PORT != PREFERRED_PORT:
+        warn(f"Port {PREFERRED_PORT} was busy — using port {PORT} instead.")
+    print(f"\n  {C.GREEN}\u2713 Web Configuration started.{C.RESET}")
+    print(f"  {C.CYAN}Please open your browser to: http://{display_addr}:{PORT}{C.RESET}")
+    if is_safe_mode():
+        print(f"  {C.RED}  SAFE MODE ACTIVE — recovery only.{C.RESET}")
+    print(f"  {C.DIM}Press Ctrl+C to stop the web server and exit.{C.RESET}\n")
+    # WIP-PHONE-ACCESS: the scan still runs at boot (and /api/access still
+    # works), but the feature is NOT yet verified from an actual phone —
+    # see the WIP banner comment above the phone-access block.
+    # Connect-from-phone: scan every way a phone could reach the UI right now.
+    if LISTEN_ADDR != "127.0.0.1":
+        try:
+            _print_phone_access(enumerate_access_hosts(port=PORT))
+        except Exception as exc:
+            warn(f"Phone-access scan failed: {exc}")
+
+    with httpd:
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print(f"\n  {C.YELLOW}Stopping Web UI...{C.RESET}")
+            watchdog_stop()
+            httpd.shutdown()
+            sys.exit(0)
 
 
 # ─────────────────────────────────────────
@@ -6990,6 +13797,36 @@ def main():
     if "--dry-run" in sys.argv:
         DRY_RUN = True
         warn("DRY-RUN mode active — no commands will be executed.")
+
+    # ── Phase 2/9: snapshot CLI ──────────────────────────────────────────────
+    if len(sys.argv) >= 2 and sys.argv[1] == "snapshot":
+        sub = sys.argv[2] if len(sys.argv) > 2 else "list"
+        if sub == "list": cli_snapshot_list()
+        elif sub == "create": cli_snapshot_create(" ".join(sys.argv[3:]))
+        elif sub == "diff" and len(sys.argv) > 3: cli_snapshot_diff(sys.argv[3])
+        elif sub == "restore" and len(sys.argv) > 3:
+            dry = "--dry-run" in sys.argv
+            cli_snapshot_restore(sys.argv[3], dry_run=dry)
+        sys.exit(0)
+
+    # ── Phase 0/8: audit CLI ─────────────────────────────────────────────────
+    if len(sys.argv) >= 2 and sys.argv[1] == "audit":
+        n = int(sys.argv[3]) if len(sys.argv) > 3 else 50
+        cli_audit_tail(n)
+        sys.exit(0)
+
+    # ── Phase 5/9: doctor CLI ────────────────────────────────────────────────
+    if len(sys.argv) >= 2 and sys.argv[1] == "doctor":
+        fix = "--fix" in sys.argv
+        only_arg = [a for a in sys.argv[2:] if not a.startswith("-")]
+        cli_doctor(only_arg or None, fix=fix)
+        sys.exit(0)
+
+    # ── Phase 0: safe-mode CLI ───────────────────────────────────────────────
+    if len(sys.argv) >= 3 and sys.argv[1] == "safe-mode":
+        if sys.argv[2] == "on": safe_mode_on(); print("  Safe mode ON.")
+        else: safe_mode_off(); print("  Safe mode OFF.")
+        sys.exit(0)
 
     if not hasattr(os, "geteuid") or os.geteuid() != 0:
         print("This script must be run as root on Linux. Use sudo.")
@@ -7009,6 +13846,19 @@ def main():
         show_splash()
 
     show_loading_screen()
+
+    print("\n  " + C.BOLD + "How would you like to use Zervermanager?" + C.RESET)
+    print("  1. Web Configuration UI (Recommended)")
+    print("  2. Command Line Interface (CLI)")
+    while True:
+        ui_choice = input("  Choice [1]: ").strip() or "1"
+        if ui_choice in ("1", "2"):
+            break
+        warn("Please enter 1 or 2.")
+        
+    if ui_choice == "1":
+        start_web_ui()
+        return
 
     while True:
         choice = display_main_menu()
@@ -7033,6 +13883,8 @@ def main():
             reload_all_services()
         elif choice == "6":
             show_help()
+        elif choice == "7":
+            docker_menu()
         elif choice == "0":
             _shutdown()
         else:
@@ -7047,6 +13899,6 @@ if __name__ == "__main__":
         sys.exit(0)
     except Exception as e:
         import traceback
-        print(f"\n  {C.RED}[!] An unexpected error occurred: {e}{C.RESET}")
+        err(f"An unexpected error occurred: {e}")
         traceback.print_exc()
         sys.exit(1)

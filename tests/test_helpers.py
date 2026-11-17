@@ -201,18 +201,49 @@ class TestApplyReloads(unittest.TestCase):
             sm.apply_reloads()
         mock_sub.assert_not_called()
 
-    def test_apache_reload(self):
-        """apply_reloads() calls systemctl reload apache2 when marked."""
+    def test_apache_reload_when_active(self):
+        """apply_reloads() uses 'reload' when apache2 is already active."""
         sm.mark_reload("apache2")
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stderr = ""
-        with patch("subprocess.run", return_value=mock_result) as mock_sub:
-            capture_stdout(sm.apply_reloads)   # capture to avoid Windows cp1252 encode error
-        mock_sub.assert_called_once_with(
-            ["systemctl", "reload", "apache2"],
-            capture_output=True, text=True
-        )
+
+        def side_effect(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            result.stderr = ""
+            if cmd == ["systemctl", "is-active", "apache2"]:
+                result.stdout = "active"
+            else:
+                result.stdout = ""
+            return result
+
+        with patch("subprocess.run", side_effect=side_effect) as mock_sub:
+            capture_stdout(sm.apply_reloads)
+
+        calls = mock_sub.call_args_list
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][0][0], ["systemctl", "is-active", "apache2"])
+        self.assertEqual(calls[1][0][0], ["systemctl", "reload", "apache2"])
+
+    def test_apache_reload_when_inactive(self):
+        """apply_reloads() uses 'restart' when apache2 is not active (e.g. fresh Ubuntu install)."""
+        sm.mark_reload("apache2")
+
+        def side_effect(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            result.stderr = ""
+            if cmd == ["systemctl", "is-active", "apache2"]:
+                result.stdout = "inactive"
+            else:
+                result.stdout = ""
+            return result
+
+        with patch("subprocess.run", side_effect=side_effect) as mock_sub:
+            capture_stdout(sm.apply_reloads)
+
+        calls = mock_sub.call_args_list
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][0][0], ["systemctl", "is-active", "apache2"])
+        self.assertEqual(calls[1][0][0], ["systemctl", "restart", "apache2"])
 
     def test_pending_cleared_after_apply(self):
         """_pending set is cleared after apply_reloads() runs."""
@@ -365,16 +396,28 @@ class TestOSCompatibilityAndLoading(unittest.TestCase):
     def setUp(self):
         sm.DRY_RUN = False
 
+    @patch.object(sm, "get_os_version", return_value="Debian GNU/Linux 11 (bullseye)")
+    def test_os_compatibility_debian_11(self, mock_get_os):
+        status, name = sm.check_os_compatibility()
+        self.assertEqual(status, "supported")
+        self.assertEqual(name, "Debian GNU/Linux 11 (bullseye)")
+
     @patch.object(sm, "get_os_version", return_value="Debian GNU/Linux 12 (bookworm)")
     def test_os_compatibility_debian_12(self, mock_get_os):
         status, name = sm.check_os_compatibility()
         self.assertEqual(status, "supported")
         self.assertEqual(name, "Debian GNU/Linux 12 (bookworm)")
 
+    @patch.object(sm, "get_os_version", return_value="Debian GNU/Linux 13 (trixie)")
+    def test_os_compatibility_debian_13(self, mock_get_os):
+        status, name = sm.check_os_compatibility()
+        self.assertEqual(status, "supported")
+        self.assertEqual(name, "Debian GNU/Linux 13 (trixie)")
+
     @patch.object(sm, "get_os_version", return_value="Ubuntu 22.04 LTS")
     def test_os_compatibility_ubuntu(self, mock_get_os):
         status, name = sm.check_os_compatibility()
-        self.assertEqual(status, "uncertain")
+        self.assertEqual(status, "ubuntu")
         self.assertEqual(name, "Ubuntu 22.04 LTS")
 
     @patch.object(sm, "get_os_version", return_value="Arch Linux")
@@ -496,6 +539,63 @@ class TestBugFixes(unittest.TestCase):
         with patch.object(sm, "ensure_modules"):
             _, output = capture_stdout(sm.create_https_existing)
             self.assertIn("Key not found", output)
+
+    @patch("builtins.open")
+    @patch("os.path.exists", return_value=True)
+    def test_configure_apache_ports_regex(self, mock_exists, mock_open):
+        mock_file = MagicMock()
+        mock_file.read.return_value = "Listen 80\nListen 443\n"
+        mock_file.__enter__.return_value = mock_file
+        mock_open.return_value = mock_file
+
+        # configure_apache_ports should update ports to 8080 and 8443 without re.error
+        sm.configure_apache_ports()
+
+        # Check write calls on mock_file
+        written_content = "".join(call_args[0][0] for call_args in mock_file.write.call_args_list)
+        self.assertIn("Listen 8080", written_content)
+        self.assertIn("Listen 8443", written_content)
+
+    @patch("builtins.open")
+    @patch("os.path.exists", return_value=True)
+    def test_get_system_uptime(self, mock_exists, mock_open):
+        mock_file = MagicMock()
+        mock_file.readline.return_value = "86400.00 43200.00\n"
+        mock_file.__enter__.return_value = mock_file
+        mock_open.return_value = mock_file
+
+        uptime = sm.get_system_uptime()
+        self.assertEqual(uptime["seconds"], 86400)
+        self.assertIn("1d", uptime["formatted"])
+
+    @patch("builtins.open")
+    @patch("os.path.exists", return_value=True)
+    def test_get_ram_usage(self, mock_exists, mock_open):
+        mock_file = MagicMock()
+        mock_file.__iter__.return_value = iter([
+            "MemTotal:        16000000 kB\n",
+            "MemAvailable:     8000000 kB\n",
+        ])
+        mock_file.__enter__.return_value = mock_file
+        mock_open.return_value = mock_file
+
+        ram = sm.get_ram_usage()
+        self.assertEqual(ram["percent"], 50.0)
+        self.assertIn("GB", ram["formatted"])
+
+    @patch("builtins.open")
+    @patch("os.path.exists", return_value=True)
+    def test_get_cpu_usage(self, mock_exists, mock_open):
+        mock_file = MagicMock()
+        mock_file.readline.return_value = "cpu  1000 0 1000 8000 0 0 0\n"
+        mock_file.read.return_value = "0.25 0.35 0.45 1/200 12345\n"
+        mock_file.__enter__.return_value = mock_file
+        mock_open.return_value = mock_file
+
+        cpu = sm.get_cpu_usage()
+        self.assertIn("percent", cpu)
+        self.assertIn("cores", cpu)
+        self.assertIn("load_str", cpu)
 
 
 # ===========================================================================
