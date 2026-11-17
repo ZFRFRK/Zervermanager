@@ -2,24 +2,28 @@
 
 # Zervermanager
 
-**A robust, interactive command-line suite for automating the complete setup, configuration, and maintenance of a Debian 12 web hosting, mail, and DNS server environment.**
+**A complete Debian 12 server manager in one Python file — an interactive CLI suite plus a full browser Web UI, from LAMP/LEMP hosting and mail to DNS, Docker, snapshots, and a live root terminal.**
 
-[![Version](https://img.shields.io/badge/Version-1.3.0-informational.svg)](#)
+[![Version](https://img.shields.io/badge/Version-1.3.28-informational.svg)](#)
 [![License: AGPL v3 + Additional Terms](https://img.shields.io/badge/License-AGPLv3%20%2B%20Additional%20Terms-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform: Debian 12](https://img.shields.io/badge/Platform-Debian%2012-A81D33?logo=debian&logoColor=white)](https://www.debian.org/)
-[![Status: Stable](https://img.shields.io/badge/Status-Stable-brightgreen.svg)](#)
+[![Status: Active](https://img.shields.io/badge/Status-Active-brightgreen.svg)](#)
 
-Runs on any fresh minimal Debian installation using Python 3 standard libraries only — no `pip` installs or virtual environments required.
+Runs on any fresh minimal Debian installation using **Python 3 standard libraries only** — no `pip` installs, no virtual environments, no Node build step. Clone it, run it, and you get both a terminal menu system and a full web dashboard.
 
 </div>
 
 ---
-# Development Status : Paused
 
 ## Table of Contents
 
-- [Features](#features)
+- [Highlights](#highlights)
+- [Web UI](#web-ui)
+- [Web Hosting](#web-hosting)
+- [Mail Server](#mail-server)
+- [Infrastructure & Server Management](#infrastructure--server-management)
+- [Damage Control](#damage-control)
 - [Prerequisites](#prerequisites)
 - [OS Compatibility](#os-compatibility)
 - [Installation](#installation)
@@ -29,9 +33,49 @@ Runs on any fresh minimal Debian installation using Python 3 standard libraries 
 
 ---
 
-## Features
+## Highlights
 
-### Web Hosting — Apache & Nginx
+| | |
+|---|---|
+| **Single file, zero dependencies** | One `zervermanager.py` (~13k lines) using only the Python standard library. Copy it to a server and run. |
+| **Two front ends, one engine** | An interactive CLI menu *and* a browser Web UI on port **8090**, driven by the same command layer. |
+| **Snapshots before everything** | Every file written, symlink changed, or service touched is snapshotted first — diff and restore from the UI. |
+| **Safe mode** | If startup checks fail, the manager boots into a restricted recovery mode where only safe routes are available. |
+| **Web terminal** | A live shell on the server, straight from the browser — type or paste commands, session survives page reloads. |
+| **LAN-first** | Binds to all interfaces, auto-opens the UFW port, offers Tailscale at boot, and handles port conflicts gracefully. |
+
+---
+
+## Web UI
+
+Point a browser at `http://<server-ip>:8090` and you get a Hyprland-inspired dashboard with a light/dark theme system:
+
+| Page | What it does |
+|---|---|
+| **Dashboard** | Live system telemetry, service states, and status tiles |
+| **Manage sites** | List, modify, or remove hosted sites (configs, databases, SSL) |
+| **Create site** | Guided wizard: LAMP / LEMP / proxy / static / WordPress, with a live output pane |
+| **DNS** | BIND9 zone and record management with syntax checking |
+| **MariaDB** | Databases and users, interactively inspected |
+| **Services** | Manage packages and mailboxes (Postfix, Dovecot) |
+| **Server control** | systemd units, firewall, package repair |
+| **Terminal** | Full root shell in the browser (see below) |
+| **Network** | View and apply static IP settings |
+| **Docker** | Containers, images, and stacks |
+
+### Terminal page
+
+- A real **PTY shell** (the user running Zervermanager — root on a typical install) behind the same Web UI
+- 256-color output, scrollback, and **reconnect with full history** — the shell keeps running server-side when you close the tab
+- **Paste support on plain HTTP**: `Ctrl+V`, right-click paste, or the toolbar button
+- Toolbar: Paste · `^C` · Clear · Restart; window size is pushed to the PTY on resize
+- Blocked by safe mode, like every other write route
+
+> **Security note:** the Web UI and the terminal are open to anyone who can reach the port — there is no login screen. This is designed for a trusted home/LAN setup. Do not port-forward it without adding your own access control first.
+
+---
+
+## Web Hosting
 
 | Feature | Description |
 |---|---|
@@ -43,7 +87,7 @@ Runs on any fresh minimal Debian installation using Python 3 standard libraries 
 | Let's Encrypt SSL | One-step HTTPS via `certbot` for Apache and Nginx |
 | Self-Signed SSL | Instant local/dev certificates via `openssl` |
 
-### Mail Server
+## Mail Server
 
 | Feature | Description |
 |---|---|
@@ -51,7 +95,7 @@ Runs on any fresh minimal Debian installation using Python 3 standard libraries 
 | Roundcube Webmail | Fully integrated browser-based mail client |
 | PAM Security | Mail users isolated under the `mailuser` group with `nologin` shells |
 
-### Infrastructure & Server Management
+## Infrastructure & Server Management
 
 | Feature | Description |
 |---|---|
@@ -60,9 +104,24 @@ Runs on any fresh minimal Debian installation using Python 3 standard libraries 
 | phpMyAdmin | Web administration portal for MariaDB |
 | Samba | Windows-compatible network file sharing |
 | MariaDB Manager | Database and user management with an interactive CLI inspector |
+| Docker | Container and image management from the CLI or the Web UI |
 | Configuration Backups | Timestamped `.bak` backups created automatically before any file is modified |
-| System Controls | Start, stop, restart, and monitor systemd units from the menu |
-| Firewall Controls | Manage UFW rules and open or close ports interactively |
+| System Controls | Start, stop, restart, and monitor systemd units from the menu or the UI |
+| Firewall Controls | Manage UFW rules and open or close ports interactively (UI port auto-opened) |
+
+## Damage Control
+
+Zervermanager treats *every* write as a risk and wraps it accordingly:
+
+| Mechanism | What it gives you |
+|---|---|
+| Snapshots | File contents, symlinks, and service state captured before each change — diffable, restorable |
+| Confirm & trash | Destructive actions go through a confirmation flow with a trash/restore path |
+| Incidents | Failed operations are recorded with ack/snooze handling |
+| Doctor | Automated `check` / `repair` passes for common breakage |
+| Plan → Apply | Changes are validated as a plan before anything is executed |
+| Safe mode | A restricted boot mode (auto or manual) that exposes only recovery routes |
+| Change journal | Every mutation is logged and auditable from the UI |
 
 ---
 
@@ -101,6 +160,10 @@ chmod +x zervermanager.py
 sudo python3 zervermanager.py
 ```
 
+- The CLI menu starts immediately; the **Web UI comes up on port 8090** in the same process (it offers Tailscale at boot and opens the port in UFW for you).
+- If 8090 is busy you'll be asked what to do — kill the occupant, or fall back to the next free port.
+- The Web UI is served from the bundled `web_config/` folder next to the script — keep them together.
+
 ### Dry-Run Mode
 
 Use `--dry-run` to simulate all actions without modifying any system file:
@@ -121,6 +184,9 @@ python3 -m py_compile zervermanager.py && echo "Syntax OK"
 python3 tests/run_tests.py
 ```
 
+- Active development happens on the [`dev`](https://github.com/ZFRFRK/Zervermanager/tree/dev) branch; `main` is kept current by merge.
+- The Web UI frontend lives in `web_config/` (vanilla HTML/CSS/JS, cache-busted via `?v=N` pins in `index.html`).
+
 ---
 
 ## Roadmap
@@ -129,6 +195,7 @@ python3 tests/run_tests.py
 - [ ] `FAST_MODE` environment variable to skip sleeps during dry-runs and tests
 - [ ] Extended Ubuntu LTS support with platform-specific package matrices
 - [ ] `--version` flag to print current release info
+- [ ] Optional authentication gate for the Web UI (required before any WAN exposure)
 
 ---
 
