@@ -42,7 +42,7 @@ Runs on any fresh minimal Debian installation using **Python 3 standard librarie
 | **Snapshots before everything** | Every file written, symlink changed, or service touched is snapshotted first — diff and restore from the UI. |
 | **Safe mode** | If startup checks fail, the manager boots into a restricted recovery mode where only safe routes are available. |
 | **Web terminal** | A live shell on the server, straight from the browser — type or paste commands, session survives page reloads. |
-| **LAN-first** | Binds to all interfaces, auto-opens the UFW port, offers Tailscale at boot, and handles port conflicts gracefully. |
+| **LAN-first, with optional remote access** | Binds to all interfaces, auto-opens the UFW port, and handles port conflicts gracefully. At launch it *asks* whether to install/connect Tailscale — declining leaves you LAN-only. |
 
 ---
 
@@ -72,6 +72,8 @@ Point a browser at `http://<server-ip>:8090` and you get a Hyprland-inspired das
 - Blocked by safe mode, like every other write route
 
 > **Security note:** the Web UI and the terminal are open to anyone who can reach the port — there is no login screen. This is designed for a trusted home/LAN setup. Do not port-forward it without adding your own access control first.
+>
+> **Tailscale note:** Tailscale is entirely optional and off by default. If you accept the setup prompts, the UI — including the root shell — becomes reachable from **every device on your tailnet**, still without a login. Only use a tailnet you control, and consider [Tailscale ACLs](https://tailscale.com/kb/1018/acls) to limit which devices can reach port 8090.
 
 ---
 
@@ -160,9 +162,24 @@ chmod +x zervermanager.py
 sudo python3 zervermanager.py
 ```
 
-- The CLI menu starts immediately; the **Web UI comes up on port 8090** in the same process (it offers Tailscale at boot and opens the port in UFW for you).
+- The CLI menu starts immediately; the **Web UI comes up on port 8090** in the same process (it opens the port in UFW for you and handles conflicts).
 - If 8090 is busy you'll be asked what to do — kill the occupant, or fall back to the next free port.
 - The Web UI is served from the bundled `web_config/` folder next to the script — keep them together.
+
+### Tailscale is optional
+
+On an interactive launch you may be asked two yes/no questions:
+
+1. *"Install Tailscale so you can reach this UI from anywhere?"* — runs the official `tailscale.com/install.sh` script, only after you say yes (installs `curl` first if missing).
+2. *"Connect this server to your tailnet now?"* — runs `tailscale up` and shows a login URL/QR to approve.
+
+Both are **optional and safe to decline** — declining keeps the UI on your LAN, and Zervermanager continues normally either way. The offer is skipped entirely in `--dry-run`, in non-interactive sessions, and if Tailscale is already connected. To skip the offer and keep the UI reachable only from the machine itself:
+
+```bash
+sudo python3 zervermanager.py --listen 127.0.0.1
+```
+
+(This also skips the automatic UFW rule.)
 
 ### Dry-Run Mode
 
