@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations   # PEP 604/585 backport: allows X | Y and list[X] on Python 3.7-3.9
 
-SCRIPT_VERSION = "1.3.28"
+SCRIPT_VERSION = "1.5.0"
 
 import os
 import re

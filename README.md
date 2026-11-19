@@ -4,7 +4,7 @@
 
 **A complete Debian 12 server manager in one Python file — an interactive CLI suite plus a full browser Web UI, from LAMP/LEMP hosting and mail to DNS, Docker, snapshots, and a live root terminal.**
 
-[![Version](https://img.shields.io/badge/Version-1.3.28-informational.svg)](#)
+[![Version](https://img.shields.io/badge/Version-1.5.0-informational.svg)](#)
 [![License: AGPL v3 + Additional Terms](https://img.shields.io/badge/License-AGPLv3%20%2B%20Additional%20Terms-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform: Debian 12](https://img.shields.io/badge/Platform-Debian%2012-A81D33?logo=debian&logoColor=white)](https://www.debian.org/)
